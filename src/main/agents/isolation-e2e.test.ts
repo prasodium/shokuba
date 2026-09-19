@@ -488,10 +488,14 @@ describe('cleaning up after a task', () => {
     // The branch, and the work on it, stay, and can still be reviewed.
     expect(sh(repo, 'branch', '--list', `shokuba/task/${first.id}`)).toContain(first.id)
     expect(sh(repo, 'show', `shokuba/task/${first.id}:first.txt`)).toBe('First')
-    expect(await agents.workspaces.changes(first.id)).toMatchObject({
-      isolated: true,
-      state: 'merged',
-      folderRemoved: true,
+    // The folder goes first and the record follows (Git tidies its own bookkeeping in between,
+    // which takes longer on Windows), so wait for the record instead of reading it in the gap.
+    await until(async () => {
+      expect(await agents.workspaces.changes(first.id)).toMatchObject({
+        isolated: true,
+        state: 'merged',
+        folderRemoved: true,
+      })
     })
     // The folder the agent is working in now was not touched.
     expect(existsSync(current(ren).options.cwd)).toBe(true)

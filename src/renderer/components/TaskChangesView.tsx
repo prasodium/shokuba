@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { TaskChanges } from '@shared/git'
 import { classifyDiff, fileCounts, summarizeChanges } from '../git/diff'
+import { latestWorkspaceSeq } from '../git/events'
+import { useEvents } from '../store/events'
 
 interface Props {
   taskId: string
@@ -18,6 +20,8 @@ export function TaskChangesView({ taskId, assignee, version }: Props) {
   const [changes, setChanges] = useState<TaskChanges | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   const [showDiff, setShowDiff] = useState(false)
+  // Read again whenever this task's folder is made, saved, merged or removed.
+  const workspaceSeq = useEvents((s) => latestWorkspaceSeq(s.events, { taskId }))
 
   useEffect(() => {
     let current = true
@@ -33,7 +37,7 @@ export function TaskChangesView({ taskId, assignee, version }: Props) {
     return () => {
       current = false
     }
-  }, [taskId, version])
+  }, [taskId, version, workspaceSeq])
 
   if (problem) return <p className="muted">{problem}</p>
   if (!changes) return null

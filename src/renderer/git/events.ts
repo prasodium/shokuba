@@ -1,0 +1,22 @@
+import type { ShokubaEvent } from '@shared/events/schema'
+
+/**
+ * The sequence number of the newest `workspace.changed` event for a task or a mission, or 0 if
+ * there is none. A view that reads a task's changes uses it to read again when its folder is
+ * made, saved, merged or removed, which can happen long after the task itself last changed.
+ */
+export function latestWorkspaceSeq(
+  events: readonly ShokubaEvent[],
+  match: { taskId: string } | { missionId: string },
+): number {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    if (event?.type !== 'workspace.changed') continue
+    const same =
+      'taskId' in match
+        ? event.payload.taskId === match.taskId
+        : event.payload.missionId === match.missionId
+    if (same) return event.seq
+  }
+  return 0
+}

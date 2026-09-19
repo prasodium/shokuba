@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { MissionBranchInfo } from '@shared/git'
+import { latestWorkspaceSeq } from '../git/events'
 import { branchSummary, mergeInstructions } from '../git/merge'
+import { useEvents } from '../store/events'
 import { useOffice } from '../store/office'
 
 interface Props {
@@ -17,6 +19,7 @@ export function MissionBranchView({ missionId, version }: Props) {
   const platform = useOffice((s) => s.info?.platform ?? 'linux')
   const [branches, setBranches] = useState<MissionBranchInfo[]>([])
   const [open, setOpen] = useState(false)
+  const workspaceSeq = useEvents((s) => latestWorkspaceSeq(s.events, { missionId }))
 
   useEffect(() => {
     let current = true
@@ -31,7 +34,7 @@ export function MissionBranchView({ missionId, version }: Props) {
     return () => {
       current = false
     }
-  }, [missionId, version])
+  }, [missionId, version, workspaceSeq])
 
   if (branches.length === 0) return null
 
