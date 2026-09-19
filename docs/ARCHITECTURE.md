@@ -246,7 +246,7 @@ A plan only becomes real when a person presses **Run mission**, and a person sti
 
 **Limits.** Attributes are ignored by Shokuba's own commands, so files a repository stores with Git LFS are committed as they are on disk, custom merge drivers do not run, and line-ending rules from `.gitattributes` are not applied (your own `core.autocrlf` still is). A task's folder is a fresh checkout, so dependencies such as `node_modules` are not there: the agent has to install them, and Shokuba does not run setup commands. Committing takes everything that is not ignored, so a secret file the project does not ignore would land in the local task branch (it is never pushed). This isolates work; it is not a sandbox, since an agent can still run Git commands that reach elsewhere.
 
-### Task isolation (Phase 3, slice 3b)
+### Task isolation (Phase 3, slices 3b and 3c)
 
 `WorkspaceService` (`src/main/workspaces/`) decides whether a task is isolated and how, using `GitService`. Two tables record it (migration 0007): `mission_branches` (one branch per mission and repository) and `task_workspaces` (a task's branch, folder and commits, and `state`: `active`, `merged`, `none` or `removed`; `none` carries the reason it was not isolated).
 
@@ -269,7 +269,17 @@ A plan only becomes real when a person presses **Run mission**, and a person sti
 - A task's folder has no installed dependencies (for example `node_modules`); the agent has to install them.
 - Everything not ignored in the folder is committed to the local task branch, including a secret the project does not ignore. Nothing is pushed.
 - The agent can run Git in its folder, including switching branches or merging. Shokuba merges `shokuba/task/<id>` as it finds it.
-- **Working folders are not removed yet** (slice 3c), so finished tasks leave folders under Shokuba's data folder, and a running agent stays in its last task's folder until its next task.
+- An idle agent stays in its last task's folder until its next task or until it is stopped, so that folder is kept until then (see below).
+- **Task branches are kept**, so a busy repository collects `shokuba/task/…` branches. They are all under one prefix (`git branch --list 'shokuba/*'`) and are safe to delete once their mission's branch has been merged.
+
+**Cleaning up (3c).** `WorkspaceCleaner` removes a finished task's working folder when the task is done or cancelled **and no running agent is in the folder**: after the task is accepted or cancelled, when its agent starts on something else or is stopped, and once at startup for anything an earlier run left. It never restarts an agent just to delete a folder, and a running process inside a folder would in any case keep it from being deleted on Windows. The rules, in `WorkspaceService`:
+
+- Only folders Shokuba recorded itself, inside its own data folder, and only for a task that is merged or cancelled. A finished task whose work was never merged is left alone, not guessed at.
+- **Unsaved work is saved first.** Whatever is uncommitted in a cancelled task's folder is committed to its branch before the folder goes, and if that cannot be done the folder is left exactly as it is and tried again later.
+- The branch stays and the diff stays reviewable; the record notes when the folder was removed (`removed_at`, migration 0008). If a removed task is worked on again, its folder is brought back on its branch.
+- "Is an agent in this folder?" compares resolved paths as well as the stored one, because the same place can be spelled two ways (a symbolic link, a short Windows name) while the runtime reports the agent's folder resolved. Getting this wrong would delete a folder from under a running agent; the smoke test caught exactly that on macOS.
+
+**Merging is yours.** Each mission shows the branch its accepted work is collecting on (`shokuba/mission/<id>`), how many commits it holds, and the commands to read and merge it, each naming the repository and quoted for your shell. Shokuba never runs them.
 
 ### Database
 

@@ -265,7 +265,8 @@ describe('when the agent submits', () => {
   it('is fine when there was nothing to save', async () => {
     const t = task('Read only')
     await workspaces.prepare(t)
-    await expect(workspaces.commit(t)).resolves.toBeUndefined()
+    // Nothing to save counts as saved: the work is safe.
+    await expect(workspaces.commit(t)).resolves.toBe(true)
     const changes = await workspaces.changes(t.id)
     expect(changes).toMatchObject({ isolated: true, files: [], state: 'active' })
   })
@@ -274,7 +275,8 @@ describe('when the agent submits', () => {
     const t = task('Build it')
     const cwd = await work(t, 'a.txt', 'one\nTWO\nthree\n')
     await git.removeWorktree(repo, cwd) // pulled out from under the agent
-    await expect(workspaces.commit(t)).resolves.toBeUndefined()
+    // It does not throw, and it says the work could not be saved.
+    await expect(workspaces.commit(t)).resolves.toBe(false)
     const changes = await workspaces.changes(t.id)
     expect(changes).toMatchObject({ isolated: true })
     expect(changes.isolated && changes.note).toContain('could not save')
@@ -383,5 +385,174 @@ describe('accepting a task', () => {
     const t = task('Read only')
     await workspaces.prepare(t)
     expect(await workspaces.mergeForAccept(t)).toEqual({ kind: 'up-to-date' })
+  })
+})
+
+describe('cleaning up a finished task', () => {
+  /** The whole life of a task up to acceptance: handed out, worked on, submitted, merged, accepted. */
+  async function accepted(t: Task, file: string, text: string): Promise<string> {
+    fx.missions.missionAction(missionId, 'run')
+    fx.missions.markDispatched(t.id)
+    const cwd = await work(t, file, text)
+    fx.missions.agentSubmit(t.assigneeId ?? '', { summary: 'done' }, { source: 'reported' })
+    await workspaces.mergeForAccept(fx.missions.getTask(t.id) as Task)
+    fx.missions.taskAction(t.id, { action: 'accept' })
+    return cwd
+  }
+
+  it('removes an accepted task’s folder, keeps its branch, and still shows what it changed', async () => {
+    const t = task('Build it')
+    const cwd = await accepted(t, 'a.txt', 'one\nTWO\nthree\n')
+    const done = fx.missions.getTask(t.id) as Task
+    expect(workspaces.pendingRemoval().map((p) => p.task.id)).toEqual([t.id])
+
+    expect(await workspaces.removeFolder(done)).toBe(true)
+    expect(existsSync(cwd)).toBe(false)
+    expect(sh(repo, 'branch', '--list', `shokuba/task/${t.id}`)).toContain(t.id)
+    expect(workspaces.pendingRemoval()).toEqual([])
+    const changes = await workspaces.changes(t.id)
+    expect(changes).toMatchObject({ isolated: true, state: 'merged', folderRemoved: true })
+    expect(changes.isolated && changes.files.map((f) => f.path)).toEqual(['a.txt'])
+    expect(fx.eventsOf('workspace.changed').at(-1)).toMatchObject({
+      payload: { change: 'removed' },
+    })
+  })
+
+  it('saves a cancelled task’s uncommitted work to its branch before removing the folder', async () => {
+    const t = task('Abandoned')
+    const prepared = await workspaces.prepare(t)
+    write(prepared?.cwd ?? '', 'half-done.txt', 'not committed yet\n')
+    fx.missions.taskAction(t.id, { action: 'cancel' })
+
+    const cancelled = fx.missions.getTask(t.id) as Task
+    expect(await workspaces.removeFolder(cancelled)).toBe(true)
+    expect(existsSync(prepared?.cwd ?? '')).toBe(false)
+    // Nothing was lost: it is on the branch.
+    expect(sh(repo, 'show', `shokuba/task/${t.id}:half-done.txt`)).toBe('not committed yet')
+  })
+
+  it('only lists finished tasks whose work is safe on a branch', async () => {
+    const inProgress = task('Still going')
+    await workspaces.prepare(inProgress)
+    const cancelled = task('Cancelled')
+    await workspaces.prepare(cancelled)
+    fx.missions.taskAction(cancelled.id, { action: 'cancel' })
+    const merged = task('Merged', 'sora')
+    await accepted(merged, 'b.txt', 'b\n')
+
+    expect(
+      workspaces
+        .pendingRemoval()
+        .map((p) => p.task.title)
+        .sort(),
+    ).toEqual(['Cancelled', 'Merged'])
+  })
+
+  it('leaves a finished task whose work was never merged alone', async () => {
+    const t = task('Accepted some other way')
+    fx.missions.missionAction(missionId, 'run')
+    fx.missions.markDispatched(t.id)
+    const cwd = await work(t, 'a.txt', 'one\nTWO\nthree\n')
+    fx.missions.agentSubmit('ren', { summary: 'done' }, { source: 'reported' })
+    fx.missions.taskAction(t.id, { action: 'accept' }) // bypassing the merge
+    expect(fx.missions.getTask(t.id)?.status).toBe('done')
+    expect(workspaces.pendingRemoval()).toEqual([])
+    expect(existsSync(cwd)).toBe(true)
+  })
+
+  it('does not remove a folder whose work it could not save', async () => {
+    const t = task('Corrupt')
+    const prepared = await workspaces.prepare(t)
+    write(prepared?.cwd ?? '', 'precious.txt', 'unsaved\n')
+    rmSync(join(prepared?.cwd ?? '', '.git'), { force: true }) // Git can no longer see this folder
+    fx.missions.taskAction(t.id, { action: 'cancel' })
+
+    expect(await workspaces.removeFolder(fx.missions.getTask(t.id) as Task)).toBe(false)
+    expect(readFileSync(join(prepared?.cwd ?? '', 'precious.txt'), 'utf8')).toBe('unsaved\n')
+    expect(workspaces.pendingRemoval()).toHaveLength(1) // still due, to be tried again
+  })
+
+  it('is fine when the folder is already gone', async () => {
+    const t = task('Gone')
+    const prepared = await workspaces.prepare(t)
+    rmSync(prepared?.cwd ?? '', { recursive: true, force: true })
+    fx.missions.taskAction(t.id, { action: 'cancel' })
+    expect(await workspaces.removeFolder(fx.missions.getTask(t.id) as Task)).toBe(true)
+    expect(workspaces.pendingRemoval()).toEqual([])
+  })
+
+  it('will not remove the same folder twice', async () => {
+    const t = task('Once')
+    await workspaces.prepare(t)
+    fx.missions.taskAction(t.id, { action: 'cancel' })
+    const cancelled = fx.missions.getTask(t.id) as Task
+    expect(await workspaces.removeFolder(cancelled)).toBe(true)
+    expect(await workspaces.removeFolder(cancelled)).toBe(false)
+    expect(
+      fx
+        .eventsOf('workspace.changed')
+        .filter((e) => e.type === 'workspace.changed' && e.payload.change === 'removed'),
+    ).toHaveLength(1)
+  })
+
+  it('gives the task its folder back on its branch if it is worked on again', async () => {
+    const t = task('Again')
+    const cwd = await work(t, 'kept.txt', 'kept\n')
+    fx.missions.taskAction(t.id, { action: 'cancel' })
+    await workspaces.removeFolder(fx.missions.getTask(t.id) as Task)
+    expect(existsSync(cwd)).toBe(false)
+
+    const back = await workspaces.prepare(t)
+    expect(back?.cwd).toBe(cwd)
+    expect(readFileSync(join(cwd, 'kept.txt'), 'utf8')).toBe('kept\n')
+    expect(
+      (await workspaces.changes(t.id)).isolated && (await workspaces.changes(t.id)),
+    ).toMatchObject({ folderRemoved: false })
+  })
+
+  it('does nothing for a task that was never isolated', async () => {
+    workspaces = build(undefined, 'no git')
+    const t = task('No git')
+    await workspaces.prepare(t)
+    fx.missions.taskAction(t.id, { action: 'cancel' })
+    expect(workspaces.pendingRemoval()).toEqual([])
+  })
+})
+
+describe('a mission’s branch', () => {
+  it('is not listed until a task has been isolated', async () => {
+    expect(await workspaces.missionBranches(missionId)).toEqual([])
+  })
+
+  it('says where accepted work is collecting, and how far ahead of where it started', async () => {
+    const t = task('Build it')
+    await workspaces.prepare(t)
+    const [before] = await workspaces.missionBranches(missionId)
+    expect(before).toMatchObject({
+      branch: `shokuba/mission/${missionId}`,
+      repoName: 'repo',
+      repoRoot: repo,
+      ahead: 0,
+    })
+    expect(before?.base).toMatch(/^[0-9a-f]{8}$/)
+    expect(before?.base).toBe(sh(repo, 'rev-parse', '--short=8', 'main'))
+
+    const cwd = (await workspaces.prepare(t))?.cwd ?? ''
+    write(cwd, 'a.txt', 'one\nTWO\nthree\n')
+    await workspaces.commit(t)
+    await workspaces.mergeForAccept(t)
+    // One commit of the agent's own; the merge commit that joins it is not counted.
+    expect((await workspaces.missionBranches(missionId))[0]?.ahead).toBe(1)
+  })
+
+  it('leaves out a branch the person has since deleted', async () => {
+    await workspaces.prepare(task('Build it'))
+    sh(repo, 'branch', '-D', `shokuba/mission/${missionId}`)
+    expect(await workspaces.missionBranches(missionId)).toEqual([])
+  })
+
+  it('has nothing to show without Git', async () => {
+    workspaces = build(undefined, 'no git')
+    expect(await workspaces.missionBranches(missionId)).toEqual([])
   })
 })

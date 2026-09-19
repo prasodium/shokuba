@@ -15,6 +15,7 @@ Shokuba is developed **macOS first**. Windows and Linux are designed for from th
 | Manager drafts a mission; nothing sent until run; direct message refused       | ✅    | ✅                                | ✅                                |
 | Git: task worktrees, commit, merge, conflict; main and checkout untouched      | ✅    | ✅                                | ✅                                |
 | A task in its own branch: agent restarted in its folder, commit, accept merges | ✅    | ✅                                | ✅                                |
+| Finished task's folder removed once its agent has left it; branch kept         | ✅    | 🔜 pending CI                     | 🔜 pending CI                     |
 | App window rendered and inspected                                              | ✅    | 🔜 not yet seen on a real desktop | 🔜 not yet seen on a real desktop |
 | Platform-layer branches unit-tested                                            | ✅    | ✅ (also simulated on any host)   | ✅ (also simulated on any host)   |
 | Packaging / installers                                                         | 🔜    | 🔜                                | 🔜                                |

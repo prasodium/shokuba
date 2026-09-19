@@ -1,5 +1,5 @@
 import { promises as fs } from 'node:fs'
-import type { FileChange, TaskChanges } from '@shared/git'
+import type { FileChange, MissionBranchInfo, TaskChanges } from '@shared/git'
 import type { Task } from '@shared/missions'
 import type { Db } from '../database/connection'
 import type { EventStore } from '../events/store'
@@ -54,6 +54,7 @@ interface Row {
   head_commit: string | null
   merge_commit: string | null
   note: string | null
+  removed_at: string | null
 }
 
 /** Enough of a Git repository is left over after a failure to be worth cleaning up. */
@@ -96,6 +97,7 @@ export class WorkspaceService {
     try {
       if (!(await exists(row.worktree_path))) {
         await git.reattachWorktree(row.repo_root, row.worktree_path, row.branch)
+        this.update(task.id, { removed_at: null })
       }
       return await this.describe(row.repo_root, row.worktree_path, row.branch, task)
     } catch (error) {
@@ -144,6 +146,7 @@ export class WorkspaceService {
         head_commit: base,
         merge_commit: null,
         note: null,
+        removed_at: null,
       })
       this.publish(task, { change: 'created', branch })
       return await this.describe(root, dir, branch, task, employee.workingDirectory)
@@ -214,8 +217,12 @@ export class WorkspaceService {
 
   // ---------- when the agent submits ----------
 
-  /** Save the agent's work as a commit. Never throws: a task is not lost over Git. */
-  async commit(task: Task): Promise<void> {
+  /**
+   * Save the agent's work as a commit. Never throws: a task is not lost over Git. Returns whether
+   * the work is safe on the branch (which includes there being nothing to save); false means it
+   * could not be saved, and the folder must not be touched.
+   */
+  async commit(task: Task): Promise<boolean> {
     const { git } = this.deps
     const row = this.row(task.id)
     if (
@@ -226,7 +233,7 @@ export class WorkspaceService {
       !row.worktree_path ||
       !row.branch
     ) {
-      return
+      return true // nothing of Shokuba's to save
     }
     try {
       const author = this.deps.employees.get(task.assigneeId ?? '')?.name ?? 'Shokuba'
@@ -239,11 +246,13 @@ export class WorkspaceService {
       const head = made ?? (await git.resolve(row.repo_root, row.branch)) ?? row.head_commit
       this.update(task.id, { head_commit: head, note: null })
       if (made) this.publish(task, { change: 'committed', branch: row.branch, commit: made })
+      return true
     } catch (error) {
       this.deps.logger.warn('workspace.commit.failed', { taskId: task.id, ...describeError(error) })
       this.update(task.id, {
         note: `Shokuba could not save the agent's work as a commit: ${reasonOf(error)}`,
       })
+      return false
     }
   }
 
@@ -275,6 +284,7 @@ export class WorkspaceService {
         branch: row.branch,
         state: row.state === 'merged' ? 'merged' : 'active',
         files,
+        folderRemoved: row.removed_at !== null,
         diff: text,
         truncated,
         note: row.note,
@@ -325,6 +335,79 @@ export class WorkspaceService {
     return { kind: outcome.kind }
   }
 
+  // ---------- cleaning up ----------
+
+  /**
+   * Tasks whose working folder is due to be removed: the task is finished, its work is safe on
+   * a branch (merged into the mission, or cancelled and so kept where it is), and the folder is
+   * still there. A finished task whose work was never merged is left alone, not guessed at.
+   */
+  pendingRemoval(): Array<{ task: Task; folder: string }> {
+    const rows = this.deps.db
+      .prepare(
+        "SELECT * FROM task_workspaces WHERE removed_at IS NULL AND worktree_path IS NOT NULL AND state IN ('active', 'merged')",
+      )
+      .all() as Row[]
+    const due: Array<{ task: Task; folder: string }> = []
+    for (const row of rows) {
+      const task = this.deps.missions.getTask(row.task_id)
+      if (!task || !row.worktree_path) continue
+      const finished = task.status === 'done' || task.status === 'cancelled'
+      const safe = row.state === 'merged' || task.status === 'cancelled'
+      if (finished && safe) due.push({ task, folder: row.worktree_path })
+    }
+    return due
+  }
+
+  /**
+   * Remove a finished task's working folder; its branch stays, so its work can still be read.
+   * Whatever is uncommitted in the folder is saved to the branch first, and if that cannot be
+   * done the folder is left exactly as it is. Returns whether the folder was removed.
+   */
+  async removeFolder(task: Task): Promise<boolean> {
+    const { git } = this.deps
+    const row = this.row(task.id)
+    if (!git || !row?.repo_root || !row.worktree_path || !row.branch || row.removed_at) return false
+    try {
+      if (await exists(row.worktree_path)) {
+        if (!(await this.commit(task))) return false
+        await git.removeWorktree(row.repo_root, row.worktree_path)
+      }
+      this.update(task.id, { removed_at: this.stamp() })
+      this.publish(task, { change: 'removed', branch: row.branch })
+      return true
+    } catch (error) {
+      this.deps.logger.warn('workspace.remove.failed', { taskId: task.id, ...describeError(error) })
+      return false
+    }
+  }
+
+  /** Where a mission's accepted work is collecting, for the person to review and merge themselves. */
+  async missionBranches(missionId: string): Promise<MissionBranchInfo[]> {
+    const { git } = this.deps
+    if (!git) return []
+    const rows = this.deps.db
+      .prepare('SELECT * FROM mission_branches WHERE mission_id = ? ORDER BY created_at')
+      .all(missionId) as Array<{ repo_root: string; branch: string; base_commit: string }>
+    const found: MissionBranchInfo[] = []
+    for (const row of rows) {
+      try {
+        // A branch the person has since deleted is simply not listed.
+        if (!(await git.resolve(row.repo_root, row.branch))) continue
+        found.push({
+          branch: row.branch,
+          repoName: pathApi(this.deps.platform).basename(row.repo_root),
+          repoRoot: row.repo_root,
+          base: await git.shortId(row.repo_root, row.base_commit),
+          ahead: await git.commitsAhead(row.repo_root, row.base_commit, row.branch),
+        })
+      } catch (error) {
+        this.deps.logger.warn('workspace.branch.failed', { missionId, ...describeError(error) })
+      }
+    }
+    return found
+  }
+
   // ---------- internals ----------
 
   private async discard(root: string, dir: string): Promise<void> {
@@ -346,6 +429,7 @@ export class WorkspaceService {
       head_commit: null,
       merge_commit: null,
       note: reason.slice(0, TEXT_LIMIT),
+      removed_at: null,
     })
     this.publish(task, { change: 'unavailable', reason: reason.slice(0, TEXT_LIMIT) })
     return null
@@ -361,12 +445,12 @@ export class WorkspaceService {
     this.deps.db
       .prepare(
         `INSERT INTO task_workspaces
-           (task_id, mission_id, state, repo_root, branch, worktree_path, base_commit, head_commit, merge_commit, note, created_at, updated_at)
-         VALUES (@taskId, @missionId, @state, @repo_root, @branch, @worktree_path, @base_commit, @head_commit, @merge_commit, @note, @ts, @ts)
+           (task_id, mission_id, state, repo_root, branch, worktree_path, base_commit, head_commit, merge_commit, note, removed_at, created_at, updated_at)
+         VALUES (@taskId, @missionId, @state, @repo_root, @branch, @worktree_path, @base_commit, @head_commit, @merge_commit, @note, @removed_at, @ts, @ts)
          ON CONFLICT (task_id) DO UPDATE SET
            state = @state, repo_root = @repo_root, branch = @branch, worktree_path = @worktree_path,
            base_commit = @base_commit, head_commit = @head_commit, merge_commit = @merge_commit,
-           note = @note, updated_at = @ts`,
+           note = @note, removed_at = @removed_at, updated_at = @ts`,
       )
       .run({ taskId: task.id, missionId: task.missionId, ts, ...values })
   }
@@ -384,7 +468,7 @@ export class WorkspaceService {
   private publish(
     task: Task,
     detail: {
-      change: 'created' | 'committed' | 'merged' | 'conflict' | 'unavailable'
+      change: 'created' | 'committed' | 'merged' | 'conflict' | 'unavailable' | 'removed'
       branch?: string
       commit?: string
       files?: string[]

@@ -14,6 +14,7 @@ import type { Env, PlatformId } from '../platform'
 import { createClaudeCodeAdapter } from '../providers/claude-code/adapter'
 import { createMockAdapter } from '../providers/mock/adapter'
 import { ProviderRegistry } from '../providers/registry'
+import { WorkspaceCleaner } from '../workspaces/cleaner'
 import { WorkspaceService } from '../workspaces/service'
 import { TaskWorkflow } from '../workspaces/workflow'
 import { HookServer } from './hook-server'
@@ -70,6 +71,8 @@ export interface AgentServices {
   workspaces: WorkspaceService
   /** What a person's decision on a task does, including merging accepted work. */
   tasks: TaskWorkflow
+  /** Removes finished tasks' working folders once no agent is in them. */
+  cleaner: WorkspaceCleaner
   views: AgentViews
   /** Stops every running agent, then closes the report listener. */
   close(): Promise<void>
@@ -176,7 +179,9 @@ export async function createAgentServices(
       },
       {
         // The agent is saying it is done: save what is in its working folder as a commit first.
-        beforeSubmit: (task) => workspaces.commit(task),
+        beforeSubmit: async (task) => {
+          await workspaces.commit(task)
+        },
       },
     ),
   )
@@ -239,6 +244,13 @@ export async function createAgentServices(
     logger: services.logger,
   })
   const tasks = new TaskWorkflow(missions, workspaces)
+  const cleaner = new WorkspaceCleaner({
+    workspaces,
+    events: services.events,
+    inUse: () => runtime.runningFolders(),
+    platform: options.platform,
+    logger: services.logger,
+  })
 
   const restartWaitMs = options.restartWaitMs ?? DEFAULT_RESTART_WAIT_MS
   const dispatcher = new Dispatcher({
@@ -269,6 +281,7 @@ export async function createAgentServices(
   breaker.start()
   router.start()
   dispatcher.start()
+  cleaner.start()
 
   const views = new AgentViews(
     services.events.bus,
@@ -288,8 +301,10 @@ export async function createAgentServices(
     dispatcher,
     workspaces,
     tasks,
+    cleaner,
     views,
     async close() {
+      cleaner.stop()
       breaker.stop()
       router.stop()
       dispatcher.stop()

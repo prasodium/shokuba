@@ -174,6 +174,11 @@ export class AgentRuntime {
     }
   }
 
+  /** The folders every running agent was started in. */
+  runningFolders(): string[] {
+    return [...this.sessions.values()].map((session) => session.cwd)
+  }
+
   /** The folder a running agent was started in, or undefined if it is not running. */
   cwdOf(employeeId: string): string | undefined {
     return this.sessions.get(employeeId)?.cwd

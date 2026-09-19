@@ -10,7 +10,7 @@ import {
   type PermissionMode,
 } from '../employees'
 import type { ShokubaEvent } from '../events/schema'
-import type { TaskChanges } from '../git'
+import type { MissionBranchInfo, TaskChanges } from '../git'
 import {
   CONVERSATION_ACTIONS,
   HumanMessageInputSchema,
@@ -171,6 +171,8 @@ export interface ShokubaApi {
     /** Run, pause or cancel. Running starts handing ready tasks to idle employees. */
     action(missionId: string, action: MissionAction): Promise<Mission>
     archive(missionId: string): Promise<void>
+    /** Where the mission's accepted work is collecting, for you to review and merge. */
+    branches(missionId: string): Promise<MissionBranchInfo[]>
   }
   tasks: {
     create(input: TaskInput): Promise<Task>

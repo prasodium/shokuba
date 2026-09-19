@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as pty from 'node-pty'
@@ -897,7 +897,20 @@ async function isolationPipeline(
     if (merged !== 'notes from the agent') throw new Error(`the mission branch has "${merged}"`)
     if (plain('rev-parse', 'main') !== mainBefore) throw new Error('main moved')
     if (plain('status', '--short') !== '') throw new Error('your checkout was changed')
-    return 'the agent was restarted in the task’s own folder; its work was committed on submit; sent back and resubmitted in the same folder; accepted into the mission branch; main and your checkout untouched'
+
+    // 4. The mission's branch is reported, and once the agent has left the finished task's folder
+    //    (here, by stopping it) the folder is removed while its branch and work stay.
+    const [branch] = await agents.workspaces.missionBranches(mission.id)
+    if (branch?.ahead !== 1) throw new Error(`the mission branch reports ${branch?.ahead} commits`)
+    if (!existsSync(folder))
+      throw new Error('the folder was removed while its agent was still in it')
+    await agents.runtime.stop(employee.id)
+    await waitFor(() => !existsSync(folder), 'the finished task’s folder to be removed', 20_000)
+    if (plain('branch', '--list', `shokuba/task/${task.id}`) === '')
+      throw new Error('the task branch was removed')
+    const after = await agents.workspaces.changes(task.id)
+    if (!after.isolated || !after.folderRemoved) throw new Error('the removal was not recorded')
+    return 'the agent was restarted in the task’s own folder; its work was committed on submit; sent back and resubmitted in the same folder; accepted into the mission branch; main and your checkout untouched; the folder removed once its agent left, the branch kept'
   } catch (error) {
     const tail = employeeId
       ? JSON.stringify(agents.runtime.replay(employeeId).data.slice(-300))

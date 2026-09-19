@@ -30,6 +30,8 @@ export type TaskChanges =
       /** `active`: still being worked on or awaiting review. `merged`: accepted into the mission branch. */
       state: 'active' | 'merged'
       files: FileChange[]
+      /** True once the task's working folder has been removed; the branch and this diff remain. */
+      folderRemoved: boolean
       /** The changes as text, cut off at a size the app can show. */
       diff: string
       truncated: boolean
@@ -42,4 +44,15 @@ export const CONFLICT_NOTE_PREFIX = 'Your work could not be accepted yet:'
 
 export function isConflictNote(note: string | null): boolean {
   return note !== null && note.startsWith(CONFLICT_NOTE_PREFIX)
+}
+
+/** Where a mission's accepted work is collecting, for the person to review and merge themselves. */
+export interface MissionBranchInfo {
+  branch: string
+  /** The repository's folder name, and its full path for the commands to run there. */
+  repoName: string
+  repoRoot: string
+  /** The commit the branch was cut from (short), and how many commits it is ahead of it. */
+  base: string
+  ahead: number
 }

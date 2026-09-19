@@ -135,6 +135,27 @@ export class GitService {
     return this.tryRevParse(repo, assertStartPoint(revision))
   }
 
+  /** How many commits `branch` has that `base` does not, not counting merge commits. */
+  async commitsAhead(repo: string, base: string, branch: string): Promise<number> {
+    const { stdout } = await this.git(repo, [
+      'rev-list',
+      '--count',
+      '--no-merges',
+      `${assertStartPoint(base)}..${assertStartPoint(branch)}`,
+    ])
+    return Number(stdout.trim()) || 0
+  }
+
+  /** A commit's short id, for showing a person. */
+  async shortId(repo: string, commit: string): Promise<string> {
+    const { stdout } = await this.git(repo, [
+      'rev-parse',
+      '--short=8',
+      `${assertStartPoint(commit)}^{commit}`,
+    ])
+    return stdout.trim()
+  }
+
   /** What `head` changed since it split from `base`: for reviewing a task's work. */
   async changedFiles(repo: string, base: string, head: string): Promise<FileChange[]> {
     const { stdout } = await this.git(repo, [

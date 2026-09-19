@@ -28,6 +28,7 @@ export const IPC = {
   missionsUpdate: 'shokuba:missions:update',
   missionsAction: 'shokuba:missions:action',
   missionsArchive: 'shokuba:missions:archive',
+  missionsBranches: 'shokuba:missions:branches',
   tasksCreate: 'shokuba:tasks:create',
   tasksUpdate: 'shokuba:tasks:update',
   tasksAction: 'shokuba:tasks:action',

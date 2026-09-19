@@ -195,7 +195,7 @@ export const EventInputSchema = z.discriminatedUnion('type', [
     z.strictObject({
       taskId: id,
       missionId: id,
-      change: z.enum(['created', 'committed', 'merged', 'conflict', 'unavailable']),
+      change: z.enum(['created', 'committed', 'merged', 'conflict', 'unavailable', 'removed']),
       branch: z.string().max(200).optional(),
       commit: z.string().max(80).optional(),
       files: z.array(z.string().max(300)).max(50).optional(),

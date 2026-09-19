@@ -62,6 +62,8 @@ export function TaskChangesView({ taskId, assignee, version }: Props) {
           ? ', and accepted into the mission branch.'
           : '. Nothing reaches your project until you accept it.'}{' '}
         {summarizeChanges(changes.files)}.
+        {changes.folderRemoved &&
+          ' Its working folder has been removed; the work stays on the branch.'}
       </p>
       {changes.note && <p className="field-error">{changes.note}</p>}
       {changes.files.length > 0 && (

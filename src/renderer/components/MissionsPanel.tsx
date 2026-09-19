@@ -4,6 +4,7 @@ import { authorNote } from '../missions/hints'
 import { MISSION_STATUS_LABELS } from '../missions/labels'
 import { selectedMission, useMissions } from '../store/missions'
 import { useOffice } from '../store/office'
+import { MissionBranchView } from './MissionBranchView'
 import { MissionDialog } from './MissionDialog'
 import { TaskDetail } from './TaskDetail'
 import { TaskDialog } from './TaskDialog'
@@ -149,6 +150,10 @@ export function MissionsPanel() {
             </div>
           </div>
 
+          <MissionBranchView
+            missionId={mission.id}
+            version={`${mission.updatedAt}:${tasks.map((t) => `${t.id}${t.status}`).join(',')}`}
+          />
           {authorNote(mission, names) && (
             <p className="mission-author" role="note">
               {authorNote(mission, names)}

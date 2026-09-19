@@ -137,34 +137,9 @@ function current(employee: Employee): Agent {
   return { employee, pty: spawned.pty, options: spawned.options, launch }
 }
 
-beforeEach(async () => {
-  dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'shokuba-isolation-')))
-  noConfig = join(dir, 'no-git-config')
-  writeFileSync(noConfig, '')
-  repo = join(dir, 'repo')
-  mkdirSync(repo)
-  sh(repo, 'init', '-q', '-b', 'main')
-  writeFileSync(join(repo, 'a.txt'), 'one\ntwo\nthree\n')
-  sh(repo, 'add', '-A')
-  sh(repo, 'commit', '-qm', 'base')
-
-  launches.length = 0
-  spawns.length = 0
-  reportIn = true
-  services = createServices({
-    dataDir: join(dir, 'data'),
-    version: 'test',
-    platform: toPlatformId(),
-    logger: createLogger(() => {}),
-  })
-  git = await GitService.locate({
-    platform: toPlatformId(),
-    env: process.env,
-    home: homedir(),
-    dataDir: join(dir, 'data'),
-    gitEnv: { GIT_CONFIG_GLOBAL: noConfig, GIT_CONFIG_NOSYSTEM: '1' },
-  })
-  agents = await createAgentServices(services, {
+/** Bring the agent services up over the current database, as Shokuba does at startup. */
+async function startAgents(): Promise<AgentServices> {
+  const started = await createAgentServices(services, {
     platform: toPlatformId(),
     env: { PATH: '/usr/bin' },
     home: '/home/u',
@@ -192,7 +167,7 @@ beforeEach(async () => {
     },
   })
   // Never signal a real process: these pids are made up. "Killing" one just makes it exit.
-  ;(agents.runtime as unknown as { killProcess: (plan: TerminationPlan) => void }).killProcess = (
+  ;(started.runtime as unknown as { killProcess: (plan: TerminationPlan) => void }).killProcess = (
     plan,
   ) => {
     const target = spawns.find(({ pty }) =>
@@ -200,6 +175,37 @@ beforeEach(async () => {
     )
     target?.pty.exit()
   }
+  return started
+}
+
+beforeEach(async () => {
+  dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'shokuba-isolation-')))
+  noConfig = join(dir, 'no-git-config')
+  writeFileSync(noConfig, '')
+  repo = join(dir, 'repo')
+  mkdirSync(repo)
+  sh(repo, 'init', '-q', '-b', 'main')
+  writeFileSync(join(repo, 'a.txt'), 'one\ntwo\nthree\n')
+  sh(repo, 'add', '-A')
+  sh(repo, 'commit', '-qm', 'base')
+
+  launches.length = 0
+  spawns.length = 0
+  reportIn = true
+  services = createServices({
+    dataDir: join(dir, 'data'),
+    version: 'test',
+    platform: toPlatformId(),
+    logger: createLogger(() => {}),
+  })
+  git = await GitService.locate({
+    platform: toPlatformId(),
+    env: process.env,
+    home: homedir(),
+    dataDir: join(dir, 'data'),
+    gitEnv: { GIT_CONFIG_GLOBAL: noConfig, GIT_CONFIG_NOSYSTEM: '1' },
+  })
+  agents = await startAgents()
 })
 
 afterEach(async () => {
@@ -430,5 +436,123 @@ describe('what the person is told', () => {
     const changes = await agents.workspaces.changes(task.id)
     expect(changes).toMatchObject({ isolated: true, branch: `shokuba/task/${task.id}`, files: [] })
     expect(existsSync(current(ren).options.cwd)).toBe(true)
+  })
+})
+
+describe('cleaning up after a task', () => {
+  /** A task Ren has finished and the person has accepted; returns its working folder. */
+  async function acceptedTask(
+    who: Employee,
+    title: string,
+    file: string,
+  ): Promise<{ task: Task; folder: string; mission: Mission }> {
+    const { mission, tasks } = launchMission([title, who])
+    const task = tasks[0] as Task
+    await vi.waitFor(() => expect(statusOf(task.id)).toBe('in_progress'))
+    const folder = await doWork(who, file, `${title}\n`)
+    await agents.tasks.action(task.id, { action: 'accept' })
+    return { task, folder, mission }
+  }
+
+  it('keeps the folder while its agent is still in it, and removes it once the agent has moved on', async () => {
+    const ren = await hire('Ren')
+    const mission = agents.missions.createMission({ title: 'Two steps' })
+    const first = agents.missions.createTask({
+      missionId: mission.id,
+      title: 'First',
+      assigneeId: ren.id,
+    })
+    const second = agents.missions.createTask({
+      missionId: mission.id,
+      title: 'Second',
+      assigneeId: ren.id,
+      dependsOn: [first.id],
+    })
+    agents.missions.missionAction(mission.id, 'run')
+    await vi.waitFor(() => expect(statusOf(first.id)).toBe('in_progress'))
+    const folder = await doWork(ren, 'first.txt', 'First\n')
+
+    // Submitted, not yet accepted: its folder is kept, whatever else happens.
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    expect(existsSync(folder)).toBe(true)
+
+    // Accepting it hands Ren the second task, in a folder of its own; the first is now unoccupied.
+    await agents.tasks.action(first.id, { action: 'accept' })
+    await vi.waitFor(() => expect(statusOf(second.id)).toBe('in_progress'))
+    await vi.waitFor(() => expect(existsSync(folder)).toBe(false))
+
+    // The branch, and the work on it, stay, and can still be reviewed.
+    expect(sh(repo, 'branch', '--list', `shokuba/task/${first.id}`)).toContain(first.id)
+    expect(sh(repo, 'show', `shokuba/task/${first.id}:first.txt`)).toBe('First')
+    expect(await agents.workspaces.changes(first.id)).toMatchObject({
+      isolated: true,
+      state: 'merged',
+      folderRemoved: true,
+    })
+    // The folder the agent is working in now was not touched.
+    expect(existsSync(current(ren).options.cwd)).toBe(true)
+    expect(current(ren).options.cwd).not.toBe(folder)
+  })
+
+  it('removes it when the agent is stopped', async () => {
+    const ren = await hire('Ren')
+    const { folder } = await acceptedTask(ren, 'First', 'first.txt')
+    expect(existsSync(folder)).toBe(true)
+    await agents.runtime.stop(ren.id)
+    await vi.waitFor(() => expect(existsSync(folder)).toBe(false))
+  })
+
+  it('saves a cancelled task’s unsaved work to its branch before removing its folder', async () => {
+    const ren = await hire('Ren')
+    const { mission, tasks } = launchMission(['Abandoned', ren])
+    const task = tasks[0] as Task
+    await vi.waitFor(() => expect(statusOf(task.id)).toBe('in_progress'))
+    const folder = current(ren).options.cwd
+    writeFileSync(join(folder, 'unsaved.txt'), 'the agent had not submitted this\n')
+
+    agents.missions.taskAction(task.id, { action: 'cancel' })
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    expect(existsSync(folder)).toBe(true) // Ren is still in it
+
+    await agents.runtime.stop(ren.id)
+    await vi.waitFor(() => expect(existsSync(folder)).toBe(false))
+    expect(sh(repo, 'show', `shokuba/task/${task.id}:unsaved.txt`)).toBe(
+      'the agent had not submitted this',
+    )
+    expect(sh(repo, 'branch', '--list', `shokuba/mission/${mission.id}`)).toContain(mission.id)
+  })
+
+  it('leaves a task that is only waiting for review alone', async () => {
+    const ren = await hire('Ren')
+    const { tasks } = launchMission(['Build it', ren])
+    const task = tasks[0] as Task
+    await vi.waitFor(() => expect(statusOf(task.id)).toBe('in_progress'))
+    const folder = await doWork(ren, 'a.txt', 'one\nTWO\nthree\n')
+    await agents.runtime.stop(ren.id)
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(statusOf(task.id)).toBe('submitted')
+    expect(existsSync(folder)).toBe(true) // not finished, so its folder is kept
+  })
+
+  it('clears folders an earlier run left behind as soon as Shokuba starts', async () => {
+    const ren = await hire('Ren')
+    const { folder } = await acceptedTask(ren, 'First', 'first.txt')
+    // Shokuba quits with the accepted task's folder still on disk (its agent was in it).
+    await agents.close()
+    expect(existsSync(folder)).toBe(true)
+
+    agents = await startAgents()
+    await vi.waitFor(() => expect(existsSync(folder)).toBe(false))
+  })
+
+  it('shows where the mission’s accepted work is collecting', async () => {
+    const ren = await hire('Ren')
+    const { mission } = await acceptedTask(ren, 'First', 'first.txt')
+    const [branch] = await agents.workspaces.missionBranches(mission.id)
+    expect(branch).toMatchObject({
+      branch: `shokuba/mission/${mission.id}`,
+      repoName: 'repo',
+      ahead: 1,
+    })
   })
 })

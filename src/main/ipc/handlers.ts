@@ -142,6 +142,9 @@ export function registerIpc(
   handle(IPC.missionsArchive, MissionIdRequestSchema, trusted, ({ missionId }) => {
     agents.missions.archiveMission(missionId)
   })
+  handle(IPC.missionsBranches, MissionIdRequestSchema, trusted, ({ missionId }) =>
+    agents.workspaces.missionBranches(missionId),
+  )
   handle(IPC.tasksCreate, TaskCreateRequestSchema, trusted, (input) =>
     agents.missions.createTask(input),
   )

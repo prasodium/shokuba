@@ -45,6 +45,7 @@ const api: ShokubaApi = {
     update: (missionId, patch) => ipcRenderer.invoke(IPC.missionsUpdate, { missionId, patch }),
     action: (missionId, action) => ipcRenderer.invoke(IPC.missionsAction, { missionId, action }),
     archive: (missionId) => ipcRenderer.invoke(IPC.missionsArchive, { missionId }),
+    branches: (missionId) => ipcRenderer.invoke(IPC.missionsBranches, { missionId }),
   },
   tasks: {
     create: (input) => ipcRenderer.invoke(IPC.tasksCreate, input),

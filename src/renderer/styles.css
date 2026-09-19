@@ -1260,3 +1260,29 @@ h4 {
 .diff-meta {
   color: var(--muted);
 }
+
+/* Where a mission's accepted work collects, and how to merge it. */
+.mission-branch {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.mission-branch p {
+  margin: 0 0 6px;
+}
+.commands {
+  margin: 4px 0 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
