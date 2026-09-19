@@ -734,3 +734,51 @@ describe('AgentRuntime tools endpoint', () => {
     expect(await callTool(1, 'get_current_task')).toContain('Only Ren')
   })
 })
+
+describe('AgentRuntime, one delivery at a time', () => {
+  async function idleAgent(): Promise<Employee> {
+    const mika = await employee()
+    await agents.runtime.start(mika)
+    await report({ hook_event_name: 'SessionStart' })
+    return mika
+  }
+
+  it('does not accept a second delivery until the agent has started a turn on the first', async () => {
+    const mika = await idleAgent()
+    await agents.runtime.deliverPrompt(mika.id, 'first')
+    expect(agents.runtime.deliveryBlocker(mika.id)).toBe('is still receiving something')
+    await expect(agents.runtime.deliverPrompt(mika.id, 'second')).rejects.toMatchObject({
+      code: 'not-ready',
+    })
+    expect(spawned[0]?.pty.written.filter((w) => w === '\r')).toHaveLength(1)
+  })
+
+  it('accepts the next delivery once the agent reports starting to work on the first', async () => {
+    const mika = await idleAgent()
+    await agents.runtime.deliverPrompt(mika.id, 'first')
+    await report({ hook_event_name: 'UserPromptSubmit' })
+    await report({ hook_event_name: 'Stop' })
+    expect(agents.runtime.deliveryBlocker(mika.id)).toBeNull()
+  })
+
+  it('does not stay blocked forever if the agent never reports', async () => {
+    vi.useFakeTimers()
+    try {
+      const mika = await idleAgent()
+      const delivery = agents.runtime.deliverPrompt(mika.id, 'first')
+      await vi.advanceTimersByTimeAsync(10)
+      await delivery
+      expect(agents.runtime.deliveryBlocker(mika.id)).toBe('is still receiving something')
+      await vi.advanceTimersByTimeAsync(6_000)
+      expect(agents.runtime.deliveryBlocker(mika.id)).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('frees the agent again if the paste itself fails', async () => {
+    const mika = await idleAgent()
+    spawned[0]?.pty.exit(0)
+    await expect(agents.runtime.deliverPrompt(mika.id, 'x')).rejects.toBeDefined()
+  })
+})

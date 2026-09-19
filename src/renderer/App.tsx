@@ -2,10 +2,13 @@ import { useEffect, useState } from 'react'
 import type { Employee } from '@shared/employees'
 import { EmployeeDialog } from './components/EmployeeDialog'
 import { EventDock } from './components/EventDock'
+import { MessagesPanel } from './components/MessagesPanel'
 import { MissionsPanel } from './components/MissionsPanel'
 import { OfficeView } from './components/OfficeView'
 import { Roster } from './components/Roster'
 import { TerminalSection } from './components/TerminalSection'
+import { attentionCount } from './messages/helpers'
+import { useMessages } from './store/messages'
 import { useMissions } from './store/missions'
 import { useOffice } from './store/office'
 
@@ -24,7 +27,9 @@ export function App() {
 
   useEffect(() => connect(), [connect])
 
-  const [tab, setTab] = useState<'terminal' | 'missions'>('terminal')
+  const [tab, setTab] = useState<'terminal' | 'missions' | 'messages'>('terminal')
+  // Unread messages to you, and conversations stopped as possible loops.
+  const needsYou = useMessages((s) => attentionCount(s.conversations))
   // Work an agent has finished and is waiting for a person to accept.
   const awaitingReview = useMissions((s) =>
     s.missions.reduce(
@@ -75,7 +80,7 @@ export function App() {
           <Roster onNew={openNew} onEdit={openEdit} />
         </div>
         <div className="right">
-          <div className="tabs" role="tablist" aria-label="Terminal and missions">
+          <div className="tabs" role="tablist" aria-label="Terminal, missions and messages">
             <button
               type="button"
               role="tab"
@@ -99,8 +104,31 @@ export function App() {
                 </span>
               )}
             </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'messages'}
+              className="tab"
+              onClick={() => setTab('messages')}
+            >
+              Messages
+              {needsYou > 0 && (
+                <span
+                  className="badge-count"
+                  title="Unread messages, and conversations waiting for you"
+                >
+                  {needsYou}
+                </span>
+              )}
+            </button>
           </div>
-          {tab === 'terminal' ? <TerminalSection /> : <MissionsPanel />}
+          {tab === 'terminal' ? (
+            <TerminalSection />
+          ) : tab === 'missions' ? (
+            <MissionsPanel />
+          ) : (
+            <MessagesPanel />
+          )}
         </div>
       </main>
 

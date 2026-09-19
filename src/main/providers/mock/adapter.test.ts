@@ -70,4 +70,11 @@ describe('mock (demo) adapter', () => {
     const launch = createMockAdapter().buildLaunch(input('darwin', '/bin/node'))
     expect(Object.keys(launch.env)).not.toContain('SHOKUBA_HOOK_TOKEN')
   })
+
+  it('can be continued the same way the real agent can, so the demo exercises the same path', () => {
+    expect(createMockAdapter().observation.continuation?.('x')).toEqual({
+      decision: 'block',
+      reason: 'x',
+    })
+  })
 })

@@ -2,10 +2,13 @@ import { homedir } from 'node:os'
 import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron'
 import { z } from 'zod'
 import {
+  ConversationActionRequestSchema,
+  ConversationIdRequestSchema,
   EmployeeCreateRequestSchema,
   EmployeeIdRequestSchema,
   EmployeeUpdateRequestSchema,
   EventsListRequestSchema,
+  MessageSendRequestSchema,
   MissionActionRequestSchema,
   MissionCreateRequestSchema,
   MissionIdRequestSchema,
@@ -150,6 +153,23 @@ export function registerIpc(
   handle(IPC.tasksRemove, TaskIdRequestSchema, trusted, ({ taskId }) => {
     agents.missions.removeTask(taskId)
   })
+
+  handle(IPC.messagesList, z.undefined(), trusted, () => agents.messages.listConversations())
+  handle(IPC.messagesSend, MessageSendRequestSchema, trusted, (input) =>
+    agents.messages.sendFromHuman(input),
+  )
+  handle(IPC.messagesRead, ConversationIdRequestSchema, trusted, ({ conversationId }) => {
+    agents.messages.markRead(conversationId)
+  })
+  handle(
+    IPC.messagesAction,
+    ConversationActionRequestSchema,
+    trusted,
+    ({ conversationId, action }) =>
+      action === 'resume'
+        ? agents.messages.resume(conversationId)
+        : agents.messages.close(conversationId),
+  )
 
   handle(IPC.terminalWrite, TerminalWriteRequestSchema, trusted, ({ employeeId, data }) => {
     agents.runtime.write(employeeId, data)

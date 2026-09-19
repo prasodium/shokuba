@@ -33,5 +33,10 @@ export const IPC = {
   tasksAction: 'shokuba:tasks:action',
   tasksRemove: 'shokuba:tasks:remove',
 
+  messagesList: 'shokuba:messages:list',
+  messagesSend: 'shokuba:messages:send',
+  messagesRead: 'shokuba:messages:read',
+  messagesAction: 'shokuba:messages:action',
+
   systemPickDirectory: 'shokuba:system:pick-directory',
 } as const

@@ -45,7 +45,7 @@ describe('claude-code adapter', () => {
       '--mcp-config',
       `/data/agents/e1/${MCP_CONFIG_FILE}`,
       '--allowedTools',
-      'mcp__shokuba__get_current_task,mcp__shokuba__submit_task,mcp__shokuba__report_blocked',
+      'mcp__shokuba__get_current_task,mcp__shokuba__submit_task,mcp__shokuba__report_blocked,mcp__shokuba__list_teammates,mcp__shokuba__send_message',
     ])
     const flag = launch.args.indexOf('--append-system-prompt')
     expect(launch.args[flag + 1]).toContain('You are Mika, Engineer')
@@ -58,7 +58,7 @@ describe('claude-code adapter', () => {
         adapter.buildLaunch(input()).args.indexOf('--allowedTools') + 1
       ]
     expect(allowed?.split(',').every((tool) => tool.startsWith('mcp__shokuba__'))).toBe(true)
-    expect(allowed?.split(',')).toHaveLength(3)
+    expect(allowed?.split(',')).toHaveLength(5)
   })
 
   it("writes an MCP config that points at this agent's endpoint and takes the token from the environment", () => {
@@ -119,6 +119,14 @@ describe('claude-code adapter', () => {
     ]) {
       expect(names).not.toContain(other)
     }
+  })
+})
+
+describe('continuing an agent', () => {
+  it('uses the top-level block decision Claude Code honours (the nested form is ignored)', () => {
+    const reply = adapter.observation.continuation?.('do the next thing')
+    expect(reply).toEqual({ decision: 'block', reason: 'do the next thing' })
+    expect(JSON.stringify(reply)).not.toContain('hookSpecificOutput')
   })
 })
 

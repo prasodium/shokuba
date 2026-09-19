@@ -6,6 +6,7 @@ import type { AppInfo, ProviderInfo } from '@shared/ipc/api'
 import { errorMessage } from '../lib/errors'
 import { foldEvent, foldEvents } from './fold'
 import { useEvents } from './events'
+import { useMessages } from './messages'
 import { useMissions } from './missions'
 
 interface OfficeState {
@@ -85,6 +86,9 @@ export const useOffice = create<OfficeState>((set) => {
         if (event.type.startsWith('mission.') || event.type.startsWith('task.')) {
           void useMissions.getState().refresh()
         }
+        if (event.type.startsWith('message.') || event.type.startsWith('conversation.')) {
+          void useMessages.getState().refresh()
+        }
         // The roster changes when an employee is created, edited or archived.
         if (event.type === 'agent.created' || event.type === 'employee.updated') {
           void refreshEmployees()
@@ -111,6 +115,7 @@ export const useOffice = create<OfficeState>((set) => {
 
           useEvents.getState().ingest(history)
           void useMissions.getState().refresh()
+          void useMessages.getState().refresh()
           const views = Object.fromEntries(snapshot.views.map((view) => [view.employeeId, view]))
           const folded = foldEvents({ views, lastSeq: snapshot.lastSeq }, buffered)
           useEvents.getState().ingest(buffered)

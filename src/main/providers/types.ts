@@ -108,4 +108,10 @@ export interface ObservationChannel {
   readonly source: Extract<EventSource, 'reported' | 'simulated'>
   /** Translate one raw report. Unknown or malformed input yields no signals, never a throw. */
   parse(raw: unknown): AgentSignal[]
+  /**
+   * How to answer the report that ends a turn so the agent keeps working, with `text` as its
+   * next instruction. Absent when the provider cannot be continued this way (Shokuba then
+   * pastes into its terminal instead).
+   */
+  continuation?(text: string): unknown
 }

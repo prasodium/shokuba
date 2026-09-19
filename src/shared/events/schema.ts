@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { CONVERSATION_STATUSES, MESSAGE_KINDS } from '../messages'
 import { MISSION_STATUSES, TASK_STATUSES } from '../missions'
 import { RUNTIME_STATES } from '../types/agent'
 
@@ -144,6 +145,46 @@ export const EventInputSchema = z.discriminatedUnion('type', [
       attempt: z.number().int().min(1),
     }),
   ),
+
+  // Messages and conversations. Bodies are never in events; they live in the messages table.
+  event(
+    'conversation.created',
+    z.strictObject({ conversationId: id, subject: z.string().max(200) }),
+  ),
+  event(
+    'conversation.status.changed',
+    z.strictObject({
+      conversationId: id,
+      from: z.enum(CONVERSATION_STATUSES),
+      to: z.enum(CONVERSATION_STATUSES),
+      reason: z.string().max(500).optional(),
+    }),
+  ),
+  event(
+    'message.sent',
+    z.strictObject({
+      messageId: id,
+      conversationId: id,
+      fromId: id,
+      toId: id,
+      kind: z.enum(MESSAGE_KINDS),
+      hop: z.number().int().min(1),
+    }),
+  ),
+  event(
+    'message.delivered',
+    z.strictObject({
+      messageId: id,
+      conversationId: id,
+      toId: id,
+      via: z.enum(['continuation', 'paste']),
+    }),
+  ),
+  event(
+    'message.held',
+    z.strictObject({ messageId: id, conversationId: id, reason: z.string().max(300) }),
+  ),
+  event('message.read', z.strictObject({ messageId: id, conversationId: id })),
 ])
 
 /** An event as a publisher supplies it. */

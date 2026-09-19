@@ -23,7 +23,7 @@ import type { ProviderRegistry } from '../providers/registry'
 import type { AgentToolContext } from '../mcp/agent-tools'
 import type { McpEndpoint } from '../mcp/server'
 import type { HookRegistration, HookServer } from './hook-server'
-import { bracketedPaste } from './prompt'
+import { bracketedPaste, sanitizePrompt } from './prompt'
 import { spawnNodePty, type PtyProcess, type PtySpawn } from './pty'
 import { Scrollback } from './scrollback'
 import { AgentTracker } from './tracker'
@@ -35,6 +35,8 @@ const DEFAULT_COLS = 120
 const DEFAULT_ROWS = 32
 /** After pasting, let the terminal finish taking the text before pressing Enter. */
 const PASTE_SETTLE_MS = 150
+/** How long an agent counts as "receiving input" if it never reports starting a turn. */
+const RECEIVING_TIMEOUT_MS = 5_000
 const GRACEFUL_STOP_MS = 3_000
 const FORCE_STOP_MS = 2_000
 
@@ -71,6 +73,11 @@ export interface AgentRuntimeDeps {
   dataDir: string
   /** The tools agents may call (task submission etc.), served on each agent's own endpoint. */
   mcp?: McpEndpoint<AgentToolContext>
+  /**
+   * An agent's turn ended. Returns text to continue the agent with (a queued message), or
+   * null. `canContinue` says whether this provider can be continued at all.
+   */
+  onTurnFinished?: (employeeId: string, canContinue: boolean) => string | null
   spawnPty?: PtySpawn
   killProcess?: (plan: TerminationPlan) => void
   gracefulStopMs?: number
@@ -87,6 +94,8 @@ interface Session {
   registration: HookRegistration
   stopRequested: boolean
   exited: Promise<void>
+  /** Input was just pasted; the agent has not yet reported starting a turn. Nothing else may be pasted. */
+  receiving: boolean
 }
 
 /** `offset` is the stream position *after* `data` (see Scrollback.total). */
@@ -170,9 +179,7 @@ export class AgentRuntime {
     const { mcp } = this.deps
     const registration = hooks.register(
       employee.id,
-      (raw) => {
-        if (session) this.report(session, raw)
-      },
+      (raw) => (session ? this.report(session, raw) : undefined),
       // Who is calling comes from the connection's token, never from anything in the message.
       mcp
         ? (message) =>
@@ -232,6 +239,7 @@ export class AgentRuntime {
         registration,
         stopRequested: false,
         exited,
+        receiving: false,
       }
       this.sessions.set(employee.id, session)
       this.finished.delete(employee.id)
@@ -326,6 +334,7 @@ export class AgentRuntime {
   deliveryBlocker(employeeId: string): string | null {
     const session = this.sessions.get(employeeId)
     if (!session) return 'is not running'
+    if (session.receiving) return 'is still receiving something'
     const { state, stateSource } = session.tracker
     if (state !== 'idle') return `is ${state}, not idle`
     if (stateSource !== 'reported' && stateSource !== 'simulated') {
@@ -344,12 +353,27 @@ export class AgentRuntime {
     if (blocker) throw new AgentRuntimeError('not-ready', `${session.employee.name} ${blocker}`)
 
     const paste = bracketedPaste(text)
-    session.pty.write(paste)
-    await new Promise((resolve) => setTimeout(resolve, this.pasteSettleMs))
-    if (this.sessions.get(employeeId) !== session) {
-      throw new AgentRuntimeError('not-running', `${session.employee.name} stopped during delivery`)
+    // Claimed before anything is written, so two deliveries can never overlap.
+    session.receiving = true
+    const release = setTimeout(() => {
+      session.receiving = false
+    }, RECEIVING_TIMEOUT_MS)
+    release.unref?.()
+    try {
+      session.pty.write(paste)
+      await new Promise((resolve) => setTimeout(resolve, this.pasteSettleMs))
+      if (this.sessions.get(employeeId) !== session) {
+        throw new AgentRuntimeError(
+          'not-running',
+          `${session.employee.name} stopped during delivery`,
+        )
+      }
+      session.pty.write('\r')
+    } catch (error) {
+      clearTimeout(release)
+      session.receiving = false
+      throw error
     }
-    session.pty.write('\r')
     this.deps.audit.record({
       actor: 'system',
       action: 'agent.deliver',
@@ -389,10 +413,27 @@ export class AgentRuntime {
     return session
   }
 
-  private report(session: Session, raw: unknown): void {
+  /** Handle one report from the agent. What it returns is sent back to the agent as the hook's answer. */
+  private report(session: Session, raw: unknown): unknown {
+    let reply: unknown
     try {
-      for (const signal of session.adapter.observation.parse(raw)) {
+      const { observation } = session.adapter
+      for (const signal of observation.parse(raw)) {
         this.publish(session.tracker.onSignal(signal))
+
+        // The agent has started a turn, so anything just pasted has been taken.
+        if (signal.kind === 'turn-started') session.receiving = false
+
+        if (signal.kind === 'turn-finished' && this.deps.onTurnFinished) {
+          const canContinue = observation.continuation !== undefined
+          const next = this.deps.onTurnFinished(session.employee.id, canContinue)
+          if (next && observation.continuation) {
+            // The agent carries straight on, though no prompt was submitted: show it working.
+            reply = observation.continuation(sanitizePrompt(next))
+            session.receiving = false
+            this.publish(session.tracker.onSignal({ kind: 'turn-started' }))
+          }
+        }
       }
     } catch (error) {
       this.deps.logger.error('agent.report.failed', {
@@ -400,6 +441,7 @@ export class AgentRuntime {
         ...describeError(error),
       })
     }
+    return reply
   }
 
   private onExit(session: Session, exit: { exitCode: number; signal: number | null }): void {

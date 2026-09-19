@@ -19,7 +19,8 @@ export interface HookRegistration {
   unregister(): void
 }
 
-export type ReportHandler = (body: unknown) => void
+/** Handles one report. What it returns (an object) is sent back in the response, e.g. a Stop continuation. */
+export type ReportHandler = (body: unknown) => unknown
 
 /** Answers one MCP (JSON-RPC) message; null means the message needs no reply. */
 export type McpHandler = (message: unknown) => Promise<unknown | null>
@@ -169,8 +170,9 @@ export class HookServer {
         return
       }
 
+      let reply: unknown
       try {
-        registration.handler(body)
+        reply = registration.handler(body)
       } catch (error) {
         // A failure handling one report must not become the agent's problem: answer 200
         // regardless, so Claude Code never treats Shokuba as a blocking hook failure.
@@ -180,7 +182,7 @@ export class HookServer {
         })
       }
       response.writeHead(200, { 'content-type': 'application/json' })
-      response.end('{}')
+      response.end(JSON.stringify(reply !== null && typeof reply === 'object' ? reply : {}))
     })
     request.on('error', () => undefined)
   }

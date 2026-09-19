@@ -52,6 +52,13 @@ const api: ShokubaApi = {
     action: (taskId, action) => ipcRenderer.invoke(IPC.tasksAction, { taskId, action }),
     remove: (taskId) => ipcRenderer.invoke(IPC.tasksRemove, { taskId }),
   },
+  messages: {
+    list: () => ipcRenderer.invoke(IPC.messagesList),
+    send: (input) => ipcRenderer.invoke(IPC.messagesSend, input),
+    markRead: (conversationId) => ipcRenderer.invoke(IPC.messagesRead, { conversationId }),
+    action: (conversationId, action) =>
+      ipcRenderer.invoke(IPC.messagesAction, { conversationId, action }),
+  },
   terminal: {
     write: (employeeId, data) => ipcRenderer.invoke(IPC.terminalWrite, { employeeId, data }),
     resize: (employeeId, cols, rows) =>

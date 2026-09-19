@@ -7,11 +7,21 @@ import {
   createAgentTools,
   type AgentToolContext,
 } from './agent-tools'
+import { MessageService } from '../messages/service'
 import { McpEndpoint } from './server'
 
 let fx: MissionFixture
 let mission: Mission
 let mcp: McpEndpoint<AgentToolContext>
+let messages: MessageService
+const team = {
+  list: () => [
+    { id: 'mika', name: 'mika', role: 'Engineer' },
+    { id: 'ren', name: 'ren', role: 'Engineer' },
+  ],
+  isRunning: (id: string) => id === 'mika',
+}
+const tools = () => createAgentTools(fx.missions, messages, team)
 
 beforeEach(() => {
   fx = createMissionFixture()
@@ -19,7 +29,13 @@ beforeEach(() => {
   fx.addEmployee('ren')
   mission = fx.missions.createMission({ title: 'M' })
   fx.missions.missionAction(mission.id, 'run')
-  mcp = new McpEndpoint({ name: 'shokuba', version: 't' }, createAgentTools(fx.missions))
+  messages = new MessageService({
+    db: fx.services.db,
+    events: fx.services.events,
+    directory: team,
+    taskMissionId: (id) => fx.missions.getTask(id)?.missionId,
+  })
+  mcp = new McpEndpoint({ name: 'shokuba', version: 't' }, tools())
 })
 
 afterEach(() => fx.cleanup())
@@ -47,18 +63,26 @@ const handOut = (title: string, assigneeId: string) => {
 
 describe('agent tools', () => {
   it('are the three the adapter pre-approves, under the shokuba server name', () => {
-    expect([...AGENT_TOOL_NAMES]).toEqual(['get_current_task', 'submit_task', 'report_blocked'])
+    expect([...AGENT_TOOL_NAMES]).toEqual([
+      'get_current_task',
+      'submit_task',
+      'report_blocked',
+      'list_teammates',
+      'send_message',
+    ])
     expect(AGENT_TOOL_PERMISSIONS).toEqual([
       'mcp__shokuba__get_current_task',
       'mcp__shokuba__submit_task',
       'mcp__shokuba__report_blocked',
+      'mcp__shokuba__list_teammates',
+      'mcp__shokuba__send_message',
     ])
-    const names = createAgentTools(fx.missions).map((tool) => tool.name)
+    const names = tools().map((tool) => tool.name)
     expect(names).toEqual([...AGENT_TOOL_NAMES])
   })
 
   it('describe themselves for the model', () => {
-    for (const tool of createAgentTools(fx.missions)) {
+    for (const tool of tools()) {
       expect(tool.description.length).toBeGreaterThan(30)
       expect(tool.inputSchema['type']).toBe('object')
     }
@@ -168,5 +192,90 @@ describe('agent tools', () => {
     const { text, isError } = await callTool('mika', 'get_current_task')
     expect(isError).toBe(true)
     expect(text).toBe('The tool failed.')
+  })
+
+  describe('list_teammates', () => {
+    it('lists everyone else with role, id and whether they run, and how to reach the person', async () => {
+      const { text, isError } = await callTool('mika', 'list_teammates')
+      expect(isError).toBe(false)
+      expect(text).toContain('ren (Engineer) — id ren — not running')
+      expect(text).not.toContain('mika (Engineer)')
+      expect(text).toContain('to: "human"')
+    })
+  })
+
+  describe('send_message', () => {
+    it('sends to a teammate by name, and tells the model not to wait', async () => {
+      const { text, isError } = await callTool('mika', 'send_message', {
+        to: 'ren',
+        subject: 'API contract',
+        body: 'Is /login a POST?',
+        kind: 'question',
+      })
+      expect(isError).toBe(false)
+      expect(text).toContain('Sent')
+      expect(text).toContain('Do not wait')
+      expect(messages.queuedFor('ren')[0]).toMatchObject({
+        fromId: 'mika',
+        subject: 'API contract',
+        kind: 'question',
+      })
+    })
+
+    it('can reach the person', async () => {
+      const { text, isError } = await callTool('mika', 'send_message', {
+        to: 'human',
+        subject: 'Decision',
+        body: 'A or B?',
+      })
+      expect(isError).toBe(false)
+      expect(text).toContain('person you work for')
+    })
+
+    it('tells the model plainly when it cannot send', async () => {
+      const nobody = await callTool('mika', 'send_message', {
+        to: 'nobody',
+        subject: 's',
+        body: 'b',
+      })
+      expect(nobody.isError).toBe(true)
+      expect(nobody.text).toContain('list_teammates')
+      const self = await callTool('mika', 'send_message', { to: 'mika', subject: 's', body: 'b' })
+      expect(self.isError).toBe(true)
+      expect(self.text).toContain('yourself')
+    })
+
+    it('asks for the fields it needs', async () => {
+      const { text, isError } = await callTool('mika', 'send_message', { to: 'ren' })
+      expect(isError).toBe(true)
+      expect(text).toContain('Invalid arguments')
+    })
+
+    it('says a held message was NOT delivered, so the model stops', async () => {
+      // Drive a chain to the hop limit, as two agents answering each other would.
+      await callTool('mika', 'send_message', { to: 'ren', subject: 'ping', body: 'ping' })
+      let result = { text: '', isError: false }
+      for (let hop = 2; hop <= 8; hop++) {
+        const from = hop % 2 === 0 ? 'ren' : 'mika'
+        const to = hop % 2 === 0 ? 'mika' : 'ren'
+        messages.markDelivered(messages.queuedFor(from), 'paste')
+        result = await callTool(from, 'send_message', { to, subject: 'pong', body: 'pong' })
+        if (result.isError) break
+      }
+      expect(result.isError).toBe(true)
+      expect(result.text).toContain('Not delivered')
+      expect(result.text).toContain('Do not send more')
+    })
+
+    it('identifies the sender from the connection, not from the message', async () => {
+      await callTool('mika', 'send_message', {
+        to: 'ren',
+        subject: 's',
+        body: 'b',
+        from: 'ren',
+        fromId: 'ren',
+      })
+      expect(messages.queuedFor('ren')[0]?.fromId).toBe('mika')
+    })
   })
 })

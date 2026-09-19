@@ -337,4 +337,24 @@ describe('HookServer', () => {
       ).toBe(401)
     })
   })
+
+  describe('answering a report', () => {
+    it('sends back what the handler returns, so an agent can be given its next instruction', async () => {
+      const { url, token } = server.register('e1', () => ({
+        decision: 'block',
+        reason: 'one more thing',
+      }))
+      const reply = await send({ url, headers: json(token), body: '{"hook_event_name":"Stop"}' })
+      expect(reply.status).toBe(200)
+      expect(JSON.parse(reply.body)).toEqual({ decision: 'block', reason: 'one more thing' })
+    })
+
+    it('answers an empty object when the handler has nothing to say, or returns something that is not an object', async () => {
+      for (const value of [undefined, null, 'text', 42, true]) {
+        const { url, token } = server.register('e1', () => value)
+        const reply = await send({ url, headers: json(token), body: '{}' })
+        expect(reply).toEqual({ status: 200, body: '{}' })
+      }
+    })
+  })
 })

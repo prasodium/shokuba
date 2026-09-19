@@ -15,7 +15,9 @@ import { MissionService } from './service'
 export interface MissionFixture {
   services: Services
   missions: MissionService
-  addEmployee(id: string): string
+  addEmployee(id: string, name?: string, role?: string): string
+  /** The employees added so far, as the message directory sees them. */
+  directory(): Array<{ id: string; name: string; role: string }>
   eventsOf(...types: string[]): ShokubaEvent[]
   cleanup(): void
 }
@@ -28,7 +30,7 @@ export function createMissionFixture(): MissionFixture {
     platform: toPlatformId(),
     logger: createLogger(() => {}),
   })
-  const employees = new Set<string>()
+  const employees = new Map<string, { name: string; role: string }>()
   let counter = 0
   let tick = 0
 
@@ -43,15 +45,18 @@ export function createMissionFixture(): MissionFixture {
   return {
     services,
     missions,
-    addEmployee(id) {
+    addEmployee(id, name = id, role = 'Engineer') {
       services.db
         .prepare(
           `INSERT INTO employees (id, name, role, provider_id, working_directory, permission_mode, color, created_at, updated_at)
-           VALUES (@id, @id, 'Engineer', 'mock', '/tmp', 'default', '#e8893a', 'now', 'now')`,
+           VALUES (@id, @name, @role, 'mock', '/tmp', 'default', '#e8893a', 'now', 'now')`,
         )
-        .run({ id })
-      employees.add(id)
+        .run({ id, name, role })
+      employees.set(id, { name, role })
       return id
+    },
+    directory() {
+      return [...employees].map(([id, info]) => ({ id, ...info }))
     },
     eventsOf(...types) {
       return services.events.log

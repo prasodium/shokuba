@@ -8,6 +8,8 @@ export const MOCK_SCRIPT_FILE = 'mock-agent.cjs'
 export interface MockAdapterOptions {
   /** Milliseconds per scripted step; tests and smoke runs use a small value. */
   stepMs?: number
+  /** Answer every message received, so a test can start a runaway exchange between two agents. */
+  chatty?: boolean
   /** Overridable so tests can exercise the Windows lookup from any host. */
   find?: typeof findExecutable
 }
@@ -30,7 +32,12 @@ export function createMockAdapter(options: MockAdapterOptions = {}): ProviderAda
     id: 'mock',
     displayName: 'Demo agent (simulated)',
     capabilities: { simulated: true, supportsModelSelection: false, permissionModes: ['default'] },
-    observation: { kind: 'simulated', source: 'simulated', parse: parseClaudeHook },
+    observation: {
+      kind: 'simulated',
+      source: 'simulated',
+      parse: parseClaudeHook,
+      continuation: (text) => ({ decision: 'block', reason: text }),
+    },
 
     async detect({ platform, env, home }) {
       if (platform !== 'win32') {
@@ -57,6 +64,7 @@ export function createMockAdapter(options: MockAdapterOptions = {}): ProviderAda
           SHOKUBA_HOOK_URL: input.report.url,
           SHOKUBA_MCP_URL: input.report.mcpUrl,
           ...(options.stepMs !== undefined && { SHOKUBA_MOCK_STEP_MS: String(options.stepMs) }),
+          ...(options.chatty && { SHOKUBA_MOCK_CHATTY: '1' }),
         },
         files: [{ name: MOCK_SCRIPT_FILE, content: MOCK_AGENT_SCRIPT }],
       }

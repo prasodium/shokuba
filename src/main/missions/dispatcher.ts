@@ -35,6 +35,8 @@ const RETRY_COOLDOWN_MS = 5_000
  */
 export class Dispatcher {
   private unsubscribe: (() => void) | undefined
+  /** Set by stop(): a pass already under way must not carry on, or touch what was closed after it. */
+  private stopped = false
   private running = false
   private again = false
   private readonly cooldown = new Map<string, number>()
@@ -51,6 +53,7 @@ export class Dispatcher {
 
   start(): void {
     if (this.unsubscribe) return
+    this.stopped = false
     this.unsubscribe = this.deps.events.bus.onAny((event) => {
       if (event.type === 'agent.stopped') {
         // A stopped process cannot finish what it was doing.
@@ -66,6 +69,7 @@ export class Dispatcher {
   }
 
   stop(): void {
+    this.stopped = true
     this.unsubscribe?.()
     this.unsubscribe = undefined
   }
@@ -74,8 +78,15 @@ export class Dispatcher {
   private schedule(): void {
     queueMicrotask(() => {
       // A pass queued before `stop()` must not run after it.
-      if (this.unsubscribe) void this.tick()
+      if (this.unsubscribe) this.runTick()
     })
+  }
+
+  /** Run a pass in the background; a failure is logged, never left unhandled. */
+  private runTick(): void {
+    this.tick().catch((error: unknown) =>
+      this.deps.logger.error('dispatcher.tick.failed', describeError(error)),
+    )
   }
 
   /** One dispatch pass. Public so tests can drive it deterministically. */
@@ -97,10 +108,12 @@ export class Dispatcher {
 
   private async pass(): Promise<void> {
     const { missions, delivery, logger } = this.deps
+    if (this.stopped) return
     const now = (this.deps.now ?? Date.now)()
     const claimedAgents = new Set<string>()
 
     for (const task of missions.dispatchCandidates()) {
+      if (this.stopped) return
       const agent = task.assigneeId
       if (agent === null || claimedAgents.has(agent)) continue
       if ((this.cooldown.get(task.id) ?? 0) > now) continue
@@ -117,6 +130,7 @@ export class Dispatcher {
 
       try {
         await delivery.deliverPrompt(agent, missions.briefing(task.id))
+        if (this.stopped) return
         missions.announceDispatched(claimed)
         this.cooldown.delete(task.id)
       } catch (error) {

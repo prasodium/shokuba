@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as pty from 'node-pty'
+import { MAX_HOPS } from '@shared/messages'
 import { createAgentServices } from './agents'
 import { createServices } from './bootstrap'
 import { MIGRATIONS } from './database/migrations'
@@ -75,6 +76,8 @@ export async function runSmokeTest(): Promise<SmokeReport> {
     await run('agent-pipeline', () => agentPipeline(platform, dir, logger))
 
     await run('mission-pipeline', () => missionPipeline(platform, dir, logger))
+
+    await run('message-pipeline', () => messagePipeline(platform, dir, logger))
 
     await run('locate-git', async () => {
       const found = await findExecutable('git', { platform, env: process.env, home: homedir() })
@@ -344,6 +347,113 @@ async function missionPipeline(
     throw new Error(
       `${message} [tasks: ${tasks.map((t) => `${t.title}=${t.status}`).join(', ') || 'none'}; terminals: ${tails.join(' | ')}]`,
       { cause: error },
+    )
+  } finally {
+    await agents.close()
+    services.close()
+  }
+}
+
+/**
+ * Two agents that answer every message they receive, started off by a person. Nothing stops
+ * that exchange by itself, so this proves the loop protection on the real runtime: messages
+ * travel through real terminals (as continuations or pastes), the chain is counted by Shokuba
+ * rather than claimed by the agents, and at the hop limit the next message is held and the
+ * conversation halted for a person to decide.
+ */
+async function messagePipeline(
+  platform: ReturnType<typeof toPlatformId>,
+  dir: string,
+  logger: ReturnType<typeof createLogger>,
+): Promise<string> {
+  const services = createServices({
+    dataDir: join(dir, 'message-pipeline'),
+    version: 'smoke',
+    platform,
+    logger,
+  })
+  const agents = await createAgentServices(services, {
+    platform,
+    env: process.env,
+    home: homedir(),
+    providers: new ProviderRegistry([createMockAdapter({ stepMs: 30, chatty: true })]),
+    gracefulStopMs: 2_000,
+  })
+
+  const workdir = join(dir, 'message-work')
+  mkdirSync(workdir)
+  const ids: string[] = []
+
+  try {
+    for (const name of ['Ada', 'Bo']) {
+      const employee = await agents.employees.create({
+        name,
+        role: 'Tester',
+        providerId: 'mock',
+        workingDirectory: workdir,
+      })
+      ids.push(employee.id)
+      await agents.runtime.start(employee)
+    }
+    await waitFor(
+      () => ids.every((id) => agents.runtime.deliveryBlocker(id) === null),
+      'both demo agents to report in',
+      20_000,
+    )
+
+    const [ada] = ids
+    agents.messages.sendFromHuman({
+      toId: ada as string,
+      subject: 'Kick off',
+      body: 'Say hello to a teammate.',
+    })
+
+    const conversation = ():
+      ReturnType<typeof agents.messages.listConversations>[number] | undefined =>
+      agents.messages.listConversations()[0]
+    await waitFor(
+      () => conversation()?.conversation.status === 'halted',
+      'the runaway exchange to be halted',
+      60_000,
+    )
+
+    const { messages, conversation: halted } = conversation() ?? {
+      messages: [],
+      conversation: undefined,
+    }
+    const held = messages.filter((message) => message.state === 'held')
+    if (held.length !== 1) throw new Error(`expected exactly 1 held message, found ${held.length}`)
+    // The person's message is hop 1 and resets the count, so agents get MAX_HOPS replies.
+    if (messages.length !== MAX_HOPS + 2) {
+      throw new Error(`expected ${MAX_HOPS + 2} messages in the chain, found ${messages.length}`)
+    }
+    if (held[0]?.hop !== MAX_HOPS + 2) throw new Error(`the held message was hop ${held[0]?.hop}`)
+    const delivered = services.events.log.list({ type: 'message.delivered', limit: 200 })
+    if (delivered.length !== MAX_HOPS + 1) {
+      throw new Error(`expected ${MAX_HOPS + 1} deliveries, saw ${delivered.length}`)
+    }
+    const ways = new Set(
+      delivered.map((event) => (event.type === 'message.delivered' ? event.payload.via : '')),
+    )
+
+    // A person ends it. Anything still waiting is held, not delivered.
+    agents.messages.close(halted?.id ?? '')
+    if (agents.messages.getConversation(halted?.id ?? '')?.status !== 'closed') {
+      throw new Error('the conversation did not close')
+    }
+    return `${messages.length} messages, ${delivered.length} delivered (${[...ways].join(' + ')}), held at hop ${held[0]?.hop}, halted, closed`
+  } catch (error) {
+    const list = agents.messages.listConversations()
+    const summary = list.map(
+      (c) => `${c.conversation.status}:${c.messages.map((m) => `${m.hop}${m.state[0]}`).join(',')}`,
+    )
+    const tails = ids.map((id) => JSON.stringify(agents.runtime.replay(id).data.slice(-250)))
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(
+      `${message} [conversations: ${summary.join(' | ') || 'none'}; terminals: ${tails.join(' | ')}]`,
+      {
+        cause: error,
+      },
     )
   } finally {
     await agents.close()

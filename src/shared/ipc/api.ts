@@ -10,6 +10,15 @@ import {
 } from '../employees'
 import type { ShokubaEvent } from '../events/schema'
 import {
+  CONVERSATION_ACTIONS,
+  HumanMessageInputSchema,
+  type Conversation,
+  type ConversationAction,
+  type ConversationDetail,
+  type HumanMessageInput,
+  type Message,
+} from '../messages'
+import {
   MISSION_ACTIONS,
   MissionInputSchema,
   MissionUpdateSchema,
@@ -72,6 +81,13 @@ export const TaskActionRequestSchema = z.strictObject({
   action: TaskActionSchema,
 })
 export const TaskIdRequestSchema = z.strictObject({ taskId: employeeId })
+
+export const MessageSendRequestSchema = HumanMessageInputSchema
+export const ConversationIdRequestSchema = z.strictObject({ conversationId: employeeId })
+export const ConversationActionRequestSchema = z.strictObject({
+  conversationId: employeeId,
+  action: z.enum(CONVERSATION_ACTIONS),
+})
 
 export interface AppInfo {
   name: string
@@ -159,6 +175,16 @@ export interface ShokubaApi {
     update(taskId: string, patch: TaskUpdate): Promise<Task>
     action(taskId: string, action: TaskAction): Promise<Task>
     remove(taskId: string): Promise<void>
+  }
+  messages: {
+    /** Recent conversations, newest first. */
+    list(): Promise<ConversationDetail[]>
+    /** A message from the person to one employee. */
+    send(input: HumanMessageInput): Promise<Message>
+    /** Mark everything sent to the person in a conversation as read. */
+    markRead(conversationId: string): Promise<void>
+    /** Resume a halted conversation (lets it continue and releases held messages) or close it. */
+    action(conversationId: string, action: ConversationAction): Promise<Conversation>
   }
   terminal: {
     write(employeeId: string, data: string): Promise<void>
