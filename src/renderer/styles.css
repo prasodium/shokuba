@@ -1,0 +1,230 @@
+:root {
+  --bg: #14110f;
+  --surface: #1e1a17;
+  --surface-2: #27221e;
+  --border: #38312b;
+  --text: #f3ead8;
+  --muted: #a39683;
+  --accent: #e8893a;
+  --green: #6f9a5b;
+  --blue: #5b8fc7;
+  --radius: 12px;
+  --mono: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f6efe2;
+    --surface: #fffaf0;
+    --surface-2: #f0e7d6;
+    --border: #ddd0b8;
+    --text: #2a231c;
+    --muted: #7a6c58;
+    --accent: #c8681a;
+    --green: #4d7a3b;
+    --blue: #3a6ea5;
+    color-scheme: light;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    'Noto Sans',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.shell {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 32px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.masthead {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+/* A 2x2 block motif — the voxel language in miniature. */
+.logo {
+  display: grid;
+  grid-template-columns: repeat(2, 18px);
+  grid-template-rows: repeat(2, 18px);
+  gap: 3px;
+}
+.logo span {
+  border-radius: 3px;
+  background: var(--accent);
+  box-shadow: inset -3px -3px 0 rgb(0 0 0 / 0.25);
+}
+.logo span:nth-child(2) {
+  background: var(--green);
+}
+.logo span:nth-child(3) {
+  background: var(--blue);
+}
+.logo span:nth-child(4) {
+  background: var(--text);
+}
+
+h1 {
+  margin: 0;
+  font-size: 26px;
+  letter-spacing: -0.01em;
+}
+.kanji {
+  color: var(--accent);
+  font-weight: 500;
+  margin-left: 4px;
+}
+.tagline {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+.phase {
+  margin-left: auto;
+  font-size: 12px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.card-label {
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.card-value {
+  font-size: 18px;
+  font-weight: 600;
+}
+.card-hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+.panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+h2 {
+  margin: 0;
+  font-size: 15px;
+}
+.muted {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.events {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 340px;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+.events li {
+  display: grid;
+  grid-template-columns: 56px 92px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: 8px;
+}
+.events li:nth-child(odd) {
+  background: var(--surface-2);
+}
+.seq,
+time {
+  color: var(--muted);
+}
+.type {
+  color: var(--text);
+}
+
+.badge {
+  font-family: system-ui, sans-serif;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.badge-system {
+  color: var(--blue);
+  border-color: var(--blue);
+}
+.badge-reported {
+  color: var(--green);
+  border-color: var(--green);
+}
+.badge-inferred,
+.badge-simulated {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.alert {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  border: 1px solid #b4483c;
+  background: rgb(180 72 60 / 0.12);
+}
+
+.note {
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

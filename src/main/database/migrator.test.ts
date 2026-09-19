@@ -1,0 +1,119 @@
+import { afterEach, describe, expect, it } from 'vitest'
+import { openDatabase, type Db } from './connection'
+import { MIGRATIONS } from './migrations'
+import { MigrationError, migrate, type Migration } from './migrator'
+
+const open: Db[] = []
+const memory = (): Db => {
+  const db = openDatabase(':memory:')
+  open.push(db)
+  return db
+}
+afterEach(() => {
+  while (open.length > 0) open.pop()?.close()
+})
+
+const create = (id: number, table: string): Migration => ({
+  id,
+  name: `create_${table}`,
+  sql: `CREATE TABLE ${table} (x INTEGER)`,
+})
+
+const tables = (db: Db): string[] =>
+  (
+    db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+      .all() as {
+      name: string
+    }[]
+  ).map((row) => row.name)
+
+describe('migrate', () => {
+  it('applies every migration to a fresh database, in order', () => {
+    const db = memory()
+    const result = migrate(db, [create(1, 'a'), create(2, 'b')])
+    expect(result).toEqual({ version: 2, applied: [1, 2] })
+    expect(tables(db)).toEqual(expect.arrayContaining(['a', 'b', 'schema_migrations']))
+  })
+
+  it('is idempotent: a second run applies nothing', () => {
+    const db = memory()
+    const migrations = [create(1, 'a'), create(2, 'b')]
+    migrate(db, migrations)
+    expect(migrate(db, migrations)).toEqual({ version: 2, applied: [] })
+  })
+
+  it('applies only the new migrations when the app upgrades', () => {
+    const db = memory()
+    migrate(db, [create(1, 'a')])
+    expect(migrate(db, [create(1, 'a'), create(2, 'b')])).toEqual({ version: 2, applied: [2] })
+  })
+
+  it('rolls a failing migration back completely and leaves earlier ones applied', () => {
+    const db = memory()
+    const broken: Migration = {
+      id: 2,
+      name: 'broken',
+      sql: 'CREATE TABLE half (x INTEGER); THIS IS NOT SQL;',
+    }
+    expect(() => migrate(db, [create(1, 'a'), broken])).toThrow(
+      /Migration 2 \("broken"\) failed and was rolled back/,
+    )
+    expect(tables(db)).toContain('a')
+    expect(tables(db)).not.toContain('half')
+    const ids = db.prepare('SELECT id FROM schema_migrations').all() as { id: number }[]
+    expect(ids).toEqual([{ id: 1 }])
+  })
+
+  it('refuses when an already-applied migration was edited', () => {
+    const db = memory()
+    migrate(db, [create(1, 'a')])
+    const edited: Migration = { id: 1, name: 'create_a', sql: 'CREATE TABLE a (x INTEGER, y TEXT)' }
+    expect(() => migrate(db, [edited])).toThrow(/modified after it was applied/)
+  })
+
+  it('refuses a database created by a newer version of the app', () => {
+    const db = memory()
+    migrate(db, [create(1, 'a'), create(2, 'b')])
+    expect(() => migrate(db, [create(1, 'a')])).toThrow(/newer version/)
+  })
+
+  it.each([
+    ['a gap', [create(1, 'a'), create(3, 'c')]],
+    ['not starting at 1', [create(2, 'b')]],
+    ['duplicates', [create(1, 'a'), create(1, 'b')]],
+  ])('rejects migration lists with %s', (_name, list) => {
+    expect(() => migrate(memory(), list)).toThrow(MigrationError)
+  })
+
+  it('reports version 0 for an empty list', () => {
+    expect(migrate(memory(), [])).toEqual({ version: 0, applied: [] })
+  })
+})
+
+describe('the real migration set', () => {
+  it('applies cleanly and creates the append-only logs', () => {
+    const db = memory()
+    const { version } = migrate(db, MIGRATIONS)
+    expect(version).toBe(MIGRATIONS.length)
+    expect(tables(db)).toEqual(expect.arrayContaining(['agent_events', 'audit_log']))
+  })
+
+  it('has strictly sequential ids', () => {
+    expect(MIGRATIONS.map((m) => m.id)).toEqual(MIGRATIONS.map((_m, i) => i + 1))
+  })
+
+  it.each(['agent_events', 'audit_log'])('%s rejects UPDATE and DELETE', (table) => {
+    const db = memory()
+    migrate(db, MIGRATIONS)
+    if (table === 'agent_events') {
+      db.prepare(
+        "INSERT INTO agent_events (id, ts, type, source, payload) VALUES ('e1', 't', 'x', 'system', '{}')",
+      ).run()
+    } else {
+      db.prepare("INSERT INTO audit_log (ts, actor, action) VALUES ('t', 'a', 'b')").run()
+    }
+    expect(() => db.prepare(`UPDATE ${table} SET ts = 'changed'`).run()).toThrow(/append-only/)
+    expect(() => db.prepare(`DELETE FROM ${table}`).run()).toThrow(/append-only/)
+  })
+})

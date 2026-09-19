@@ -1,0 +1,31 @@
+# Dependencies and build output
+node_modules/
+out/
+dist/
+release/
+coverage/
+*.tsbuildinfo
+
+# Local data — never commit databases, logs or secrets
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.log
+.env
+.env.*
+!.env.example
+
+# Shokuba runtime data created inside a repository under management
+.shokuba/
+
+# Local-only material (planning notes, scratch files, editor/assistant state)
+.internal/
+.claude/
+CLAUDE.md
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json

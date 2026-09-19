@@ -1,0 +1,61 @@
+# Contributing to Shokuba
+
+Thanks for being here. Shokuba is early, so contributions of every size matter — a typo fix, a test, a bug report, or a whole subsystem.
+
+## Setup
+
+You need **Node.js 22+** and **Git**.
+
+```bash
+git clone https://github.com/prasodium/shokuba.git
+cd shokuba
+npm install
+npm run dev
+```
+
+| Command          | What it does                                                                             |
+| ---------------- | ---------------------------------------------------------------------------------------- |
+| `npm run dev`    | Launch the app with hot reload                                                           |
+| `npm run check`  | Typecheck + lint + tests — run this before every PR                                      |
+| `npm test`       | Unit tests (Vitest)                                                                      |
+| `npm run smoke`  | Build, then run the app in real Electron and check SQLite, a restart, a real PTY and Git |
+| `npm run format` | Format with Prettier                                                                     |
+
+> **Tip:** if the app exits immediately saying it is "running as plain Node", your shell has `ELECTRON_RUN_AS_NODE` set (some other Electron app's terminal leaks it). The npm scripts clear it for you; if you run `electron` by hand, unset it first.
+
+## Architecture rules
+
+These keep the project honest. Reviews check for them.
+
+1. **The event log is the source of truth.** State the UI shows must come from persisted events, not from a component guessing. New event types get a Zod schema in `src/shared/events/schema.ts` _when a feature starts emitting them_ — not before.
+2. **Nothing crosses a process boundary unvalidated.** Every IPC handler goes through `handle()` in `src/main/ipc/handlers.ts` (sender check + Zod schema).
+3. **All OS-specific code lives in `src/main/platform/`.** Do not read `process.platform` anywhere else — a lint rule enforces this. Take a `PlatformId` and call the platform helpers. See [PLATFORMS.md](docs/PLATFORMS.md).
+4. **Secrets never reach logs, events or the UI.** Anything persisted or logged goes through the redactor. Child processes get an allow-listed environment (`safeChildEnv`), never a copy of `process.env`.
+5. **Schema changes are migrations.** Add a new file under `src/main/database/migrations/` and append it to the list. Never edit or reorder an applied migration — the migrator will refuse.
+6. **No fake features.** A button either works, is wired to real state, or is clearly marked unavailable. Demo/simulated data must be labelled as such.
+7. **Tests for core behaviour.** Bug fixes come with a test that fails without the fix.
+
+## Code style
+
+- TypeScript `strict`, no `any` (lint error), `import type` for type-only imports.
+- Small modules, dependency injection for anything that touches the OS, clock or database — so it can be tested from any machine.
+- Prettier formats everything (`npm run format`). Line endings are LF.
+
+## Commits and pull requests
+
+- Use [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`.
+- Keep PRs focused. Describe **what** and **why**; include how you tested it.
+- CI must pass on your PR.
+
+## Where help is most wanted
+
+- **Windows and Linux** — the code paths exist and are unit-tested, but they need real-machine testing. See [PLATFORMS.md](docs/PLATFORMS.md).
+- **Provider adapters** — Codex, Gemini CLI and generic CLI adapters once the adapter interface lands.
+- **Voxel art and animation** — original isometric-voxel assets for the office (no copied game assets, please).
+- **Docs and tests** — always.
+
+Check the [roadmap](docs/ROADMAP.md) and open an issue before starting anything big, so we can agree on the approach first.
+
+## Reporting security issues
+
+Please don't open a public issue. See [SECURITY.md](SECURITY.md).

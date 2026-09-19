@@ -1,0 +1,38 @@
+name: Bug report
+description: Something isn't working as it should
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what did you see instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [macOS, Windows, Linux]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Shokuba version / commit
+      placeholder: 0.0.1 or a commit hash
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output from `npm run smoke` (if relevant)
+      description: Please remove any secrets or personal paths before pasting.
+      render: shell
