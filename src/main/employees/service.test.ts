@@ -339,3 +339,30 @@ describe('teams', () => {
     })
   })
 })
+
+describe('listing', () => {
+  it('keeps hiring order for people hired in the same instant', async () => {
+    const frozen = new EmployeeService({
+      db: services.db,
+      events: services.events,
+      providers: new ProviderRegistry([createMockAdapter()]),
+      platform: toPlatformId(),
+      isRunning: () => false,
+      now: () => new Date(Date.UTC(2026, 0, 1)),
+    })
+    // Ids that sort against hiring order, so ordering by id would get this wrong.
+    const ids = ['zzz', 'mmm', 'aaa']
+    for (const [i, id] of ids.entries()) {
+      await new EmployeeService({
+        db: services.db,
+        events: services.events,
+        providers: new ProviderRegistry([createMockAdapter()]),
+        platform: toPlatformId(),
+        isRunning: () => false,
+        now: () => new Date(Date.UTC(2026, 0, 1)),
+        newId: () => id,
+      }).create({ ...valid(), name: `P${i}` })
+    }
+    expect(frozen.list().map((e) => e.id)).toEqual(ids)
+  })
+})

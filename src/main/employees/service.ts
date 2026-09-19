@@ -85,7 +85,8 @@ export class EmployeeService {
 
   list(): Employee[] {
     const rows = this.deps.db
-      .prepare('SELECT * FROM employees WHERE archived_at IS NULL ORDER BY created_at, id')
+      // Ties (two hired in the same millisecond) keep hiring order: `id` is random, `rowid` is not.
+      .prepare('SELECT * FROM employees WHERE archived_at IS NULL ORDER BY created_at, rowid')
       .all() as Row[]
     return rows.map(toEmployee)
   }
