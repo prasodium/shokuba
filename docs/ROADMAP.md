@@ -11,7 +11,7 @@ Shokuba is built in small, tested increments. Each phase ends with something tha
 - [x] Secret redaction on everything persisted or logged
 - [x] Sandboxed renderer, validated IPC with sender checks, strict CSP
 - [x] Smoke test inside real Electron (SQLite, restart persistence, real PTY, Git)
-- [ ] CI on macOS, Linux and Windows
+- [x] CI on macOS, Linux and Windows (typecheck, lint, unit tests, in-Electron smoke test)
 
 ## Phase 1 — First real agent + first glimpse of the office
 

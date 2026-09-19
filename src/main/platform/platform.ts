@@ -53,9 +53,9 @@ export function defaultShell(platform: PlatformId, env: Env): ShellSpec {
 
 /**
  * Run a single command line through the platform shell, non-interactively.
- * On Windows this is `cmd.exe /d /s /c` — the same route Node's own child_process takes —
- * rather than PowerShell, which is slower to start and behaves less predictably when
- * attached to a pseudo-terminal.
+ * On Windows this is `cmd.exe /d /s /c` — the same route Node's own child_process takes.
+ * (In CI, `powershell.exe -Command` under ConPTY started but produced no output and never
+ * exited, while cmd.exe worked, so cmd.exe is the verified choice.)
  */
 export function shellCommand(platform: PlatformId, env: Env, command: string): ShellSpec {
   if (platform === 'win32') {

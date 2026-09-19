@@ -33,11 +33,11 @@ Most multi-agent tools are a wall of terminals. Shokuba is an **engineering cont
 
 Shokuba is being built in the open, in small, tested increments. Here is exactly where it stands — nothing below is marketing.
 
-|                      |                                                                                                                                                                                              |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ✅ **Working today** | Electron app shell · append-only event log (SQLite) · typed event bus · secret redaction · hardened, validated IPC · cross-platform layer · real-PTY smoke test running inside Electron      |
-| 🚧 **Building next** | Claude Code as the first real agent · terminals (xterm.js) · the isometric office · agent state driven by real events                                                                        |
-| 🗺️ **Planned**       | Multi-agent task graph · Git worktree isolation · independent verification & evidence packs · Codex / Gemini CLI / custom providers · GitHub issue → verified PR · replay · cinematic camera |
+|                      |                                                                                                                                                                                                                                   |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ✅ **Working today** | Electron app shell · append-only event log (SQLite) · typed event bus · secret redaction · hardened, validated IPC · cross-platform layer · CI green on macOS, Linux and Windows, including a real-PTY smoke test inside Electron |
+| 🚧 **Building next** | Claude Code as the first real agent · terminals (xterm.js) · the isometric office · agent state driven by real events                                                                                                             |
+| 🗺️ **Planned**       | Multi-agent task graph · Git worktree isolation · independent verification & evidence packs · Codex / Gemini CLI / custom providers · GitHub issue → verified PR · replay · cinematic camera                                      |
 
 There are **no agents or office in the app yet**. See the [roadmap](docs/ROADMAP.md) for the full plan.
 
