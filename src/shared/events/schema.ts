@@ -188,6 +188,20 @@ export const EventInputSchema = z.discriminatedUnion('type', [
   event('message.read', z.strictObject({ messageId: id, conversationId: id })),
 
   // The circuit breaker: how far an agent has been restrained, and each call it refused.
+  // A task's isolated working folder: made, committed, merged into the mission branch, in
+  // conflict, or not made (the task ran without isolation). Ids and names only; never file contents.
+  event(
+    'workspace.changed',
+    z.strictObject({
+      taskId: id,
+      missionId: id,
+      change: z.enum(['created', 'committed', 'merged', 'conflict', 'unavailable']),
+      branch: z.string().max(200).optional(),
+      commit: z.string().max(80).optional(),
+      files: z.array(z.string().max(300)).max(50).optional(),
+      reason: z.string().max(300).optional(),
+    }),
+  ),
   event(
     'breaker.state.changed',
     z.strictObject({

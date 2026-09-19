@@ -602,3 +602,54 @@ describe("a manager's planning tools", () => {
     expect(text).toBe('Your team:\n- Sora (QA) — running — no task in progress')
   })
 })
+
+describe('saving work when a task is submitted', () => {
+  const seen: Array<{ id: string; status: string }> = []
+  let fail = false
+
+  beforeEach(() => {
+    seen.length = 0
+    fail = false
+    mcp = new McpEndpoint(
+      { name: 'shokuba', version: 't' },
+      createAgentTools(fx.missions, messages, team, {
+        beforeSubmit: (task) => {
+          seen.push({ id: task.id, status: fx.missions.getTask(task.id)?.status ?? '?' })
+          if (fail) throw new Error('git is broken')
+        },
+      }),
+    )
+  })
+
+  it('happens before the task shows as submitted, so its work is already there', async () => {
+    const task = handOut('Build it', 'mika')
+    const { text, isError } = await callTool('mika', 'submit_task', { summary: 'Done.' })
+    expect(isError).toBe(false)
+    expect(text).toContain('Submitted "Build it"')
+    expect(seen).toEqual([{ id: task.id, status: 'in_progress' }])
+    expect(fx.missions.getTask(task.id)?.status).toBe('submitted')
+  })
+
+  it('never stops the submission if saving the work fails', async () => {
+    fail = true
+    const task = handOut('Build it', 'mika')
+    const { isError } = await callTool('mika', 'submit_task', { summary: 'Done.' })
+    expect(isError).toBe(false)
+    expect(fx.missions.getTask(task.id)?.status).toBe('submitted')
+  })
+
+  it('is not asked to save anyone else’s work, and a refused submission is still refused', async () => {
+    const theirs = handOut('Theirs', 'ren')
+    const refused = await callTool('mika', 'submit_task', { taskId: theirs.id, summary: 'x' })
+    expect(refused.isError).toBe(true)
+    expect(seen).toEqual([])
+    expect(fx.missions.getTask(theirs.id)?.status).toBe('in_progress')
+  })
+
+  it('has nothing to save for an agent with no task, and says so as before', async () => {
+    const { isError, text } = await callTool('mika', 'submit_task', { summary: 'x' })
+    expect(isError).toBe(true)
+    expect(text).toMatch(/no task/i)
+    expect(seen).toEqual([])
+  })
+})

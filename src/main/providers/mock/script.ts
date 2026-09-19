@@ -288,6 +288,8 @@ async function main() {
     }
   })
   say('Shokuba demo agent (simulated - no AI is running). Type anything and press Enter.')
+  // Which folder it was started in (its last part only, so a long path never wraps and splits it).
+  say('[demo] working in: ' + require('path').basename(cwd))
   process.stdout.write('> ')
   await report({ hook_event_name: 'SessionStart', start_reason: 'startup' })
 }

@@ -1,4 +1,5 @@
 import type { EventType } from '@shared/events/schema'
+import type { Task } from '@shared/missions'
 import type { EventStore } from '../events/store'
 import { describeError, type Logger } from '../logging/logger'
 import type { MissionService } from './service'
@@ -9,6 +10,18 @@ export interface DeliveryPort {
   deliveryBlocker(employeeId: string): string | null
   /** Paste a prompt into the agent's terminal and press Enter. */
   deliverPrompt(employeeId: string, text: string): Promise<void>
+  /** The folder a running agent was started in. */
+  cwdOf?(employeeId: string): string | undefined
+  /** Start the agent afresh in `cwd` and wait until it is ready for input. */
+  restartIn?(employeeId: string, cwd: string): Promise<void>
+}
+
+/** Where a task's work happens: an isolated working folder, or the assignee's own folder. */
+export interface WorkspacePort {
+  /** The task's isolated working folder and what to tell the agent about it, or null if it runs without one. */
+  prepare(task: Task): Promise<{ cwd: string; note: string } | null>
+  /** The assignee's own folder: where an agent belongs when a task is not isolated. */
+  home(task: Task): Promise<string | undefined>
 }
 
 /** Events after which a task might have become dispatchable. */
@@ -51,6 +64,8 @@ export class Dispatcher {
       logger: Logger
       /** May this agent be given a new task? (The circuit breaker says no to a constrained one.) */
       allowsTasks?: (employeeId: string) => boolean
+      /** Gives each task its own working folder, and puts the agent in it. */
+      workspaces?: WorkspacePort
       now?: () => number
     },
   ) {}
@@ -126,6 +141,35 @@ export class Dispatcher {
       if (this.deps.allowsTasks && !this.deps.allowsTasks(agent)) continue
 
       claimedAgents.add(agent)
+
+      // Before the task is claimed: put the agent in the task's own working folder. The agent is
+      // restarted there, and restarting after the claim would make the stop look like the agent
+      // died mid-task and block it.
+      let note = ''
+      if (this.deps.workspaces) {
+        try {
+          const prepared = await this.deps.workspaces.prepare(task)
+          const want = prepared?.cwd ?? (await this.deps.workspaces.home(task))
+          note = prepared?.note ?? ''
+          if (want !== undefined && delivery.restartIn && delivery.cwdOf?.(agent) !== want) {
+            await delivery.restartIn(agent, want)
+          }
+          if (this.stopped) return
+          // Restarted or not, it must be safe to hand it input; if not, the next event tries again.
+          if (delivery.deliveryBlocker(agent) !== null) continue
+        } catch (error) {
+          const { message } = describeError(error)
+          logger.warn('dispatcher.workspace.failed', {
+            taskId: task.id,
+            employeeId: agent,
+            message,
+          })
+          this.cooldown.set(task.id, now + RETRY_COOLDOWN_MS)
+          setTimeout(() => this.schedule(), RETRY_COOLDOWN_MS + 50).unref?.()
+          continue
+        }
+      }
+
       let claimed
       try {
         claimed = missions.markDispatched(task.id)
@@ -134,7 +178,8 @@ export class Dispatcher {
       }
 
       try {
-        await delivery.deliverPrompt(agent, missions.briefing(task.id))
+        const briefing = missions.briefing(task.id)
+        await delivery.deliverPrompt(agent, note ? `${briefing}\n\n${note}` : briefing)
         if (this.stopped) return
         missions.announceDispatched(claimed)
         this.cooldown.delete(task.id)

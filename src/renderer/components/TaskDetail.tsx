@@ -1,10 +1,12 @@
 import { useState } from 'react'
+import { isConflictNote } from '@shared/git'
 import { dependentsOf } from '@shared/missions/graph'
 import type { Mission, Task } from '@shared/missions'
 import { dispatchHint } from '../missions/hints'
 import { TASK_STATUS_LABELS } from '../missions/labels'
 import { useMissions } from '../store/missions'
 import { useOffice } from '../store/office'
+import { TaskChangesView } from './TaskChangesView'
 
 interface Props {
   task: Task
@@ -108,6 +110,13 @@ export function TaskDetail({ task, mission, tasks, onEdit }: Props) {
           </p>
         </div>
       )}
+      {task.status !== 'pending' && (
+        <TaskChangesView
+          taskId={task.id}
+          assignee={assignee?.name ?? null}
+          version={`${task.status}:${task.updatedAt}`}
+        />
+      )}
       {task.status === 'blocked' && task.blockedReason && (
         <div className="task-block">
           <h4>Why it is blocked</h4>
@@ -117,7 +126,7 @@ export function TaskDetail({ task, mission, tasks, onEdit }: Props) {
       {task.reviewNote &&
         (task.status === 'changes_requested' || task.status === 'in_progress') && (
           <div className="task-block">
-            <h4>Your feedback</h4>
+            <h4>{isConflictNote(task.reviewNote) ? 'Sent back automatically' : 'Your feedback'}</h4>
             <p>{task.reviewNote}</p>
           </div>
         )}

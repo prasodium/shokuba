@@ -1206,3 +1206,57 @@ h4 {
 .composer .actions {
   align-items: center;
 }
+
+/* A task's changes in its own Git branch. */
+.changed-files {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12.5px;
+}
+.changed-files li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.changed-path {
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+.changed-counts {
+  color: var(--muted);
+  white-space: nowrap;
+}
+.diff {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  max-height: 320px;
+  overflow: auto;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.45;
+  white-space: pre;
+}
+.diff-line {
+  display: block;
+}
+.diff-add {
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 10%, transparent);
+}
+.diff-remove {
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+}
+.diff-hunk {
+  color: var(--cyan);
+}
+.diff-meta {
+  color: var(--muted);
+}

@@ -32,6 +32,7 @@ export const IPC = {
   tasksUpdate: 'shokuba:tasks:update',
   tasksAction: 'shokuba:tasks:action',
   tasksRemove: 'shokuba:tasks:remove',
+  tasksChanges: 'shokuba:tasks:changes',
 
   messagesList: 'shokuba:messages:list',
   messagesSend: 'shokuba:messages:send',

@@ -97,6 +97,8 @@ export async function runSmokeTest(): Promise<SmokeReport> {
 
     await run('git-worktrees', () => gitWorktrees(platform, dir))
 
+    await run('isolation-pipeline', () => isolationPipeline(platform, dir, logger))
+
     await run('locate-git', async () => {
       const found = await findExecutable('git', { platform, env: process.env, home: homedir() })
       if (!found) throw new Error('git not found on PATH or in common install locations')
@@ -792,4 +794,121 @@ async function gitWorktrees(
     throw new Error('a file in your checkout was changed')
   }
   return `git ${version.text}: mission branch, 2 task worktrees, work committed as the employee, 1 merged, 1 conflict named, worktrees removed; main and your checkout untouched`
+}
+
+/**
+ * A task in its own Git branch on real processes: a demo agent is restarted in the task's own
+ * working folder (its terminal says so), its work is saved as a commit when it submits, the
+ * person sends it back and then accepts it, and the accepted work lands on the mission branch
+ * while your own checkout and main branch are never touched. Only the "AI" is scripted.
+ */
+async function isolationPipeline(
+  platform: ReturnType<typeof toPlatformId>,
+  dir: string,
+  logger: ReturnType<typeof createLogger>,
+): Promise<string> {
+  const repo = join(dir, 'isolation-repo')
+  mkdirSync(repo)
+  const plain = (...args: string[]): string =>
+    execFileSync(
+      'git',
+      [
+        '-c',
+        'user.name=Setup',
+        '-c',
+        'user.email=setup@example.invalid',
+        '-c',
+        'commit.gpgsign=false',
+        '-c',
+        'core.fsmonitor=false',
+        ...args,
+      ],
+      { cwd: repo, encoding: 'utf8', windowsHide: true },
+    ).trim()
+  plain('init', '-q', '-b', 'main')
+  writeFileSync(join(repo, 'a.txt'), 'one\ntwo\nthree\n')
+  plain('add', '-A')
+  plain('commit', '-qm', 'base')
+  const mainBefore = plain('rev-parse', 'main')
+
+  const services = createServices({
+    dataDir: join(dir, 'isolation-pipeline'),
+    version: 'smoke',
+    platform,
+    logger,
+  })
+  const agents = await createAgentServices(services, {
+    platform,
+    env: process.env,
+    home: homedir(),
+    providers: new ProviderRegistry([createMockAdapter({ stepMs: 30 })]),
+    gracefulStopMs: 2_000,
+  })
+
+  let employeeId = ''
+  try {
+    const employee = await agents.employees.create({
+      name: 'Ada',
+      role: 'Tester',
+      providerId: 'mock',
+      workingDirectory: repo,
+    })
+    employeeId = employee.id
+    await agents.runtime.start(employee)
+    await waitFor(
+      () => agents.runtime.deliveryBlocker(employee.id) === null,
+      'the demo agent to report in',
+      20_000,
+    )
+
+    const mission = agents.missions.createMission({ title: 'Isolation smoke' })
+    const task = agents.missions.createTask({
+      missionId: mission.id,
+      title: 'Write the notes',
+      assigneeId: employee.id,
+    })
+    const statusOf = (): string | undefined => agents.missions.getTask(task.id)?.status
+    agents.missions.missionAction(mission.id, 'run')
+    await waitFor(() => statusOf() === 'submitted', 'the task to be submitted', 40_000)
+
+    // 1. The agent was restarted in the task's own folder, and its terminal says so.
+    if (!agents.runtime.replay(employee.id).data.includes(`working in: ${task.id}`)) {
+      throw new Error('the agent was not started in the task’s own working folder')
+    }
+    const first = await agents.workspaces.changes(task.id)
+    if (!first.isolated)
+      throw new Error(`the task was not isolated: ${first.reason ?? 'no reason'}`)
+
+    // 2. The person sends it back; the agent works in the same folder, and its work is committed.
+    const folder = agents.runtime.cwdOf(employee.id) ?? ''
+    writeFileSync(join(folder, 'notes.txt'), 'notes from the agent\n')
+    agents.missions.taskAction(task.id, { action: 'request-changes', note: 'Please look again.' })
+    await waitFor(() => statusOf() === 'in_progress', 'the task to be handed out again', 30_000)
+    await waitFor(() => statusOf() === 'submitted', 'the task to be submitted again', 40_000)
+    const second = await agents.workspaces.changes(task.id)
+    if (!second.isolated || !second.files.some((file) => file.path === 'notes.txt')) {
+      throw new Error(`the agent's work was not committed: ${JSON.stringify(second)}`)
+    }
+
+    // 3. Accepting merges it into the mission branch, and only there.
+    const accepted = await agents.tasks.action(task.id, { action: 'accept' })
+    if (accepted.status !== 'done') throw new Error(`accepting left the task ${accepted.status}`)
+    const merged = plain('show', `shokuba/mission/${mission.id}:notes.txt`)
+    if (merged !== 'notes from the agent') throw new Error(`the mission branch has "${merged}"`)
+    if (plain('rev-parse', 'main') !== mainBefore) throw new Error('main moved')
+    if (plain('status', '--short') !== '') throw new Error('your checkout was changed')
+    return 'the agent was restarted in the task’s own folder; its work was committed on submit; sent back and resubmitted in the same folder; accepted into the mission branch; main and your checkout untouched'
+  } catch (error) {
+    const tail = employeeId
+      ? JSON.stringify(agents.runtime.replay(employeeId).data.slice(-300))
+      : ''
+    const tasks = agents.missions.listMissions().flatMap((d) => d.tasks.map((t) => t.status))
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`${message} [tasks: ${tasks.join(',') || 'none'}; terminal: ${tail}]`, {
+      cause: error,
+    })
+  } finally {
+    await agents.close()
+    services.close()
+  }
 }

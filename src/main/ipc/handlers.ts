@@ -149,7 +149,10 @@ export function registerIpc(
     agents.missions.updateTask(taskId, patch),
   )
   handle(IPC.tasksAction, TaskActionRequestSchema, trusted, ({ taskId, action }) =>
-    agents.missions.taskAction(taskId, action),
+    agents.tasks.action(taskId, action),
+  )
+  handle(IPC.tasksChanges, TaskIdRequestSchema, trusted, ({ taskId }) =>
+    agents.workspaces.changes(taskId),
   )
   handle(IPC.tasksRemove, TaskIdRequestSchema, trusted, ({ taskId }) => {
     agents.missions.removeTask(taskId)

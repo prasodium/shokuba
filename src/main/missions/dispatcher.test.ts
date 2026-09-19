@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Mission } from '@shared/missions'
 import { createLogger } from '../logging/logger'
 import { createMissionFixture, type MissionFixture } from './fixtures'
-import { Dispatcher, type DeliveryPort } from './dispatcher'
+import { Dispatcher, type DeliveryPort, type WorkspacePort } from './dispatcher'
 
 /** A stand-in for the agent runtime: which agents are deliverable, and what was sent. */
 class FakeDelivery implements DeliveryPort {
@@ -223,5 +223,152 @@ describe('while the circuit breaker limits an agent', () => {
     await gated.tick()
     expect(status(forMika.id)).toBe('in_progress')
     gated.stop()
+  })
+})
+
+describe('giving each task its own working folder', () => {
+  /** A runtime that remembers where each agent works, and what happened, in order. */
+  class Located extends FakeDelivery implements DeliveryPort {
+    readonly where = new Map<string, string>([['mika', '/home/mika']])
+    readonly log: string[] = []
+    restartFails: string | null = null
+    /** What the task's status was at the moment of each restart. */
+    readonly statusAtRestart: string[] = []
+    task: string | null = null
+
+    cwdOf(id: string): string | undefined {
+      return this.where.get(id)
+    }
+    async restartIn(id: string, cwd: string): Promise<void> {
+      this.log.push(`restart ${cwd}`)
+      if (this.task) this.statusAtRestart.push(status(this.task) ?? '?')
+      if (this.restartFails) throw new Error(this.restartFails)
+      this.where.set(id, cwd)
+    }
+    override async deliverPrompt(id: string, text: string): Promise<void> {
+      this.log.push('deliver')
+      await super.deliverPrompt(id, text)
+    }
+  }
+
+  let located: Located
+  let isolated: Map<string, { cwd: string; note: string } | null>
+  let gated: Dispatcher
+
+  const workspaces: WorkspacePort = {
+    prepare: async (task) => isolated.get(task.id) ?? null,
+    home: async () => '/home/mika',
+  }
+
+  beforeEach(() => {
+    located = new Located()
+    isolated = new Map()
+    gated = new Dispatcher({
+      missions: fx.missions,
+      delivery: located,
+      events: fx.services.events,
+      logger: createLogger(() => {}),
+      now: () => clock,
+      workspaces,
+    })
+  })
+  afterEach(() => gated.stop())
+
+  it('restarts the agent in the task’s folder before claiming the task, then hands it over with a note', async () => {
+    const t = add('Build it', 'mika')
+    located.task = t.id
+    located.ready.add('mika')
+    isolated.set(t.id, { cwd: '/work/task-1', note: 'Your working folder is /work/task-1.' })
+    run()
+    await gated.tick()
+
+    expect(located.log).toEqual(['restart /work/task-1', 'deliver'])
+    // The restart happened while the task was still unclaimed, so it cannot look like the agent died mid-task.
+    expect(located.statusAtRestart).toEqual(['ready'])
+    expect(status(t.id)).toBe('in_progress')
+    const text = located.delivered[0]?.text ?? ''
+    expect(text).toContain('Build it')
+    expect(text.endsWith('Your working folder is /work/task-1.')).toBe(true)
+  })
+
+  it('does not restart an agent that is already in the right folder', async () => {
+    const t = add('Retry', 'mika')
+    located.ready.add('mika')
+    located.where.set('mika', '/work/task-1')
+    isolated.set(t.id, { cwd: '/work/task-1', note: 'note' })
+    run()
+    await gated.tick()
+    expect(located.log).toEqual(['deliver'])
+    expect(status(t.id)).toBe('in_progress')
+  })
+
+  it('puts an agent back in its own folder for a task that is not isolated', async () => {
+    const t = add('No repo', 'mika')
+    located.ready.add('mika')
+    located.where.set('mika', '/work/old-task') // left over from an earlier task
+    run()
+    await gated.tick()
+    expect(located.log).toEqual(['restart /home/mika', 'deliver'])
+    expect(located.delivered[0]?.text).toBe(fx.missions.briefing(t.id))
+  })
+
+  it('leaves an agent that is already home alone for a task that is not isolated', async () => {
+    add('No repo', 'mika')
+    located.ready.add('mika')
+    run()
+    await gated.tick()
+    expect(located.log).toEqual(['deliver'])
+  })
+
+  it('does not claim the task if the agent cannot be restarted, and tries again later', async () => {
+    const t = add('Build it', 'mika')
+    located.ready.add('mika')
+    located.restartFails = 'the agent did not come back ready in time'
+    isolated.set(t.id, { cwd: '/work/task-1', note: 'note' })
+    run()
+    await gated.tick()
+    expect(status(t.id)).toBe('ready')
+    expect(located.delivered).toEqual([])
+
+    located.restartFails = null
+    await gated.tick() // still cooling down
+    expect(status(t.id)).toBe('ready')
+    clock += 6_000
+    await gated.tick()
+    expect(status(t.id)).toBe('in_progress')
+  })
+
+  it('leaves the task unclaimed if the agent is not ready for input after its restart', async () => {
+    const t = add('Build it', 'mika')
+    located.ready.add('mika')
+    isolated.set(t.id, { cwd: '/work/task-1', note: 'note' })
+    // The restart happens, but the agent then reports it is busy.
+    const restart = located.restartIn.bind(located)
+    located.restartIn = async (id, cwd) => {
+      await restart(id, cwd)
+      located.ready.delete(id)
+    }
+    run()
+    await gated.tick()
+    expect(status(t.id)).toBe('ready')
+    expect(located.delivered).toEqual([])
+  })
+
+  it('behaves exactly as before when no workspaces are configured', async () => {
+    const plain = new Dispatcher({
+      missions: fx.missions,
+      delivery: located,
+      events: fx.services.events,
+      logger: createLogger(() => {}),
+      now: () => clock,
+    })
+    const t = add('Plain', 'mika')
+    located.ready.add('mika')
+    located.where.set('mika', '/somewhere/else')
+    run()
+    await plain.tick()
+    expect(located.log).toEqual(['deliver'])
+    expect(status(t.id)).toBe('in_progress')
+    plain.stop()
   })
 })

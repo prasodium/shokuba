@@ -185,6 +185,33 @@ describe('AgentRuntime.start', () => {
     })
   })
 
+  it("can start the agent in another folder, such as a task's working folder", async () => {
+    const other = join(dir, 'task-folder')
+    mkdirSync(other)
+    const mika = await employee()
+    await agents.runtime.start(mika, { cwd: other })
+    expect(spawned[0]?.options.cwd).toBe(other)
+    expect(agents.runtime.cwdOf(mika.id)).toBe(other)
+    // The employee's own record is unchanged: this is about this process only.
+    expect(mika.workingDirectory).toBe(workdir)
+  })
+
+  it('still refuses a folder that does not exist, and starts nothing', async () => {
+    const mika = await employee()
+    await expect(agents.runtime.start(mika, { cwd: join(dir, 'nowhere') })).rejects.toThrow(
+      /does not exist/,
+    )
+    expect(spawned).toHaveLength(0)
+    expect(agents.runtime.cwdOf(mika.id)).toBeUndefined()
+  })
+
+  it('says where a running agent is working, and nothing for one that is not running', async () => {
+    const mika = await employee()
+    expect(agents.runtime.cwdOf(mika.id)).toBeUndefined()
+    await agents.runtime.start(mika)
+    expect(agents.runtime.cwdOf(mika.id)).toBe(workdir)
+  })
+
   it("writes the adapter's files into a private run directory", async () => {
     const mika = await employee()
     await agents.runtime.start(mika)
@@ -780,5 +807,29 @@ describe('AgentRuntime, one delivery at a time', () => {
     const mika = await idleAgent()
     spawned[0]?.pty.exit(0)
     await expect(agents.runtime.deliverPrompt(mika.id, 'x')).rejects.toBeDefined()
+  })
+})
+
+describe('AgentRuntime.waitUntilDeliverable', () => {
+  it('returns once the agent has reported itself idle', async () => {
+    const mika = await employee()
+    await agents.runtime.start(mika)
+    const waiting = agents.runtime.waitUntilDeliverable(mika.id, 5_000)
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    await report({ hook_event_name: 'SessionStart' })
+    await expect(waiting).resolves.toBe(true)
+  })
+
+  it('gives up after the time allowed, for an agent that never reports in', async () => {
+    const mika = await employee()
+    await agents.runtime.start(mika)
+    expect(await agents.runtime.waitUntilDeliverable(mika.id, 150)).toBe(false)
+  })
+
+  it('does not wait for an agent that is not running at all', async () => {
+    const mika = await employee()
+    const started = Date.now()
+    expect(await agents.runtime.waitUntilDeliverable(mika.id, 150)).toBe(false)
+    expect(Date.now() - started).toBeGreaterThanOrEqual(100)
   })
 })

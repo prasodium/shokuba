@@ -236,6 +236,23 @@ export class GitService {
     )
   }
 
+  /**
+   * Give an existing task branch a working folder again, for when the folder was removed but the
+   * branch (and the work on it) remains.
+   */
+  async reattachWorktree(repo: string, dir: string, branch: string): Promise<void> {
+    assertShokubaBranch(branch)
+    this.assertInsideWorktrees(dir)
+    if (await exists(dir)) {
+      throw new GitError('exists', 'That working folder already exists')
+    }
+    await fs.mkdir(pathApi(this.options.platform).dirname(dir), { recursive: true })
+    await this.exclusive(repo, async () => {
+      await this.git(repo, ['worktree', 'prune'])
+      await this.git(repo, ['worktree', 'add', dir, branch])
+    })
+  }
+
   /** Remove a working folder (the branch stays). Safe to call for one that is already gone. */
   async removeWorktree(repo: string, dir: string): Promise<void> {
     this.assertInsideWorktrees(dir)

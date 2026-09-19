@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { EventSource } from '@shared/events/schema'
+import type { Task } from '@shared/missions'
 import { HUMAN, MESSAGE_KINDS } from '@shared/messages'
 import { MessageError, type MessageService } from '../messages/service'
 import { ManagerPlanning } from '../missions/planning'
@@ -105,10 +106,20 @@ function managerOf(team: Team, employeeId: string): TeamMember | undefined {
  * "finished" makes a task `submitted`, which a person must still accept; and what an agent
  * sends while answering a message counts as a reply, so a runaway exchange is stopped.
  */
+/** Things that should happen because an agent used a tool, kept out of the tools themselves. */
+export interface AgentToolHooks {
+  /**
+   * An agent is about to submit a task: save its work first, so that by the time the task shows
+   * as submitted the work already exists. A failure here never fails the tool.
+   */
+  beforeSubmit?(task: Task): Promise<void> | void
+}
+
 export function createAgentTools(
   missions: MissionService,
   messages: MessageService,
   team: Team,
+  hooks: AgentToolHooks = {},
 ): McpTool<AgentToolContext>[] {
   const planning = new ManagerPlanning(missions, team)
   const managerOnly = (ctx: AgentToolContext): boolean => planning.isManager(ctx.employeeId)
@@ -132,15 +143,28 @@ export function createAgentTools(
         taskId: optionalTaskId,
         summary: z.string().min(1).max(4000).describe('What you did and how you verified it.'),
       }),
-      handler: (args, ctx) =>
-        explain(() => {
-          const task = missions.agentSubmit(
+      handler: async (args, ctx) => {
+        // Save the work before the task flips to "submitted", so nobody looking at it in between
+        // sees a submitted task whose changes are not there yet.
+        const target = args.taskId
+          ? missions.getTask(args.taskId)
+          : missions.currentTaskFor(ctx.employeeId)
+        if (target && target.assigneeId === ctx.employeeId) {
+          try {
+            await hooks.beforeSubmit?.(target)
+          } catch {
+            // Submitting goes ahead either way; saving the work must never stop it.
+          }
+        }
+        const task = explain(() =>
+          missions.agentSubmit(
             ctx.employeeId,
             { taskId: args.taskId, summary: args.summary },
             { source: ctx.source },
-          )
-          return `Submitted "${task.title}". It is now waiting for a person to review it.`
-        }),
+          ),
+        )
+        return `Submitted "${task.title}". It is now waiting for a person to review it.`
+      },
     }),
 
     defineTool({

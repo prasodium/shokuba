@@ -1,0 +1,434 @@
+import { execFileSync } from 'node:child_process'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Employee } from '@shared/employees'
+import type { Mission, Task } from '@shared/missions'
+import { createServices, type Services } from '../bootstrap'
+import { GitService } from '../git/service'
+import { createLogger } from '../logging/logger'
+import { toPlatformId } from '../platform'
+import type { TerminationPlan } from '../platform/process'
+import { parseClaudeHook } from '../providers/claude-code/hooks'
+import { ProviderRegistry } from '../providers/registry'
+import type { LaunchInput, ProviderAdapter } from '../providers/types'
+import { createAgentServices, type AgentServices } from './index'
+import type { PtyProcess, PtySpawnOptions } from './pty'
+import { HOOK_TOKEN_ENV } from './runtime'
+
+class FakePty implements PtyProcess {
+  readonly written: string[] = []
+  private readonly exitListeners: Array<
+    (exit: { exitCode: number; signal: number | null }) => void
+  > = []
+  constructor(readonly pid: number) {}
+  onData(): void {}
+  onExit(listener: (exit: { exitCode: number; signal: number | null }) => void): void {
+    this.exitListeners.push(listener)
+  }
+  write(data: string): void {
+    this.written.push(data)
+  }
+  resize(): void {}
+  exit(): void {
+    for (const listener of this.exitListeners) listener({ exitCode: 0, signal: null })
+  }
+}
+
+interface Agent {
+  employee: Employee
+  pty: FakePty
+  options: PtySpawnOptions
+  launch: LaunchInput
+}
+
+let dir: string
+let repo: string
+let noConfig: string
+let services: Services
+let agents: AgentServices
+let git: GitService
+/** Every agent process started, oldest first; `launches[i]` belongs to `spawns[i]`. */
+const launches: LaunchInput[] = []
+const spawns: Array<{ pty: FakePty; options: PtySpawnOptions }> = []
+/** Set to make newly started agents never report in (like Claude Code stuck on a login screen). */
+let reportIn = true
+
+const adapter: ProviderAdapter = {
+  id: 'fake',
+  displayName: 'Fake',
+  capabilities: { simulated: false, supportsModelSelection: false, permissionModes: ['default'] },
+  observation: {
+    kind: 'hooks',
+    source: 'reported',
+    parse: parseClaudeHook,
+    continuation: (text) => ({ decision: 'block', reason: text }),
+  },
+  detect: async () => ({ found: true, path: '/bin/fake', version: '1', problem: null }),
+  buildLaunch(input) {
+    launches.push(input)
+    return { file: input.executable, args: [], env: {}, files: [] }
+  },
+}
+
+function sh(cwd: string, ...args: string[]): string {
+  return execFileSync(
+    'git',
+    [
+      '-c',
+      'user.name=Setup',
+      '-c',
+      'user.email=setup@example.invalid',
+      '-c',
+      'commit.gpgsign=false',
+      ...args,
+    ],
+    {
+      cwd,
+      encoding: 'utf8',
+      env: { ...process.env, GIT_CONFIG_GLOBAL: noConfig, GIT_CONFIG_NOSYSTEM: '1' },
+    },
+  ).trim()
+}
+
+const auth = (agent: Agent) => ({
+  'content-type': 'application/json',
+  authorization: `Bearer ${agent.options.env[HOOK_TOKEN_ENV]}`,
+})
+
+async function hook(agent: Agent, payload: Record<string, unknown>): Promise<void> {
+  await fetch(agent.launch.report.url, {
+    method: 'POST',
+    headers: auth(agent),
+    body: JSON.stringify(payload),
+  })
+}
+
+async function tool(agent: Agent, name: string, args: object = {}): Promise<string> {
+  const response = await fetch(agent.launch.report.mcpUrl, {
+    method: 'POST',
+    headers: auth(agent),
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name, arguments: args },
+    }),
+  })
+  const body = (await response.json()) as { result: { content: Array<{ text: string }> } }
+  return body.result.content[0]?.text ?? ''
+}
+
+/** The newest process running for an employee: the one whose token is currently valid. */
+function current(employee: Employee): Agent {
+  const index = launches.map((l) => l.employee.id).lastIndexOf(employee.id)
+  const spawned = spawns[index]
+  const launch = launches[index]
+  if (!spawned || !launch) throw new Error(`${employee.name} has not been started`)
+  return { employee, pty: spawned.pty, options: spawned.options, launch }
+}
+
+beforeEach(async () => {
+  dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'shokuba-isolation-')))
+  noConfig = join(dir, 'no-git-config')
+  writeFileSync(noConfig, '')
+  repo = join(dir, 'repo')
+  mkdirSync(repo)
+  sh(repo, 'init', '-q', '-b', 'main')
+  writeFileSync(join(repo, 'a.txt'), 'one\ntwo\nthree\n')
+  sh(repo, 'add', '-A')
+  sh(repo, 'commit', '-qm', 'base')
+
+  launches.length = 0
+  spawns.length = 0
+  reportIn = true
+  services = createServices({
+    dataDir: join(dir, 'data'),
+    version: 'test',
+    platform: toPlatformId(),
+    logger: createLogger(() => {}),
+  })
+  git = await GitService.locate({
+    platform: toPlatformId(),
+    env: process.env,
+    home: homedir(),
+    dataDir: join(dir, 'data'),
+    gitEnv: { GIT_CONFIG_GLOBAL: noConfig, GIT_CONFIG_NOSYSTEM: '1' },
+  })
+  agents = await createAgentServices(services, {
+    platform: toPlatformId(),
+    env: { PATH: '/usr/bin' },
+    home: '/home/u',
+    providers: new ProviderRegistry([adapter]),
+    git,
+    pasteSettleMs: 2,
+    gracefulStopMs: 20,
+    restartWaitMs: 1_500,
+    spawnPty: (_file, _args, options) => {
+      const pty = new FakePty(4000 + spawns.length)
+      spawns.push({ pty, options })
+      const index = spawns.length - 1
+      // Like Claude Code, a started agent reports in a moment later.
+      if (reportIn) {
+        setTimeout(() => {
+          const launch = launches[index]
+          if (!launch) return
+          void hook(
+            { employee: launch.employee as Employee, pty, options, launch },
+            { hook_event_name: 'SessionStart' },
+          )
+        }, 15)
+      }
+      return pty
+    },
+  })
+  // Never signal a real process: these pids are made up. "Killing" one just makes it exit.
+  ;(agents.runtime as unknown as { killProcess: (plan: TerminationPlan) => void }).killProcess = (
+    plan,
+  ) => {
+    const target = spawns.find(({ pty }) =>
+      plan.kind === 'signal-group' ? plan.pid === pty.pid : plan.args.includes(String(pty.pid)),
+    )
+    target?.pty.exit()
+  }
+})
+
+afterEach(async () => {
+  agents.breaker.stop()
+  agents.router.stop()
+  agents.dispatcher.stop()
+  await agents.hooks.close()
+  agents.views.dispose()
+  services.close()
+  rmSync(dir, { recursive: true, force: true })
+})
+
+async function hire(name: string, folder = repo): Promise<Employee> {
+  const employee = await agents.employees.create({
+    name,
+    role: 'Engineer',
+    providerId: 'fake',
+    workingDirectory: folder,
+  })
+  await agents.runtime.start(employee)
+  await vi.waitFor(() => expect(agents.runtime.deliveryBlocker(employee.id)).toBeNull())
+  return employee
+}
+
+const typed = (agent: Agent): string => agent.pty.written.join('')
+
+/** A mission with one task per (title, assignee), already running. */
+function launchMission(...tasks: Array<[title: string, who: Employee]>): {
+  mission: Mission
+  tasks: Task[]
+} {
+  const mission = agents.missions.createMission({ title: 'Ship login' })
+  const made = tasks.map(([title, who]) =>
+    agents.missions.createTask({ missionId: mission.id, title, assigneeId: who.id }),
+  )
+  agents.missions.missionAction(mission.id, 'run')
+  return { mission, tasks: made }
+}
+
+/** The agent's turn: it does its work in `cwd`, then says it is finished, and its turn ends. */
+async function doWork(who: Employee, file: string, text: string): Promise<string> {
+  const agent = current(who)
+  const cwd = agent.options.cwd
+  await hook(agent, { hook_event_name: 'UserPromptSubmit' })
+  writeFileSync(join(cwd, file), text)
+  await tool(agent, 'submit_task', { summary: `Changed ${file}.` })
+  await hook(agent, { hook_event_name: 'Stop' })
+  return cwd
+}
+
+const statusOf = (id: string) => agents.missions.getTask(id)?.status
+
+describe('a task in its own branch, end to end', () => {
+  it('starts a fresh agent in the task’s own folder and hands it the task there', async () => {
+    const ren = await hire('Ren')
+    const before = current(ren)
+    expect(before.options.cwd).toBe(repo)
+
+    const { mission, tasks } = launchMission(['Build it', ren])
+    const task = tasks[0] as Task
+    await vi.waitFor(() => expect(statusOf(task.id)).toBe('in_progress'))
+
+    // A second process was started, in the task's folder, and the first one stopped.
+    expect(spawns).toHaveLength(2)
+    const now = current(ren)
+    expect(now.options.cwd).not.toBe(repo)
+    expect(now.options.cwd.startsWith(git.worktreesRoot)).toBe(true)
+    expect(now.pty).not.toBe(before.pty)
+    expect(sh(now.options.cwd, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(`shokuba/task/${task.id}`)
+    expect(sh(repo, 'branch', '--list', `shokuba/mission/${mission.id}`)).toContain(mission.id)
+
+    // The briefing went to the new agent, with where it is working; the old one was not touched.
+    await vi.waitFor(() => expect(typed(now)).toContain('Build it'))
+    expect(typed(now)).toContain('isolated in its own Git branch')
+    expect(typed(now)).toContain(now.options.cwd)
+    expect(typed(before)).not.toContain('Build it')
+    // Your own checkout and branch are as they were.
+    expect(sh(repo, 'status', '--short')).toBe('')
+    expect(sh(repo, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('main')
+  })
+
+  it('saves the agent’s work as a commit when it submits, and shows it for review', async () => {
+    const ren = await hire('Ren')
+    const { tasks } = launchMission(['Build it', ren])
+    const task = tasks[0] as Task
+    await vi.waitFor(() => expect(statusOf(task.id)).toBe('in_progress'))
+    const cwd = await doWork(ren, 'a.txt', 'one\nTWO\nthree\n')
+
+    expect(sh(cwd, 'log', '-1', '--format=%an|%s')).toBe('Ren|Task: Build it')
+    const changes = await agents.workspaces.changes(task.id)
+    expect(changes).toMatchObject({ isolated: true, state: 'active' })
+    expect(changes.isolated && changes.files).toEqual([
+      { path: 'a.txt', added: 1, deleted: 1, binary: false },
+    ])
+    expect(changes.isolated && changes.diff).toContain('+TWO')
+    expect(statusOf(task.id)).toBe('submitted')
+  })
+
+  it('merges accepted work into the mission branch, and never touches your branch', async () => {
+    const ren = await hire('Ren')
+    const { mission, tasks } = launchMission(['Build it', ren])
+    const task = tasks[0] as Task
+    await vi.waitFor(() => expect(statusOf(task.id)).toBe('in_progress'))
+    await doWork(ren, 'a.txt', 'one\nTWO\nthree\n')
+    const mainBefore = sh(repo, 'rev-parse', 'main')
+
+    const accepted = await agents.tasks.action(task.id, { action: 'accept' })
+    expect(accepted.status).toBe('done')
+    expect(sh(repo, 'show', `shokuba/mission/${mission.id}:a.txt`)).toBe('one\nTWO\nthree')
+    expect(sh(repo, 'rev-parse', 'main')).toBe(mainBefore)
+    expect(sh(repo, 'status', '--short')).toBe('')
+    expect(readFileSync(join(repo, 'a.txt'), 'utf8')).toBe('one\ntwo\nthree\n')
+  })
+
+  it('starts a dependent task from the work that was accepted before it', async () => {
+    const ren = await hire('Ren')
+    const sora = await hire('Sora')
+    const mission = agents.missions.createMission({ title: 'Two steps' })
+    const first = agents.missions.createTask({
+      missionId: mission.id,
+      title: 'First',
+      assigneeId: ren.id,
+    })
+    const second = agents.missions.createTask({
+      missionId: mission.id,
+      title: 'Second',
+      assigneeId: sora.id,
+      dependsOn: [first.id],
+    })
+    agents.missions.missionAction(mission.id, 'run')
+    await vi.waitFor(() => expect(statusOf(first.id)).toBe('in_progress'))
+    await doWork(ren, 'a.txt', 'one\nFIRST\nthree\n')
+    await agents.tasks.action(first.id, { action: 'accept' })
+
+    // The second task is handed out only now, and its folder already has the first one's change.
+    await vi.waitFor(() => expect(statusOf(second.id)).toBe('in_progress'))
+    const folder = current(sora).options.cwd
+    expect(readFileSync(join(folder, 'a.txt'), 'utf8')).toBe('one\nFIRST\nthree\n')
+  })
+
+  it('sends a conflicting task back to its agent with the files named and how to fix it', async () => {
+    const ren = await hire('Ren')
+    const sora = await hire('Sora')
+    const { mission, tasks } = launchMission(['Ren’s change', ren], ['Sora’s change', sora])
+    const [renTask, soraTask] = tasks as [Task, Task]
+    await vi.waitFor(() => expect(statusOf(renTask.id)).toBe('in_progress'))
+    await vi.waitFor(() => expect(statusOf(soraTask.id)).toBe('in_progress'))
+    await doWork(ren, 'a.txt', 'one\nFROM-REN\nthree\n')
+    const soraFolder = await doWork(sora, 'a.txt', 'one\nFROM-SORA\nthree\n')
+
+    expect((await agents.tasks.action(renTask.id, { action: 'accept' })).status).toBe('done')
+    const tip = sh(repo, 'rev-parse', `shokuba/mission/${mission.id}`)
+
+    // Sora's work cannot be accepted as it is: it goes back to her, and nothing moved.
+    const sent = await agents.tasks.action(soraTask.id, { action: 'accept' })
+    expect(sent.status).toBe('changes_requested')
+    expect(sent.reviewNote).toContain('conflicts with work accepted before yours, in a.txt')
+    expect(sent.reviewNote).toContain(`git merge shokuba/mission/${mission.id}`)
+    expect(sh(repo, 'rev-parse', `shokuba/mission/${mission.id}`)).toBe(tip)
+
+    // She is still in her own folder, so she is given the task again there, without a restart.
+    const spawnsBefore = spawns.length
+    await vi.waitFor(() => expect(statusOf(soraTask.id)).toBe('in_progress'))
+    expect(spawns).toHaveLength(spawnsBefore)
+    expect(current(sora).options.cwd).toBe(soraFolder)
+    await vi.waitFor(() => expect(typed(current(sora))).toContain('git merge shokuba/mission/'))
+
+    // She resolves it the way she was told, and submits again; now it is accepted.
+    const agent = current(sora)
+    await hook(agent, { hook_event_name: 'UserPromptSubmit' })
+    try {
+      sh(soraFolder, 'merge', '--no-edit', `shokuba/mission/${mission.id}`)
+    } catch {
+      /* the conflict is expected */
+    }
+    writeFileSync(join(soraFolder, 'a.txt'), 'one\nFROM-REN and FROM-SORA\nthree\n')
+    sh(soraFolder, 'add', '-A')
+    sh(soraFolder, 'commit', '-qm', 'resolve')
+    await tool(agent, 'submit_task', { summary: 'Resolved the conflict.' })
+    expect((await agents.tasks.action(soraTask.id, { action: 'accept' })).status).toBe('done')
+    expect(sh(repo, 'show', `shokuba/mission/${mission.id}:a.txt`)).toBe(
+      'one\nFROM-REN and FROM-SORA\nthree',
+    )
+  })
+})
+
+describe('when a task cannot be isolated', () => {
+  it('runs it in the employee’s own folder as before, without restarting anyone', async () => {
+    const plain = join(dir, 'plain')
+    mkdirSync(plain)
+    const ren = await hire('Ren', plain)
+    const { tasks } = launchMission(['No repo here', ren])
+    const task = tasks[0] as Task
+    await vi.waitFor(() => expect(statusOf(task.id)).toBe('in_progress'))
+
+    expect(spawns).toHaveLength(1)
+    expect(current(ren).options.cwd).toBe(realpathSync.native(plain))
+    await vi.waitFor(() => expect(typed(current(ren))).toContain('No repo here'))
+    expect(typed(current(ren))).not.toContain('isolated in its own Git branch')
+    expect(await agents.workspaces.changes(task.id)).toEqual({
+      isolated: false,
+      reason: 'That folder is not inside a Git repository',
+    })
+    // Accepting it is just accepting it: there is nothing to merge.
+    await doWork(ren, 'notes.txt', 'x')
+    expect((await agents.tasks.action(task.id, { action: 'accept' })).status).toBe('done')
+  })
+
+  it('leaves the task waiting, unclaimed, if the restarted agent never reports in', async () => {
+    const ren = await hire('Ren')
+    reportIn = false // the fresh agent starts but never gets to its prompt
+    const { tasks } = launchMission(['Build it', ren])
+    const task = tasks[0] as Task
+    await vi.waitFor(() => expect(spawns).toHaveLength(2), { timeout: 3_000 })
+    await new Promise((resolve) => setTimeout(resolve, 1_800))
+    expect(statusOf(task.id)).toBe('ready')
+    expect(typed(current(ren))).toBe('')
+  })
+})
+
+describe('what the person is told', () => {
+  it('shows the branch and files of an isolated task, and the reason for one that is not', async () => {
+    const ren = await hire('Ren')
+    const { tasks } = launchMission(['Build it', ren])
+    const task = tasks[0] as Task
+    expect(await agents.workspaces.changes(task.id)).toEqual({ isolated: false, reason: null })
+    await vi.waitFor(() => expect(statusOf(task.id)).toBe('in_progress'))
+    const changes = await agents.workspaces.changes(task.id)
+    expect(changes).toMatchObject({ isolated: true, branch: `shokuba/task/${task.id}`, files: [] })
+    expect(existsSync(current(ren).options.cwd)).toBe(true)
+  })
+})

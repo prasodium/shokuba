@@ -51,6 +51,7 @@ const api: ShokubaApi = {
     update: (taskId, patch) => ipcRenderer.invoke(IPC.tasksUpdate, { taskId, patch }),
     action: (taskId, action) => ipcRenderer.invoke(IPC.tasksAction, { taskId, action }),
     remove: (taskId) => ipcRenderer.invoke(IPC.tasksRemove, { taskId }),
+    changes: (taskId) => ipcRenderer.invoke(IPC.tasksChanges, { taskId }),
   },
   messages: {
     list: () => ipcRenderer.invoke(IPC.messagesList),

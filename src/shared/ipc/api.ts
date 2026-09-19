@@ -10,6 +10,7 @@ import {
   type PermissionMode,
 } from '../employees'
 import type { ShokubaEvent } from '../events/schema'
+import type { TaskChanges } from '../git'
 import {
   CONVERSATION_ACTIONS,
   HumanMessageInputSchema,
@@ -176,6 +177,8 @@ export interface ShokubaApi {
     update(taskId: string, patch: TaskUpdate): Promise<Task>
     action(taskId: string, action: TaskAction): Promise<Task>
     remove(taskId: string): Promise<void>
+    /** What the task changed in its own Git branch, for review. */
+    changes(taskId: string): Promise<TaskChanges>
   }
   messages: {
     /** Recent conversations, newest first. */

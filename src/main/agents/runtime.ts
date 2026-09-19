@@ -108,6 +108,8 @@ interface Session {
   exited: Promise<void>
   /** Input was just pasted; the agent has not yet reported starting a turn. Nothing else may be pasted. */
   receiving: boolean
+  /** The folder the process was started in (a task's own working folder, or the employee's). */
+  cwd: string
 }
 
 /** `offset` is the stream position *after* `data` (see Scrollback.total). */
@@ -155,19 +157,43 @@ export class AgentRuntime {
     }
   }
 
-  async start(employee: Employee): Promise<void> {
+  /**
+   * Start an employee's agent. It works in the employee's own folder unless `cwd` says
+   * otherwise (a task's isolated working folder), which is how one agent process is tied to
+   * one task's branch.
+   */
+  async start(employee: Employee, options: { cwd?: string } = {}): Promise<void> {
     if (this.sessions.has(employee.id) || this.starting.has(employee.id)) {
       throw new AgentRuntimeError('already-running', `${employee.name} is already running`)
     }
     this.starting.add(employee.id)
     try {
-      await this.launch(employee)
+      await this.launch(employee, options.cwd ?? employee.workingDirectory)
     } finally {
       this.starting.delete(employee.id)
     }
   }
 
-  private async launch(employee: Employee): Promise<void> {
+  /** The folder a running agent was started in, or undefined if it is not running. */
+  cwdOf(employeeId: string): string | undefined {
+    return this.sessions.get(employeeId)?.cwd
+  }
+
+  /**
+   * Wait until the agent can safely be handed input (see `deliveryBlocker`): running, reported
+   * idle, nothing being pasted. Returns false if that does not happen in time, for example when
+   * the agent is stuck on a login screen.
+   */
+  async waitUntilDeliverable(employeeId: string, timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      if (this.deliveryBlocker(employeeId) === null) return true
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    return this.deliveryBlocker(employeeId) === null
+  }
+
+  private async launch(employee: Employee, directory: string): Promise<void> {
     const { platform, env, home, dataDir, hooks } = this.deps
 
     const adapter = this.deps.providers.get(employee.providerId)
@@ -183,7 +209,7 @@ export class AgentRuntime {
       )
     }
 
-    const cwd = await resolveWorkingDirectory(employee.workingDirectory)
+    const cwd = await resolveWorkingDirectory(directory)
     const tracker = new AgentTracker(employee.id, adapter.observation.source)
     const scrollback = new Scrollback()
 
@@ -253,6 +279,7 @@ export class AgentRuntime {
         stopRequested: false,
         exited,
         receiving: false,
+        cwd,
       }
       this.sessions.set(employee.id, session)
       this.finished.delete(employee.id)
