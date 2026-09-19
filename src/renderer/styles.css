@@ -226,6 +226,48 @@ h2 {
 
 .office-canvas canvas {
   display: block;
+  /* Dragging the picture must not scroll or zoom the page on a touch screen. */
+  touch-action: none;
+}
+.office-canvas:focus-visible {
+  outline: 2px solid var(--accent, #e8893a);
+  outline-offset: -2px;
+}
+
+.office-controls {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  display: flex;
+  gap: 4px;
+}
+.office-control {
+  min-width: 30px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 7px;
+  border: 1px solid rgb(243 234 216 / 0.22);
+  background: rgb(30 26 23 / 0.86);
+  color: #f3ead8;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.office-control:hover:not(:disabled) {
+  border-color: rgb(243 234 216 / 0.5);
+}
+.office-control:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.office-control[aria-pressed='true'] {
+  background: #e8893a;
+  border-color: #e8893a;
+  color: #1e1a17;
+}
+.office-control:focus-visible {
+  outline: 2px solid #f3ead8;
+  outline-offset: 1px;
 }
 
 .office-overlay {

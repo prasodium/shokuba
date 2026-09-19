@@ -1,4 +1,5 @@
 import { shade, type Box } from './iso'
+import { PARTITION_HEIGHT, type Rect } from './map'
 import type { Pose } from './pose'
 
 /**
@@ -100,3 +101,104 @@ export const LED_BOX: Box = box(1.1, 1.39, 0.72, 0.05, 0.01, 0.04, 0xffffff)
 export const HEAD_ANCHOR = { x: 0.85, y: 0.44, z: 1.65 }
 /** Where the name plate goes: on the floor in front of the desk. */
 export const NAME_ANCHOR = { x: 0.9, y: 1.85, z: 0 }
+
+// ---------- the shared places and the walls ----------
+//
+// Each takes the floor rectangle it stands on and returns its boxes back to front, in the same
+// coordinates as the floor plan. They only ever show a place standing idle: what a place shows about
+// the real work going on is added on top of these, so an idle office never looks busy.
+
+const CORK = 0xc79a63
+const FRAME = 0x7a5738
+const SCREEN_OFF = 0x1c1e22
+const LEATHER = 0x5a3a2c
+
+/** A partition piece: a low wall. */
+export function partitionBox(rect: Rect): Box {
+  return { x: rect.x, y: rect.y, z: 0, w: rect.w, d: rect.d, h: PARTITION_HEIGHT, color: 0xd9c9a6 }
+}
+
+/** The cap along the top of a partition, a little wider than the wall so it reads as a rail. */
+export function partitionCap(rect: Rect): Box {
+  const grow = 0.03
+  return {
+    x: rect.x - grow,
+    y: rect.y - grow,
+    z: PARTITION_HEIGHT,
+    w: rect.w + grow * 2,
+    d: rect.d + grow * 2,
+    h: 0.05,
+    color: 0x8b6f52,
+  }
+}
+
+/** The mission board: a cork board in a frame, hung on the wall and empty until something is on it. */
+export function boardBoxes(footprint: Rect): Box[] {
+  const { x, y, w } = footprint
+  return [
+    box(x, y + 0.02, 0.85, w, 0.12, 1.4, FRAME),
+    box(x + 0.1, y + 0.14, 0.95, w - 0.2, 0.04, 1.2, CORK),
+  ]
+}
+
+/** The QA bench: a long bench with three screens, dark because nothing is being checked. */
+export function benchBoxes(footprint: Rect): Box[] {
+  const { x, y, w, d } = footprint
+  const boxes: Box[] = [
+    box(x + 0.08, y + 0.1, 0, 0.1, d - 0.2, 0.7, WOOD_DARK),
+    box(x + w - 0.18, y + 0.1, 0, 0.1, d - 0.2, 0.7, WOOD_DARK),
+    box(x, y, 0.7, w, d, 0.08, WOOD),
+  ]
+  const screen = 0.7
+  const gap = (w - screen * 3) / 4
+  for (let i = 0; i < 3; i += 1) {
+    const sx = x + gap + i * (screen + gap)
+    boxes.push(box(sx + screen / 2 - 0.08, y + d / 2 - 0.05, 0.78, 0.16, 0.1, 0.06, METAL))
+    boxes.push(box(sx, y + d / 2 - 0.05, 0.84, screen, 0.06, 0.42, SCREEN_OFF))
+  }
+  return boxes
+}
+
+/** Where a bench screen is, for lighting it: the face the camera sees. */
+export function benchScreens(footprint: Rect): Box[] {
+  return benchBoxes(footprint).filter((b) => b.color === SCREEN_OFF)
+}
+
+/** The person's desk: an empty leather chair behind a desk with two empty trays. */
+export function inboxBoxes(footprint: Rect): Box[] {
+  const { x, y, w } = footprint
+  const deskY = y + 0.6
+  return [
+    // chair, behind the desk
+    box(x + w / 2 - 0.3, y + 0.05, 0, 0.6, 0.5, 0.06, METAL),
+    box(x + w / 2 - 0.3, y + 0.05, 0.06, 0.6, 0.5, 0.42, LEATHER),
+    box(x + w / 2 - 0.3, y + 0.02, 0.48, 0.6, 0.1, 0.5, shade(LEATHER, 0.85)),
+    // desk
+    box(x + 0.06, deskY + 0.06, 0, 0.08, 0.08, 0.66, WOOD_DARK),
+    box(x + w - 0.14, deskY + 0.06, 0, 0.08, 0.08, 0.66, WOOD_DARK),
+    box(x + 0.06, deskY + 0.76, 0, 0.08, 0.08, 0.66, WOOD_DARK),
+    box(x + w - 0.14, deskY + 0.76, 0, 0.08, 0.08, 0.66, WOOD_DARK),
+    box(x, deskY, 0.66, w, 0.9, 0.08, WOOD),
+    // two empty trays: the pending one and the done one
+    box(x + 0.25, deskY + 0.2, 0.74, 0.5, 0.36, 0.04, 0xd8d2c6),
+    box(x + 0.25, deskY + 0.2, 0.78, 0.5, 0.02, 0.1, 0xd8d2c6),
+    box(x + 0.95, deskY + 0.2, 0.74, 0.5, 0.36, 0.04, 0xa9b9a3),
+    box(x + 0.95, deskY + 0.2, 0.78, 0.5, 0.02, 0.1, 0xa9b9a3),
+  ]
+}
+
+/** The tray the person's pending work goes in, for showing how much is waiting. */
+export function inboxTray(footprint: Rect): Box {
+  const deskY = footprint.y + 0.6
+  return box(footprint.x + 0.25, deskY + 0.2, 0.74, 0.5, 0.36, 0.04, 0xd8d2c6)
+}
+
+/** A potted plant. */
+export function plantBoxes(footprint: Rect): Box[] {
+  const { x, y } = footprint
+  return [
+    box(x, y, 0, 0.4, 0.4, 0.32, 0xa4583a),
+    box(x - 0.08, y - 0.08, 0.32, 0.56, 0.56, 0.3, 0x4f8a4a),
+    box(x + 0.03, y + 0.03, 0.62, 0.34, 0.34, 0.3, 0x63a45d),
+  ]
+}

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { OfficeScene, type SceneEmployee } from '../office/scene'
-import { MAX_VISIBLE_EMPLOYEES } from '../office/layout'
+import { ZOOM_STEP } from '../office/camera'
+import { MAX_VISIBLE_EMPLOYEES } from '../office/map'
+import { OfficeScene, type CameraState, type SceneEmployee } from '../office/scene'
 import { useOffice } from '../store/office'
 
 /** The isometric voxel office. It only *displays* what the event stream says. */
@@ -8,6 +9,7 @@ export function OfficeView({ onNew }: { onNew(): void }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const [scene, setScene] = useState<OfficeScene | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
+  const [camera, setCamera] = useState<CameraState | null>(null)
 
   const employees = useOffice((s) => s.employees)
   const views = useOffice((s) => s.views)
@@ -20,7 +22,7 @@ export function OfficeView({ onNew }: { onNew(): void }) {
     let cancelled = false
     let created: OfficeScene | undefined
 
-    OfficeScene.create(host, (id) => select(id))
+    OfficeScene.create(host, { onSelect: (id) => select(id), onCamera: setCamera })
       .then((made) => {
         if (cancelled) {
           made.destroy()
@@ -56,9 +58,57 @@ export function OfficeView({ onNew }: { onNew(): void }) {
       <div
         ref={hostRef}
         className="office-canvas"
-        role="img"
-        aria-label="Isometric office showing each employee at their desk"
+        role="group"
+        tabIndex={0}
+        aria-label="Isometric office. Focus here, then use the arrow keys to move the view, plus and minus to zoom, 0 to show the whole office, and F to follow the selected employee."
+        onKeyDown={(event) => {
+          if (event.ctrlKey || event.metaKey || event.altKey) return
+          if (scene?.handleKey(event.key)) event.preventDefault()
+        }}
       />
+      {!failure && (
+        <div className="office-controls" role="toolbar" aria-label="Office view">
+          <button
+            type="button"
+            className="office-control"
+            aria-label="Zoom in"
+            title="Zoom in (+)"
+            disabled={!scene || camera?.canZoomIn === false}
+            onClick={() => scene?.zoomBy(ZOOM_STEP)}
+          >
+            +
+          </button>
+          <button
+            type="button"
+            className="office-control"
+            aria-label="Zoom out"
+            title="Zoom out (−)"
+            disabled={!scene || camera?.canZoomOut === false}
+            onClick={() => scene?.zoomBy(1 / ZOOM_STEP)}
+          >
+            −
+          </button>
+          <button
+            type="button"
+            className="office-control"
+            title="Show the whole office (0)"
+            disabled={!scene || camera?.fitted !== false}
+            onClick={() => scene?.fit()}
+          >
+            Fit
+          </button>
+          <button
+            type="button"
+            className="office-control"
+            aria-pressed={camera?.following === true}
+            title="Keep the selected employee in the middle (F)"
+            disabled={!scene || selectedId === null}
+            onClick={() => scene?.setFollow(camera?.following !== true)}
+          >
+            Follow
+          </button>
+        </div>
+      )}
       {failure && (
         <div className="office-overlay">
           <p>
@@ -80,7 +130,7 @@ export function OfficeView({ onNew }: { onNew(): void }) {
       )}
       {overflow > 0 && (
         <p className="office-note">
-          +{overflow} more not shown yet (the office fits {MAX_VISIBLE_EMPLOYEES} desks)
+          +{overflow} more not shown yet (the office has {MAX_VISIBLE_EMPLOYEES} desks)
         </p>
       )}
     </div>

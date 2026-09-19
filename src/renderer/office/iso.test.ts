@@ -4,10 +4,12 @@ import {
   fitToViewport,
   hexToNumber,
   project,
+  rectBounds,
   roomBounds,
   shade,
   sortByDepth,
   tilePolygon,
+  unionBounds,
   TILE_H,
   TILE_W,
   Z_UNIT,
@@ -112,5 +114,62 @@ describe('fitToViewport', () => {
 
   it('never returns a non-positive scale for a tiny viewport', () => {
     expect(fitToViewport(bounds, { width: 10, height: 10 }).scale).toBeGreaterThan(0)
+  })
+})
+
+describe('rectBounds and unionBounds', () => {
+  it('holds every corner of a floor rectangle, from its slab up to the height given', () => {
+    const rect = { x: 8, y: 0, w: 8, d: 7 }
+    const b = rectBounds(rect, 2.8)
+    for (const [x, y, z] of [
+      [8, 0, 2.8],
+      [16, 0, 2.8],
+      [8, 7, -0.3],
+      [16, 7, -0.3],
+      [16, 0, 0],
+    ] as const) {
+      const p = project(x, y, z)
+      expect(p.x).toBeGreaterThanOrEqual(b.minX - 1e-9)
+      expect(p.x).toBeLessThanOrEqual(b.maxX + 1e-9)
+      expect(p.y).toBeGreaterThanOrEqual(b.minY - 1e-9)
+      expect(p.y).toBeLessThanOrEqual(b.maxY + 1e-9)
+    }
+  })
+
+  it('agrees with a room at the origin about how wide and tall it is', () => {
+    const a = roomBounds(8, 7, 2.8)
+    const b = rectBounds({ x: 0, y: 0, w: 8, d: 7 }, 2.8)
+    expect(b.minX).toBeCloseTo(a.minX)
+    expect(b.maxX).toBeCloseTo(a.maxX)
+    expect(b.minY).toBeCloseTo(a.minY)
+  })
+
+  it('joins bounds into the smallest that holds them all, whichever one each edge comes from', () => {
+    const joined = unionBounds([
+      { minX: -9, maxX: 1, minY: 0, maxY: 50 },
+      { minX: 0, maxX: 10, minY: -5, maxY: 20 },
+      { minX: 2, maxX: 3, minY: 8, maxY: 30 },
+    ])
+    expect(joined).toEqual({ minX: -9, maxX: 10, minY: -5, maxY: 50 })
+    // Order does not matter.
+    const [a, b, c] = [
+      { minX: -9, maxX: 1, minY: 0, maxY: 50 },
+      { minX: 0, maxX: 10, minY: -5, maxY: 20 },
+      { minX: 2, maxX: 3, minY: 8, maxY: 30 },
+    ]
+    expect(unionBounds([c, b, a])).toEqual(joined)
+  })
+
+  it('covers an L-shaped office more tightly than its bounding rectangle', () => {
+    const l = unionBounds([
+      rectBounds({ x: 0, y: 0, w: 8, d: 7 }, 2.8),
+      rectBounds({ x: 8, y: 0, w: 8, d: 7 }, 2.8),
+      rectBounds({ x: 0, y: 7, w: 8, d: 7 }, 2.8),
+    ])
+    const box = rectBounds({ x: 0, y: 0, w: 16, d: 14 }, 2.8)
+    // The empty corner is the nearest one, so the L is shorter on screen but as wide.
+    expect(l.maxY).toBeLessThan(box.maxY)
+    expect(l.minX).toBeCloseTo(box.minX)
+    expect(l.maxX).toBeCloseTo(box.maxX)
   })
 })

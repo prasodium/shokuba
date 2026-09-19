@@ -4,27 +4,62 @@ import { Application, Container, Graphics, Polygon, Text, type TextOptions } fro
 import type { AgentView } from '@shared/agents/view'
 import { bubbleFor, type BubbleModel } from './bubble'
 import {
+  actionForKey,
+  clampCamera,
+  fitCamera,
+  followStep,
+  labelScale,
+  MAX_ZOOM,
+  MIN_ZOOM,
+  panBy,
+  ROLE_MIN_SCALE,
+  transformOf,
+  wheelFactor,
+  zoomAt,
+  type Camera,
+} from './camera'
+import {
   HEAD_ANCHOR,
   LED_BOX,
   NAME_ANCHOR,
   STATION_DEPTH,
   STATION_WIDTH,
+  benchBoxes,
+  boardBoxes,
   chairBoxes,
   deskBoxes,
+  inboxBoxes,
+  partitionBox,
+  partitionCap,
   personBoxes,
+  plantBoxes,
   rug,
 } from './furniture'
 import {
   boxFaces,
-  fitToViewport,
   hexToNumber,
   project,
-  roomBounds,
+  rectBounds,
   shade,
   tilePolygon,
+  unionBounds,
+  type Bounds,
   type Box,
+  type Point,
 } from './iso'
-import { ROOM_DEPTH, ROOM_WIDTH, WALL_HEIGHT, assignDesks, type DeskSlot } from './layout'
+import {
+  WALL_HEIGHT,
+  assignDesks,
+  buildOffice,
+  depthOf,
+  groupWalls,
+  stationRect,
+  type DeskSlot,
+  type OfficeMap,
+  type Place,
+  type Rect,
+  type Room,
+} from './map'
 import { LED_COLORS, poseFor } from './pose'
 
 export interface SceneEmployee {
@@ -35,13 +70,34 @@ export interface SceneEmployee {
   color: string
 }
 
+/** What the view controls need to know about the camera. */
+export interface CameraState {
+  /** 1 shows the whole office. */
+  zoom: number
+  /** The whole office is in view, as it is until the person moves the camera. */
+  fitted: boolean
+  following: boolean
+  canZoomIn: boolean
+  canZoomOut: boolean
+}
+
+export interface SceneCallbacks {
+  onSelect(id: string): void
+  onCamera(state: CameraState): void
+}
+
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'
 const ACCENT = 0xe8893a
 const SURFACE = 0x1e1a17
 
 const FLOOR_A = 0x7a5c44
 const FLOOR_B = 0x86664c
+const COMMONS_A = 0x6f6a5c
+const COMMONS_B = 0x7b7566
 const WALL = 0xeadcbf
+const SLAB = 0x4a382b
+/** How far the pointer must move before a press becomes a drag rather than a click. */
+const DRAG_THRESHOLD = 4
 
 function drawBox(g: Graphics, box: Box): void {
   const faces = boxFaces(box)
@@ -50,38 +106,121 @@ function drawBox(g: Graphics, box: Box): void {
   g.poly(faces.top).fill(box.color)
 }
 
-function at(box: Box, slot: DeskSlot): Box {
+function at(box: Box, slot: { x: number; y: number }): Box {
   return { ...box, x: box.x + slot.x, y: box.y + slot.y }
 }
 
-/** The floor, walls and fixed decoration. Drawn once. */
-function drawRoom(g: Graphics): void {
-  // Slab edge, so the room has thickness where it meets the void.
-  drawBox(g, { x: 0, y: 0, z: -0.3, w: ROOM_WIDTH, d: ROOM_DEPTH, h: 0.3, color: 0x4a382b })
+/** Windows on the tall walls: a span along the wall and how high. */
+const BACK_WINDOWS: ReadonlyArray<{ from: number; to: number; z: number; h: number }> = [
+  { from: 1.6, to: 3.9, z: 1.15, h: 1.15 },
+  { from: 5.0, to: 7.3, z: 1.15, h: 1.15 },
+  // Above the QA bench, high enough to clear its screens.
+  { from: 12.9, to: 15.3, z: 1.45, h: 1.0 },
+]
+const SIDE_WINDOWS: ReadonlyArray<{ from: number; to: number }> = [
+  { from: 1.4, to: 3.4 },
+  { from: 4.3, to: 6.3 },
+  { from: 8.4, to: 10.4 },
+  { from: 11.3, to: 13.3 },
+]
 
-  for (let x = 0; x < ROOM_WIDTH; x++) {
-    for (let y = 0; y < ROOM_DEPTH; y++) {
-      g.poly(tilePolygon(x, y)).fill((x + y) % 2 === 0 ? FLOOR_A : FLOOR_B)
+/** The floor, the tall walls on the two far sides, and their windows. Drawn when the plan changes. */
+function drawFloor(g: Graphics, map: OfficeMap): void {
+  for (const room of map.rooms) {
+    const { x, y, w, d } = room.rect
+    // Slab edge, so the room has thickness where it meets the void.
+    drawBox(g, { x, y, z: -0.3, w, d, h: 0.3, color: SLAB })
+  }
+  for (const room of map.rooms) {
+    const { x, y, w, d } = room.rect
+    const [a, b] = room.kind === 'commons' ? [COMMONS_A, COMMONS_B] : [FLOOR_A, FLOOR_B]
+    for (let tx = 0; tx < w; tx++) {
+      for (let ty = 0; ty < d; ty++) {
+        g.poly(tilePolygon(x + tx, y + ty)).fill((tx + ty) % 2 === 0 ? a : b)
+      }
     }
   }
 
-  // Back walls meeting at the far corner.
-  drawBox(g, { x: 0, y: -0.2, z: 0, w: ROOM_WIDTH, d: 0.2, h: WALL_HEIGHT, color: WALL })
-  drawBox(g, { x: -0.2, y: 0, z: 0, w: 0.2, d: ROOM_DEPTH, h: WALL_HEIGHT, color: WALL })
+  const [back, side] = map.outerWalls
+  if (back) drawBox(g, { ...back, z: 0, h: WALL_HEIGHT, color: WALL })
+  if (side) drawBox(g, { ...side, z: 0, h: WALL_HEIGHT, color: WALL })
   // Skirting boards.
-  drawBox(g, { x: 0, y: 0, z: 0, w: ROOM_WIDTH, d: 0.05, h: 0.18, color: 0x8b6f52 })
-  drawBox(g, { x: 0, y: 0, z: 0, w: 0.05, d: ROOM_DEPTH, h: 0.18, color: 0x8b6f52 })
+  if (back) drawBox(g, { x: 0, y: 0, z: 0, w: back.w, d: 0.05, h: 0.18, color: 0x8b6f52 })
+  if (side) drawBox(g, { x: 0, y: 0, z: 0, w: 0.05, d: side.d, h: 0.18, color: 0x8b6f52 })
 
   // Windows, laid on the inner wall faces.
-  drawBox(g, { x: 1.6, y: -0.01, z: 1.15, w: 2.3, d: 0.01, h: 1.15, color: 0x9ccfe8 })
-  drawBox(g, { x: 5.0, y: -0.01, z: 1.15, w: 2.3, d: 0.01, h: 1.15, color: 0x9ccfe8 })
-  drawBox(g, { x: -0.01, y: 1.4, z: 1.15, w: 0.01, d: 2.0, h: 1.15, color: 0x9ccfe8 })
-  drawBox(g, { x: -0.01, y: 4.3, z: 1.15, w: 0.01, d: 2.0, h: 1.15, color: 0x9ccfe8 })
+  for (const win of BACK_WINDOWS) {
+    if (back && win.to <= back.w) {
+      drawBox(g, {
+        x: win.from,
+        y: -0.01,
+        z: win.z,
+        w: win.to - win.from,
+        d: 0.01,
+        h: win.h,
+        color: 0x9ccfe8,
+      })
+    }
+  }
+  for (const win of SIDE_WINDOWS) {
+    if (side && win.to <= side.d) {
+      drawBox(g, {
+        x: -0.01,
+        y: win.from,
+        z: 1.15,
+        w: 0.01,
+        d: win.to - win.from,
+        h: 1.15,
+        color: 0x9ccfe8,
+      })
+    }
+  }
+}
 
-  // A plant in the far corner.
-  drawBox(g, { x: 7.3, y: 0.35, z: 0, w: 0.4, d: 0.4, h: 0.32, color: 0xa4583a })
-  drawBox(g, { x: 7.22, y: 0.27, z: 0.32, w: 0.56, d: 0.56, h: 0.3, color: 0x4f8a4a })
-  drawBox(g, { x: 7.33, y: 0.38, z: 0.62, w: 0.34, d: 0.34, h: 0.3, color: 0x63a45d })
+/** Where a place's name goes: above it, on the wall side of it. World coordinates and a height. */
+function labelAnchor(place: Place, all: readonly Place[]): { x: number; y: number; z: number } {
+  const f = place.footprint
+  switch (place.kind) {
+    case 'board':
+      return { x: f.x + f.w / 2, y: f.y + 0.1, z: 2.5 }
+    case 'qa':
+      return { x: f.x + f.w / 2, y: f.y + 0.4, z: 1.55 }
+    case 'inbox':
+      return { x: f.x + f.w / 2, y: f.y + 0.8, z: 1.3 }
+    case 'reading': {
+      // One name for the whole alcove, centred over both desks.
+      const desks = all.filter((p) => p.kind === 'reading')
+      const minX = Math.min(...desks.map((p) => p.footprint.x))
+      const maxX = Math.max(...desks.map((p) => p.footprint.x + p.footprint.w))
+      return { x: (minX + maxX) / 2, y: f.y + 0.1, z: 1.95 }
+    }
+  }
+}
+
+/** A small name tag for a shared place, drawn in the overlay so its text stays crisp. */
+class PlaceLabel {
+  readonly view = new Container()
+
+  constructor(
+    text: string,
+    readonly anchor: { x: number; y: number; z: number },
+    resolution: number,
+  ) {
+    const label = new Text({
+      text,
+      style: { fontFamily: FONT, fontSize: 10.5, fill: 0xf3ead8, fontWeight: '600' },
+      resolution,
+    })
+    const padX = 8
+    const height = 19
+    const bg = new Graphics()
+      .roundRect(-label.width / 2 - padX, -height, label.width + padX * 2, height, 7)
+      .fill({ color: SURFACE, alpha: 0.86 })
+    label.anchor.set(0.5, 0.5)
+    label.position.set(0, -height / 2)
+    this.view.addChild(bg, label)
+    this.view.eventMode = 'none'
+  }
 }
 
 /** A small rounded status bubble with a tail, drawn above an employee's head. */
@@ -93,6 +232,7 @@ class Bubble {
   private readonly tag = new Text(this.textOptions('', 10, ACCENT, '600'))
   private key = ''
   private pulse = false
+  private base = 1
 
   constructor(private readonly resolution: number) {
     this.view.addChild(this.bg, this.label, this.detail, this.tag)
@@ -156,9 +296,14 @@ class Bubble {
     this.detail.position.set(-width / 2 + padX, -height - tail + padY + 19)
   }
 
+  /** How big the whole bubble is drawn, as a share of full size. */
+  setScale(base: number): void {
+    this.base = base
+  }
+
   tick(time: number): void {
     const s = this.pulse ? 1 + 0.035 * Math.sin(time * 6) : 1
-    this.view.scale.set(s)
+    this.view.scale.set(s * this.base)
   }
 }
 
@@ -184,7 +329,7 @@ class Desk {
     onSelect: (id: string) => void,
   ) {
     this.shirt = hexToNumber(employee.color)
-    this.container.zIndex = slot.x + slot.y
+    this.container.zIndex = depthOf(stationRect(slot))
     this.container.addChild(
       this.selection,
       this.rugGfx,
@@ -282,6 +427,11 @@ class Desk {
     return project(this.slot.x + HEAD_ANCHOR.x, this.slot.y + HEAD_ANCHOR.y, HEAD_ANCHOR.z)
   }
 
+  /** The middle of the workstation, for the camera to follow. */
+  centreScreen(): { x: number; y: number } {
+    return project(this.slot.x + STATION_WIDTH / 2, this.slot.y + STATION_DEPTH / 2, 0.6)
+  }
+
   nameScreen(): { x: number; y: number } {
     return project(this.slot.x + NAME_ANCHOR.x, this.slot.y + NAME_ANCHOR.y, NAME_ANCHOR.z)
   }
@@ -290,34 +440,63 @@ class Desk {
 /**
  * The isometric voxel office. It draws nothing on its own authority: what each employee is
  * doing comes from their `AgentView`, which comes from real events.
+ *
+ * The floor plan comes from `buildOffice`, and grows with the team. Everything that stands on the
+ * floor is one item in a single depth-sorted layer, so a person, a desk and a wall are always drawn
+ * in the right order however they are arranged. The camera (drag to move, wheel to zoom, keys, or
+ * following someone) is pure maths in `camera.ts`; this class only applies it.
  */
 export class OfficeScene {
   private readonly world = new Container()
-  private readonly desks = new Container()
+  private readonly floor = new Graphics()
+  private readonly items = new Container()
   private readonly overlay = new Container()
   private readonly deskViews = new Map<string, Desk>()
+  /** Things that belong to the current plan, dropped and rebuilt when it changes. */
+  private statics: Container[] = []
+  private placeLabels: PlaceLabel[] = []
+  private map: OfficeMap = buildOffice(0)
+  private bounds: Bounds
+  private camera: Camera
+  /** Until the person moves the camera, it keeps the whole office in view as things change. */
+  private autoFit = true
+  private following = false
   private views: Record<string, AgentView> = {}
   private selected: string | null = null
   private time = 0
   private readonly reducedMotion: boolean
   private readonly resolution: number
   private destroyed = false
+  private lastState = ''
+  private drag: {
+    id: number
+    startX: number
+    startY: number
+    lastX: number
+    lastY: number
+    moved: boolean
+  } | null = null
+  /** Whether the press that is ending was a drag, so it is not also taken as a click. */
+  private dragged = false
 
   private readonly observer: ResizeObserver
 
   private constructor(
     private readonly app: Application,
     host: HTMLElement,
-    private readonly onSelect: (id: string) => void,
+    private readonly callbacks: SceneCallbacks,
   ) {
     this.resolution = Math.max(2, window.devicePixelRatio || 1)
     this.reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
-    const room = new Graphics()
-    drawRoom(room)
-    this.desks.sortableChildren = true
-    this.world.addChild(room, this.desks)
+    this.items.sortableChildren = true
+    // Nearer employees' labels sit above farther ones'; the names of places sit under them all.
+    this.overlay.sortableChildren = true
+    this.world.addChild(this.floor, this.items)
     this.app.stage.addChild(this.world, this.overlay)
+    this.bounds = this.boundsOf(this.map)
+    this.camera = fitCamera(this.bounds)
+    this.applyMap(this.map)
 
     // PixiJS only follows the *window*; the panel also changes size when the roster grows.
     this.observer = new ResizeObserver(() => {
@@ -328,16 +507,27 @@ export class OfficeScene {
       }
     })
     this.observer.observe(host)
-    this.app.renderer.on('resize', () => this.layout())
+    this.app.renderer.on('resize', () => this.onResize())
+
+    const canvas = this.app.canvas
+    canvas.addEventListener('pointerdown', this.onPointerDown)
+    canvas.addEventListener('pointermove', this.onPointerMove)
+    canvas.addEventListener('pointerup', this.onPointerEnd)
+    canvas.addEventListener('pointercancel', this.onPointerEnd)
+    canvas.addEventListener('wheel', this.onWheel, { passive: false })
+    this.app.renderer.events.cursorStyles['default'] = 'grab'
+
     this.app.ticker.add((ticker) => {
-      if (!this.reducedMotion) this.time += ticker.deltaMS / 1000
+      const dt = ticker.deltaMS / 1000
+      if (!this.reducedMotion) this.time += dt
       for (const desk of this.deskViews.values()) desk.tick(this.time)
+      this.followSelected(dt)
       this.placeOverlay()
     })
-    this.layout()
+    this.applyCamera()
   }
 
-  static async create(host: HTMLElement, onSelect: (id: string) => void): Promise<OfficeScene> {
+  static async create(host: HTMLElement, callbacks: SceneCallbacks): Promise<OfficeScene> {
     const app = new Application()
     await app.init({
       background: 0x14110f,
@@ -348,15 +538,21 @@ export class OfficeScene {
       resolution: window.devicePixelRatio || 1,
     })
     host.appendChild(app.canvas)
-    return new OfficeScene(app, host, onSelect)
+    return new OfficeScene(app, host, callbacks)
   }
 
+  // ---------- who is in the office ----------
+
   setEmployees(employees: readonly SceneEmployee[]): void {
-    const { seated } = assignDesks(employees)
-    const wanted = new Set(seated.map((s) => s.employee.id))
+    // The plan grows with the team; the rooms and desks already there never move.
+    const wanted = buildOffice(employees.length)
+    if (wanted.rooms.length !== this.map.rooms.length) this.applyMap(wanted)
+
+    const { seated } = assignDesks(employees, this.map)
+    const keep = new Set(seated.map((s) => s.employee.id))
 
     for (const [id, desk] of this.deskViews) {
-      if (!wanted.has(id)) {
+      if (!keep.has(id)) {
         desk.dispose()
         this.deskViews.delete(id)
       }
@@ -367,7 +563,8 @@ export class OfficeScene {
       // A desk is rebuilt when the employee's look changes, or when they move to another desk.
       if (
         existing &&
-        existing.slot === slot &&
+        existing.slot.x === slot.x &&
+        existing.slot.y === slot.y &&
         existing.employee.color === employee.color &&
         existing.employee.name === employee.name &&
         existing.employee.role === employee.role
@@ -375,12 +572,15 @@ export class OfficeScene {
         continue
       }
       existing?.dispose()
-      const desk = new Desk(employee, slot, this.resolution, this.onSelect)
+      const desk = new Desk(employee, slot, this.resolution, (id) => this.select(id))
       desk.setView(this.views[employee.id])
       desk.setSelected(this.selected === employee.id)
       this.deskViews.set(employee.id, desk)
-      this.desks.addChild(desk.container)
-      this.overlay.addChild(desk.nameLabel, desk.roleLabel, desk.bubble.view)
+      this.items.addChild(desk.container)
+      for (const view of [desk.nameLabel, desk.roleLabel, desk.bubble.view]) {
+        view.zIndex = 10 + depthOf(stationRect(slot))
+        this.overlay.addChild(view)
+      }
     }
     this.placeOverlay()
   }
@@ -393,26 +593,262 @@ export class OfficeScene {
   setSelected(id: string | null): void {
     this.selected = id
     for (const [deskId, desk] of this.deskViews) desk.setSelected(deskId === id)
+    if (id === null && this.following) {
+      this.following = false
+      this.notify()
+    }
+  }
+
+  /** A click on a desk selects it, unless the press was really a drag of the camera. */
+  private select(id: string): void {
+    if (!this.dragged) this.callbacks.onSelect(id)
+  }
+
+  // ---------- the camera ----------
+
+  private viewport(): { width: number; height: number } {
+    return { width: this.app.screen.width, height: this.app.screen.height }
+  }
+
+  /** Zoom in (`factor` above 1) or out, about the middle of the panel. */
+  zoomBy(factor: number): void {
+    const { width, height } = this.viewport()
+    this.setCamera(
+      zoomAt(this.camera, factor, { x: width / 2, y: height / 2 }, this.bounds, this.viewport()),
+    )
+  }
+
+  /** Move the picture by this many pixels, as a drag does. Moving it by hand stops following. */
+  moveBy(dx: number, dy: number): void {
+    this.stopFollowing()
+    this.setCamera(panBy(this.camera, dx, dy, this.bounds, this.viewport()))
+  }
+
+  /** Show the whole office again. */
+  fit(): void {
+    this.following = false
+    this.autoFit = true
+    this.camera = fitCamera(this.bounds)
+    this.applyCamera()
+  }
+
+  /** Keep the selected employee in the middle of the panel (or stop doing that). */
+  setFollow(on: boolean): void {
+    this.following = on && this.selected !== null
+    // Following brings the picture in, so it no longer keeps the whole office in view by itself.
+    if (this.following) this.autoFit = false
+    this.notify()
+  }
+
+  /** Act on a key if it is a camera key. Returns whether it was, so the caller can keep the event. */
+  handleKey(key: string): boolean {
+    const action = actionForKey(key)
+    if (!action) return false
+    if (action.kind === 'pan') this.moveBy(action.dx, action.dy)
+    else if (action.kind === 'zoom') this.zoomBy(action.factor)
+    else if (action.kind === 'fit') this.fit()
+    else this.setFollow(!this.following)
+    return true
+  }
+
+  private stopFollowing(): void {
+    if (!this.following) return
+    this.following = false
+    this.notify()
+  }
+
+  private setCamera(next: Camera): void {
+    this.camera = next
+    this.autoFit = false
+    this.applyCamera()
+  }
+
+  private followSelected(dt: number): void {
+    if (!this.following || this.selected === null) return
+    const desk = this.deskViews.get(this.selected)
+    if (!desk) return
+    const next = followStep(this.camera, desk.centreScreen(), dt, this.reducedMotion, this.bounds)
+    if (next.x !== this.camera.x || next.y !== this.camera.y || next.zoom !== this.camera.zoom) {
+      this.camera = next
+      this.applyCamera()
+    }
+  }
+
+  private onResize(): void {
+    // Keep the whole office in view if that is what was showing; otherwise keep the picture as it is.
+    this.camera = this.autoFit ? fitCamera(this.bounds) : clampCamera(this.camera, this.bounds)
+    this.applyCamera()
+  }
+
+  /** Put the world where the camera says, and tell the controls. */
+  private applyCamera(): void {
+    const t = transformOf(this.camera, this.bounds, this.viewport())
+    this.world.scale.set(t.scale)
+    this.world.position.set(t.x, t.y)
+    this.placeOverlay()
+    this.notify()
+  }
+
+  private notify(): void {
+    const state: CameraState = {
+      zoom: Math.round(this.camera.zoom * 1000) / 1000,
+      fitted: this.autoFit && this.camera.zoom === 1,
+      following: this.following,
+      canZoomIn: this.camera.zoom < MAX_ZOOM - 1e-6,
+      canZoomOut: this.camera.zoom > MIN_ZOOM + 1e-6,
+    }
+    const key = JSON.stringify(state)
+    if (key === this.lastState) return
+    this.lastState = key
+    this.callbacks.onCamera(state)
+  }
+
+  // ---------- pointer and wheel ----------
+
+  private readonly onPointerDown = (event: PointerEvent): void => {
+    if (event.button !== 0) return
+    this.dragged = false
+    this.drag = {
+      id: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      lastX: event.clientX,
+      lastY: event.clientY,
+      moved: false,
+    }
+    try {
+      // So a drag carries on when the pointer leaves the panel. Not essential, so never fatal.
+      this.app.canvas.setPointerCapture(event.pointerId)
+    } catch {
+      /* the pointer is not one the browser can capture */
+    }
+  }
+
+  private readonly onPointerMove = (event: PointerEvent): void => {
+    const drag = this.drag
+    if (!drag || event.pointerId !== drag.id) return
+    if (!drag.moved) {
+      const far = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY)
+      if (far < DRAG_THRESHOLD) return
+      drag.moved = true
+      this.dragged = true
+    }
+    const dx = event.clientX - drag.lastX
+    const dy = event.clientY - drag.lastY
+    drag.lastX = event.clientX
+    drag.lastY = event.clientY
+    this.moveBy(dx, dy)
+  }
+
+  private readonly onPointerEnd = (event: PointerEvent): void => {
+    if (this.drag?.id !== event.pointerId) return
+    try {
+      this.app.canvas.releasePointerCapture(event.pointerId)
+    } catch {
+      /* it was not captured */
+    }
+    this.drag = null
+  }
+
+  private readonly onWheel = (event: WheelEvent): void => {
+    event.preventDefault() // the page behind must not scroll while the office zooms
+    const box = this.app.canvas.getBoundingClientRect()
+    const anchor = { x: event.clientX - box.left, y: event.clientY - box.top }
+    this.setCamera(
+      zoomAt(
+        this.camera,
+        wheelFactor(event.deltaY, event.deltaMode),
+        anchor,
+        this.bounds,
+        this.viewport(),
+      ),
+    )
+  }
+
+  // ---------- the plan ----------
+
+  private boundsOf(map: OfficeMap): Bounds {
+    return unionBounds(map.rooms.map((room: Room) => rectBounds(room.rect, WALL_HEIGHT)))
+  }
+
+  /** Something that stands on the floor: drawn in depth order among everything else. */
+  private addStatic(view: Container, rect: Rect): void {
+    view.zIndex = depthOf(rect)
+    this.items.addChild(view)
+    this.statics.push(view)
+  }
+
+  private boxesView(boxes: readonly Box[]): Graphics {
+    const g = new Graphics()
+    for (const box of boxes) drawBox(g, box)
+    return g
+  }
+
+  /** Build everything that belongs to the plan: floor, walls, furniture and the names of places. */
+  private applyMap(map: OfficeMap): void {
+    this.map = map
+    for (const view of this.statics) view.destroy({ children: true })
+    this.statics = []
+    for (const label of this.placeLabels) label.view.destroy({ children: true })
+    this.placeLabels = []
+
+    this.floor.clear()
+    drawFloor(this.floor, map)
+
+    for (const run of groupWalls(map.partitions)) {
+      this.addStatic(this.boxesView([partitionBox(run), partitionCap(run)]), run)
+    }
+    for (const prop of map.props) {
+      this.addStatic(this.boxesView(plantBoxes(prop.footprint)), prop.footprint)
+    }
+    for (const place of map.places) {
+      if (place.kind === 'board') {
+        this.addStatic(this.boxesView(boardBoxes(place.footprint)), place.footprint)
+      } else if (place.kind === 'qa') {
+        this.addStatic(this.boxesView(benchBoxes(place.footprint)), place.footprint)
+      } else if (place.kind === 'inbox') {
+        this.addStatic(this.boxesView(inboxBoxes(place.footprint)), place.footprint)
+      } else if (place.station) {
+        this.addStatic(this.emptyStation(place.station), stationRect(place.station))
+      }
+    }
+
+    // One name tag per kind of place (the two reading desks share one).
+    const named = new Set<string>()
+    for (const place of map.places) {
+      if (named.has(place.label)) continue
+      named.add(place.label)
+      const label = new PlaceLabel(place.label, labelAnchor(place, map.places), this.resolution)
+      this.placeLabels.push(label)
+      this.overlay.addChild(label.view)
+    }
+
+    this.bounds = this.boundsOf(map)
+    this.camera = this.autoFit ? fitCamera(this.bounds) : clampCamera(this.camera, this.bounds)
+    this.applyCamera()
+  }
+
+  /** A workstation with nobody at it: a reading desk, waiting. */
+  private emptyStation(slot: DeskSlot): Graphics {
+    const g = new Graphics()
+    drawBox(g, at(rug(0x5b6b80), slot))
+    for (const box of chairBoxes()) drawBox(g, at(box, slot))
+    for (const box of deskBoxes()) drawBox(g, at(box, slot))
+    drawBox(g, { ...at(LED_BOX, slot), color: LED_COLORS.off })
+    return g
   }
 
   destroy(): void {
     if (this.destroyed) return
     this.destroyed = true
     this.observer.disconnect()
+    const canvas = this.app.canvas
+    canvas.removeEventListener('pointerdown', this.onPointerDown)
+    canvas.removeEventListener('pointermove', this.onPointerMove)
+    canvas.removeEventListener('pointerup', this.onPointerEnd)
+    canvas.removeEventListener('pointercancel', this.onPointerEnd)
+    canvas.removeEventListener('wheel', this.onWheel)
     this.app.destroy({ removeView: true }, { children: true })
-  }
-
-  /** Centre and scale the room to fill the canvas. */
-  private layout(): void {
-    const { width, height } = this.app.screen
-    const fit = fitToViewport(
-      roomBounds(ROOM_WIDTH, ROOM_DEPTH, WALL_HEIGHT),
-      { width, height },
-      28,
-    )
-    this.world.scale.set(fit.scale)
-    this.world.position.set(fit.offsetX, fit.offsetY)
-    this.placeOverlay()
   }
 
   /**
@@ -422,12 +858,23 @@ export class OfficeScene {
   private placeOverlay(): void {
     const s = this.world.scale.x
     const { x: ox, y: oy } = this.world.position
+    const place = (p: Point): Point => ({ x: ox + p.x * s, y: oy + p.y * s })
+    const k = labelScale(s)
     for (const desk of this.deskViews.values()) {
-      const head = desk.headScreen()
-      desk.bubble.view.position.set(ox + head.x * s, oy + head.y * s)
-      const name = desk.nameScreen()
-      desk.nameLabel.position.set(ox + name.x * s, oy + name.y * s)
-      desk.roleLabel.position.set(ox + name.x * s, oy + name.y * s + 16)
+      const head = place(desk.headScreen())
+      desk.bubble.view.position.set(head.x, head.y)
+      desk.bubble.setScale(k)
+      const name = place(desk.nameScreen())
+      desk.nameLabel.position.set(name.x, name.y)
+      desk.nameLabel.scale.set(k)
+      desk.roleLabel.position.set(name.x, name.y + 16 * k)
+      desk.roleLabel.scale.set(k)
+      desk.roleLabel.visible = s >= ROLE_MIN_SCALE
+    }
+    for (const label of this.placeLabels) {
+      const p = place(project(label.anchor.x, label.anchor.y, label.anchor.z))
+      label.view.position.set(p.x, p.y)
+      label.view.scale.set(k)
     }
   }
 }

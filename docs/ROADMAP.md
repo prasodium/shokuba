@@ -52,9 +52,11 @@ Built in slices, each checked before the next.
 
 ## Phase 5 — The office
 
-- [ ] Full isometric voxel world: rooms, desks, furniture, A\* pathfinding
-- [ ] Animated employees driven by the event stream; visible handoffs
-- [ ] Camera: pan, zoom, follow
+Built in slices, each checked before the next. The rule throughout: the office reads recorded events and never invents activity. Nobody wanders on their own (life simulation is Phase 6), and every movement is a picture of something that really happened, labelled `inferred` where it is deduced.
+
+- [x] **5a: The world and the camera.** The floor plan is data (`src/renderer/office/map.ts`) and grows with the team: a commons room and a first desk room always, then another desk room of four for every four employees, up to **twelve desks** (more are counted but not drawn). The commons room holds the shared places, each standing for something real: **your inbox**, a **QA bench**, a **reading room** and the **mission board**. They stand idle for now; the board is bare, the bench screens dark and the trays empty, so an idle office never looks busy. Walls between rooms are low, with doors, and everything on the floor is drawn in depth order. The camera pans by drag or arrow keys, zooms by wheel or +/−, fits with 0, and **follows** the selected employee (bringing the view in to them); controls are real buttons, and the office is keyboard-reachable. Bubbles and names shrink with the view so a small panel does not pile them on top of each other. Verified by unit tests of the plan (nothing overlaps, every door and standing spot is clear, the plan is deterministic and rooms already there never move as it grows) and the camera maths, and by looking at the running app with 1, 5 and 9 employees, zoomed, dragged and following. **Not built:** anything moving (5b), and the places showing real work (5c)
+- [ ] 5b: Movement: pathfinding on the plan, and employees who walk. An employee may leave their desk for a real, recorded reason, or because the agent's own tool activity (running tests, say) says so, in which case it is **labelled `inferred`**, waits until the state has lasted a few seconds so it does not flicker, and starts with running tests going to the QA bench. Reduced motion means nobody walks.
+- [ ] 5c: Handoffs, each a picture of a recorded event: a task card from the mission board to the assignee, submitted work landing in your inbox, checks on the QA bench, a reviewer walking to the reading room (where their agent really is working), a message carried between desks, accepted work stamped
 
 > The MVP bar is met at the end of Phase 5: open a repo, run a real agent in an isolated worktree, have it verified by an independent reviewer with evidence, and watch it happen in the office.
 

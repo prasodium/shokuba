@@ -108,6 +108,36 @@ export function roomBounds(width: number, depth: number, wallHeight: number): Bo
   }
 }
 
+/** Screen-space bounds of a floor rectangle, from its slab below the floor up to `height`. */
+export function rectBounds(
+  rect: { x: number; y: number; w: number; d: number },
+  height: number,
+  slab = 0.3,
+): Bounds {
+  const corners: Point[] = []
+  for (const z of [-slab, height]) {
+    for (const x of [rect.x, rect.x + rect.w]) {
+      for (const y of [rect.y, rect.y + rect.d]) corners.push(project(x, y, z))
+    }
+  }
+  return {
+    minX: Math.min(...corners.map((p) => p.x)),
+    maxX: Math.max(...corners.map((p) => p.x)),
+    minY: Math.min(...corners.map((p) => p.y)),
+    maxY: Math.max(...corners.map((p) => p.y)),
+  }
+}
+
+/** The smallest bounds that hold all of `list` (which must not be empty). */
+export function unionBounds(list: readonly Bounds[]): Bounds {
+  return {
+    minX: Math.min(...list.map((b) => b.minX)),
+    maxX: Math.max(...list.map((b) => b.maxX)),
+    minY: Math.min(...list.map((b) => b.minY)),
+    maxY: Math.max(...list.map((b) => b.maxY)),
+  }
+}
+
 /** Scale and offset that centre `bounds` inside a viewport, with a margin. */
 export function fitToViewport(
   bounds: Bounds,

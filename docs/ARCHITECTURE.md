@@ -79,17 +79,17 @@ Main and renderer fold events through the **same reducer** (`src/shared/agents/v
 
 ### Agents (Phase 1)
 
-| Area                | Location                                | Notes                                                                                                     |
-| ------------------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| Provider interface  | `src/main/providers/types.ts`           | `ProviderAdapter` + `ObservationChannel` + provider-neutral `AgentSignal`                                 |
-| Claude Code adapter | `src/main/providers/claude-code/`       | Detects `claude` (PATH, common dirs, editor-bundled binaries), builds the launch and the hook settings    |
-| Demo adapter        | `src/main/providers/mock/`              | A scripted agent in a real PTY; everything it reports is labelled `simulated`                             |
-| Runtime             | `src/main/agents/runtime.ts`            | Start / stop (graceful, then forced) / interrupt / write / resize; bounded scrollback with stream offsets |
-| Report listener     | `src/main/agents/hook-server.ts`        | Loopback HTTP; per-agent token; see [SECURITY.md](../SECURITY.md)                                         |
-| State tracker       | `src/main/agents/tracker.ts`            | Pure: signals in, events out. Every transition says how we know                                           |
-| Employees           | `src/main/employees/service.ts`         | Persisted; folder validated and canonicalised; launch settings locked while running                       |
-| Terminal            | `src/renderer/components/TerminalPanel` | xterm.js; replay + live stream joined by offsets, so re-attaching loses and repeats nothing               |
-| Office              | `src/renderer/office/`                  | PixiJS isometric voxel room; pure geometry, poses and bubble text are unit-tested                         |
+| Area                | Location                                | Notes                                                                                                           |
+| ------------------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Provider interface  | `src/main/providers/types.ts`           | `ProviderAdapter` + `ObservationChannel` + provider-neutral `AgentSignal`                                       |
+| Claude Code adapter | `src/main/providers/claude-code/`       | Detects `claude` (PATH, common dirs, editor-bundled binaries), builds the launch and the hook settings          |
+| Demo adapter        | `src/main/providers/mock/`              | A scripted agent in a real PTY; everything it reports is labelled `simulated`                                   |
+| Runtime             | `src/main/agents/runtime.ts`            | Start / stop (graceful, then forced) / interrupt / write / resize; bounded scrollback with stream offsets       |
+| Report listener     | `src/main/agents/hook-server.ts`        | Loopback HTTP; per-agent token; see [SECURITY.md](../SECURITY.md)                                               |
+| State tracker       | `src/main/agents/tracker.ts`            | Pure: signals in, events out. Every transition says how we know                                                 |
+| Employees           | `src/main/employees/service.ts`         | Persisted; folder validated and canonicalised; launch settings locked while running                             |
+| Terminal            | `src/renderer/components/TerminalPanel` | xterm.js; replay + live stream joined by offsets, so re-attaching loses and repeats nothing                     |
+| Office              | `src/renderer/office/`                  | PixiJS isometric voxel office; the floor plan, camera, geometry, poses and bubble text are pure and unit-tested |
 
 #### Provider adapters
 
@@ -348,9 +348,17 @@ Tables are added by migrations _when a feature needs them_ — never speculative
 
 ### The office
 
-PixiJS 8 draws an original isometric-voxel room: each employee has a desk, a chair and a small block person whose pose follows their state (typing while coding, a raised hand when they need you). A status bubble above them says the state and what they are doing, and marks it `inferred` or `demo` when it is not a fact. The renderer imports PixiJS's `unsafe-eval` build, so the strict Content-Security-Policy stays as it was (no `unsafe-eval`).
+PixiJS 8 draws an original isometric-voxel office: each employee has a desk, a chair and a small block person whose pose follows their state (typing while coding, a raised hand when they need you). A status bubble above them says the state and what they are doing, and marks it `inferred` or `demo` when it is not a fact. The renderer imports PixiJS's `unsafe-eval` build, so the strict Content-Security-Policy stays as it was (no `unsafe-eval`).
 
-The room shows four desks; more employees than that are counted but not drawn yet. The full world (rooms, pathfinding, walking, handoffs, camera) is Phase 5.
+**The plan is data.** `map.ts` builds the floor plan for a team of a given size, as plain rectangles: rooms, doors, tall walls on the two far sides, low partitions between rooms (in 0.25-tile pieces, so door edges land where they should), desk slots, props, and the shared places (each with a footprint and somewhere to stand). It is deterministic, and growing the team only ever adds: the rooms, desks and places already there never move. Tests check, for every team size, that nothing overlaps, that every door has a clear way through, and that every place has clear floor to stand on, which is also what makes the plan safe to walk on in slice 5b.
+
+**One depth-sorted layer.** Everything that stands on the floor (a desk with its person, a run of wall, a plant, a piece of furniture) is one item in a single layer sorted by how near its centre is to the camera, so a person, a desk and a wall are drawn in the right order however they are arranged. Walls are split into short runs for exactly this reason.
+
+**The camera is pure maths** (`camera.ts`): a point of the drawn world held at the centre of the panel, and a zoom measured against the size at which the whole office just fits, so the picture keeps its proportions when the window is resized or a room is added. Zooming keeps the point under the pointer still; the centre can never leave the office; following eases toward a target and brings the view in to a comfortable zoom, or jumps with reduced motion. Bubbles, names and place tags are drawn outside the scaled world so their text stays crisp, and shrink (down to a floor) as the office is squeezed into a small panel, so neighbours do not overlap.
+
+**The shared places stand idle.** The board is bare, the bench's screens are dark and the trays are empty: nothing on them is shown until it is a picture of something recorded, so an idle office never looks busy. That is added on top of them in slice 5c.
+
+The office has up to twelve desks; more employees than that are counted but not drawn. Movement (5b) and handoffs (5c) are not built yet.
 
 ## Planned
 
@@ -358,6 +366,6 @@ The room shows four desks; more employees than that are counted but not drawn ye
 
 Codex, Gemini CLI and a generic CLI. They implement the same `ProviderAdapter`; if a CLI has no hooks, its `ObservationChannel` can parse structured output, and only as a last resort terminal text — always labelled `inferred`.
 
-### The full office
+### The living office
 
-Rooms, A\* pathfinding, doors and interaction points; behaviour state machines driven by the event stream; visible handoffs; camera pan/zoom/follow. Life simulation (coffee, breaks, naps) only runs while an agent is idle or waiting, is switchable, and never sends anything to an agent.
+Pathfinding on the plan, walking employees driven by recorded events, and visible handoffs (Phase 5, slices 5b and 5c). Life simulation (coffee, breaks, naps) is Phase 6: it only runs while an agent is idle or waiting, is switchable, always labelled as simulation, and never sends anything to an agent.
