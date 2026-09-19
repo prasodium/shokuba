@@ -25,9 +25,13 @@ Shokuba is built in small, tested increments. Each phase ends with something tha
 
 ## Phase 2 — Multi-agent
 
-- [ ] Multiple employees and roles
-- [ ] Missions and a dependency-aware task graph
-- [ ] Structured messages, routing, loop protection, circuit breaker
+Built in slices, each checked before the next.
+
+- [x] **2a: Missions and the task graph.** Missions with tasks that depend on each other (cycles are refused); assign tasks to employees; while a mission is Running, a ready task is handed to its assignee once that agent has _reported_ itself idle; agents report back through Shokuba's own MCP tools; `submitted` is a claim, and only a person accepting it makes a task `done`. Verified with the demo agent on macOS, Linux and Windows. **Not yet verified:** a real, interactive Claude Code receiving a pasted briefing and calling the tools (the MCP handshake itself is verified against Claude Code 2.1.276 in headless mode)
+- [ ] 2b: Structured messages between agents, routing, and loop protection (hop limits)
+- [ ] 2c: Circuit breaker (repeated identical tool calls, message loops, repeated failures, runtime)
+- [ ] Roles as editable templates. Today a role is a label, plus one line in the agent's system prompt
+- [x] Several employees running at once, each with their own terminal and desk
 
 ## Phase 3 — Git
 

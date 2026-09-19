@@ -24,6 +24,9 @@ This document describes how Shokuba is built, and is explicit about what **exist
 │    ├─ AgentTracker      (signals ─► RuntimeState + events; pure)               │
 │    └─ AgentViews        (events ─► current state per agent, for new windows)   │
 │  EmployeeService        (persisted identity; validated against the disk)       │
+│  MissionService         (missions, tasks, the graph and every status rule)      │
+│  Dispatcher             (hands ready tasks to reported-idle agents)            │
+│  McpEndpoint            (the tools an agent calls: submit_task, report_blocked)│
 │  ipc/handlers           (sender check + Zod on every request)                  │
 │  platform/              (paths, shell, PATH search, env, process termination)  │
 └──────────────▲────────────────────────────────────────────────────────────────┘
@@ -85,6 +88,27 @@ Main and renderer fold events through the **same reducer** (`src/shared/agents/v
 | Terminal            | `src/renderer/components/TerminalPanel` | xterm.js; replay + live stream joined by offsets, so re-attaching loses and repeats nothing               |
 | Office              | `src/renderer/office/`                  | PixiJS isometric voxel room; pure geometry, poses and bubble text are unit-tested                         |
 
+### Missions (Phase 2, slice 2a)
+
+A **mission** is a goal; its **tasks** form a graph (`task_dependencies`), not a flat list. A task is `pending` until every dependency is `done`, then `ready`. Dependency cycles are refused when they would be created.
+
+```
+pending ─► ready ─► in_progress ─► submitted ─► done
+                        │              │
+                        ▼              ▼
+                     blocked     changes_requested ─► (handed out again)
+```
+
+**`submitted` is a claim; only a person makes a task `done`.** The agent's summary is shown as _what the agent says it did_, never as fact. (Independent verification arrives in Phase 4.)
+
+`MissionService` owns every transition, so the rules hold whoever asks — a person, the dispatcher, or an agent's tool call. Each change is one transaction, and its events are published only after it commits. An agent may only touch the task it was handed.
+
+**Dispatch.** While a mission is Running, the `Dispatcher` gives a ready task to its assignee only when all of these hold: the agent is running, its idle state was _reported_ (never a guess, never while it waits on a permission prompt or is starting up), and it has no other task. The claim on a task is atomic, so it can never be handed out twice; a failed delivery undoes the claim. The briefing is pasted into the agent's terminal as one bracketed paste followed by Enter. There is no hook that can inject a prompt into an idle Claude Code session, so this is the only way to wake one, and it is why the rules above are strict.
+
+**Reporting back.** Each agent is given a Shokuba MCP server (`--mcp-config`, over the same authenticated loopback listener as hooks) with three tools: `get_current_task`, `submit_task` and `report_blocked`. Who is calling comes from the connection's token, never from the message. The tools only write Shokuba's own records: they cannot run commands, read files or touch another agent's task.
+
+**Recovery.** If an agent's process ends, its task becomes `blocked` ("the agent stopped"). At startup no agent is running, so any task still `in_progress` was cut off by a restart and is blocked the same way. A person retries it.
+
 #### Provider adapters
 
 One `ProviderAdapter` per kind of CLI. It **describes**; the runtime **does**:
@@ -115,7 +139,7 @@ Prompts, model output and tool _results_ are never recorded. A tool call is redu
 
 ### Database
 
-Tables are added by migrations _when a feature needs them_ — never speculatively. Today: `agent_events`, `audit_log`, `schema_migrations`, `employees`. Both logs are append-only, enforced by database triggers rather than convention. Employees are archived, not deleted, because events refer to them. Native modules (`better-sqlite3`, `node-pty`) are N-API, so the same binaries run under Node (tests) and Electron (app) with no rebuild step.
+Tables are added by migrations _when a feature needs them_ — never speculatively. Today: `agent_events`, `audit_log`, `schema_migrations`, `employees`, `missions`, `tasks`, `task_dependencies`. Both logs are append-only, enforced by database triggers rather than convention. Employees are archived, not deleted, because events refer to them. Native modules (`better-sqlite3`, `node-pty`) are N-API, so the same binaries run under Node (tests) and Electron (app) with no rebuild step.
 
 ### The office
 
@@ -125,9 +149,9 @@ The room shows four desks; more employees than that are counted but not drawn ye
 
 ## Planned
 
-### Orchestration
+### Orchestration (rest of Phase 2)
 
-Missions decompose into a dependency-aware task graph with explicit states, retries, blocked handling and structured, loop-protected agent messages (hop limits, parent ids, circuit breaker).
+Structured, persisted agent-to-agent messages with conversation ids, hop counts and parent ids; routing that delivers them the same careful way tasks are delivered; loop protection (a hop limit that stops a conversation and flags a person); and a circuit breaker (NORMAL → WARNING → CONSTRAIN → PAUSE → STOP) triggered by repeated identical tool calls, message loops, repeated failures and runtime. Budget is not measurable yet: Claude Code's hooks do not report cost.
 
 ### More providers
 
