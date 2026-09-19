@@ -7,6 +7,7 @@ import { teams } from './0005_teams'
 import { missionAuthors } from './0006_mission_authors'
 import { workspaces } from './0007_workspaces'
 import { workspaceRemoval } from './0008_workspace_removal'
+import { checks } from './0009_checks'
 
 /** Ordered list of every migration. Append new ones; never edit or reorder old ones. */
 export const MIGRATIONS: readonly Migration[] = [
@@ -18,4 +19,5 @@ export const MIGRATIONS: readonly Migration[] = [
   missionAuthors,
   workspaces,
   workspaceRemoval,
+  checks,
 ]

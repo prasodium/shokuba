@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process'
 import type { PlatformId } from './platform'
 
 /**
@@ -36,4 +37,21 @@ export function planTerminate(
     }
   }
   return { kind: 'signal-group', pid, signal: mode === 'force' ? 'SIGKILL' : 'SIGTERM' }
+}
+
+/**
+ * Carry out a termination plan. A process group that is already gone is the outcome that was
+ * wanted, so that is not an error; on Windows `taskkill` is fire-and-forget.
+ */
+export function executeTermination(plan: TerminationPlan): void {
+  if (plan.kind === 'signal-group') {
+    try {
+      process.kill(-plan.pid, plan.signal)
+    } catch (error) {
+      // ESRCH: the group is already gone.
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+    }
+    return
+  }
+  execFile(plan.command, plan.args, { windowsHide: true }, () => undefined)
 }

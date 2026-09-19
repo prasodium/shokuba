@@ -281,6 +281,30 @@ A plan only becomes real when a person presses **Run mission**, and a person sti
 
 **Merging is yours.** Each mission shows the branch its accepted work is collecting on (`shokuba/mission/<id>`), how many commits it holds, and the commands to read and merge it, each naming the repository and quoted for your shell. Shokuba never runs them.
 
+### Checks (Phase 4, slice 4a)
+
+A person defines, per project (a repository Shokuba has worked in), an ordered list of commands: **setup** steps such as `npm ci`, then **checks** such as `npm test`. Shokuba runs them on the work an agent submits and keeps what happened. Three tables (migration 0009): `project_checks_settings` and `project_checks` (the person's commands and when they acknowledged the notice), `check_runs` (one run against one commit) and `check_results` (each step **as it ran**, so a later edit never rewrites what was verified).
+
+**Where the commands come from is the security decision.** They live in Shokuba's own database and are set only through the UI (a project path sent from the page is checked against repositories Shokuba has worked in). They are **never read from the repository**, so an agent that can edit its branch cannot add a command or weaken one, and **nothing an agent wrote is ever placed in a command**: the command string is fixed and only the folder it runs in varies. Suggestions ("from the project's files") read a fixed list of file names from the person's own checkout, turn only known script names into commands, and are just a form to fill in that the person reads and saves.
+
+**What runs, and what bounds it.** A command runs through the platform shell, in the task's working folder, with:
+
+- a clean environment (an allow-list, so no API keys or credentials from Shokuba's own) plus `CI=true`, no colour, and a dumb terminal, so tools do not wait for a person;
+- no input (stdin is closed);
+- a time limit per step, after which its **whole process tree** is stopped, then killed;
+- output kept to the last 128 KB, cleaned of terminal control codes and redacted of secrets.
+
+Nothing runs until the person has **acknowledged**, in the dialog, that these commands run agent-written code, unsandboxed, with their account's access, and there is at least one enabled check. The commands that ran are recorded in the audit log.
+
+**When.** A run starts when a task with an isolated folder is submitted (and when the person asks again), after saving whatever the agent left uncommitted, so it runs on a commit whose id is recorded. Runs go one at a time. A run is dropped if the task is sent back, blocked or cancelled (the work it was checking is gone), but not if it is accepted. A folder in use by a run is not cleaned up. A run interrupted by Shokuba stopping is marked as such at the next start. A failed **setup** step skips the checks and says why; a failed **check** does not stop the others.
+
+**Limits.**
+
+- **This is not a sandbox.** `npm test` runs whatever the agent put in `package.json` and its tests, with your access, and an install script can do anything your account can. The clean environment keeps Shokuba's credentials out, not your files or your network. Only add commands you would run on code you have not read.
+- Only isolated tasks are checked; a task with no folder of its own has nothing to run in.
+- A fresh folder has no installed dependencies; a setup step (your choice) has to install them, which can take minutes and runs install scripts.
+- The check results say what the commands did, not whether the work is good: a weak test passes weak work, and a flaky one fails good work. That is why accepting after a failed check only warns you.
+
 ### Database
 
 Tables are added by migrations _when a feature needs them_ — never speculatively. Today: `agent_events`, `audit_log`, `schema_migrations`, `employees`, `missions`, `tasks`, `task_dependencies`, `conversations`, `messages`. Both logs are append-only, enforced by database triggers rather than convention. Employees are archived, not deleted, because events refer to them. Native modules (`better-sqlite3`, `node-pty`) are N-API, so the same binaries run under Node (tests) and Electron (app) with no rebuild step.

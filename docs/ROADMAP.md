@@ -44,9 +44,11 @@ Built in slices, each checked before the next.
 
 ## Phase 4 — Verification
 
-- [ ] Harness-run checks in the worktree
-- [ ] Independent reviewer agent
-- [ ] Verification report and exportable evidence pack
+Built in slices, each checked before the next.
+
+- [x] **4a: Checks.** Commands **you** define per project in Shokuba (never read from the task's branch, so an agent cannot add or weaken one) are run by Shokuba on the work an agent submits, in the task's own folder, on the exact commit it submitted. Setup steps (such as installing dependencies) run first; each step's exit code, duration and redacted output are kept, and a failing check does not stop the others. Nothing runs until you have acknowledged that these run agent-written code, **unsandboxed**, with your account's access. They run automatically when an agent submits (and again on request), one run at a time, and a run is dropped if the task is sent back. Accepting work whose checks failed warns you first (it never blocks you). Verified with real commands on real terminals. **Not built:** checks on a mission's merged branch, and any sandbox
+- [ ] 4b: An independent reviewer: a different employee reads the diff and the requirements (not the coder's summary) in a read-only checkout, and reports findings and a verdict that advise you; only you accept
+- [ ] 4c: An evidence pack per task (requirements, commits, diff, check results, reviewer findings, who accepted it), exported as a folder
 
 ## Phase 5 — The office
 

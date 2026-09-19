@@ -4,6 +4,9 @@ import { classifyDiff, fileCounts, summarizeChanges } from '../git/diff'
 import { latestWorkspaceSeq } from '../git/events'
 import { useEvents } from '../store/events'
 
+/** A phrase as the start of a sentence. */
+const sentence = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1)
+
 interface Props {
   taskId: string
   /** The assignee's name, for saying whose folder a task ran in when it was not isolated. */
@@ -65,7 +68,7 @@ export function TaskChangesView({ taskId, assignee, version }: Props) {
         {changes.state === 'merged'
           ? ', and accepted into the mission branch.'
           : '. Nothing reaches your project until you accept it.'}{' '}
-        {summarizeChanges(changes.files)}.
+        {sentence(summarizeChanges(changes.files))}.
         {changes.folderRemoved &&
           ' Its working folder has been removed; the work stays on the branch.'}
       </p>

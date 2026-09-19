@@ -202,6 +202,19 @@ export const EventInputSchema = z.discriminatedUnion('type', [
       reason: z.string().max(300).optional(),
     }),
   ),
+  // A run of a project's checks against a task's work. Names and states only; never the output.
+  event(
+    'verification.changed',
+    z.strictObject({
+      taskId: id,
+      missionId: id,
+      runId: id,
+      change: z.enum(['started', 'step', 'finished', 'cancelled', 'error']),
+      state: z.enum(['running', 'passed', 'failed', 'error', 'cancelled']).optional(),
+      commit: z.string().max(80).optional(),
+      step: z.string().max(60).optional(),
+    }),
+  ),
   event(
     'breaker.state.changed',
     z.strictObject({

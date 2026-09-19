@@ -16,6 +16,7 @@ Shokuba is developed **macOS first**. Windows and Linux are designed for from th
 | Git: task worktrees, commit, merge, conflict; main and checkout untouched      | ✅    | ✅                                | ✅                                |
 | A task in its own branch: agent restarted in its folder, commit, accept merges | ✅    | ✅                                | ✅                                |
 | Finished task's folder removed once its agent has left it; branch kept         | ✅    | ✅                                | ✅                                |
+| Checks: a real command runs on submitted work in its folder; fail then pass    | ✅    | 🔜 pending CI                     | 🔜 pending CI                     |
 | App window rendered and inspected                                              | ✅    | 🔜 not yet seen on a real desktop | 🔜 not yet seen on a real desktop |
 | Platform-layer branches unit-tested                                            | ✅    | ✅ (also simulated on any host)   | ✅ (also simulated on any host)   |
 | Packaging / installers                                                         | 🔜    | 🔜                                | 🔜                                |
@@ -52,6 +53,7 @@ Native modules (`better-sqlite3`, `node-pty`) are N-API, so one build works unde
 - **Windows, Git timing:** Git starts a process for each step and tidies its own bookkeeping after removing a folder, which takes noticeably longer on Windows runners. The tests and smoke checks that involve Git therefore wait for the outcome they are checking (the terminal's last line, the removal record) instead of reading it the moment something else changes.
 - **Git:** Shokuba's task isolation needs Git 2.40 or newer. Its own Git commands turn on `core.longpaths` so deep working folders work on Windows. The Git checks run against a real repository on every OS in CI.
 - **Windows, deleting folders:** Git makes its object files read-only, and Node's own recursive delete cannot remove read-only files on Windows (`EPERM`), which CI caught as a temporary repository left behind. Shokuba removes task folders with a helper (`removeTree`) that makes the tree writable and retries, and never follows a symbolic link.
+- **Windows, running checks:** a person's command is run through `cmd.exe /d /s /c` with the command passed exactly as typed (as Node's own shell option does), and a step that times out has its whole tree stopped with `taskkill /T`. POSIX systems run it in its own process group and stop the group.
 - **macOS:** apps launched from Finder get a minimal `PATH`, so CLI detection also searches common install locations (`/opt/homebrew/bin`, `~/.local/bin`, …).
 - **Postinstall:** `scripts/postinstall.mjs` restores the execute bit on `node-pty`'s `spawn-helper` (npm drops it, which breaks every PTY spawn on macOS/Linux). It is a no-op on Windows.
 

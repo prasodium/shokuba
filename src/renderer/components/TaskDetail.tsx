@@ -7,6 +7,8 @@ import { TASK_STATUS_LABELS } from '../missions/labels'
 import { useMissions } from '../store/missions'
 import { useOffice } from '../store/office'
 import { TaskChangesView } from './TaskChangesView'
+import { TaskVerificationView } from './TaskVerificationView'
+import { acceptWarning } from '../verification/summary'
 
 interface Props {
   task: Task
@@ -47,6 +49,17 @@ export function TaskDetail({ task, mission, tasks, onEdit }: Props) {
     task.attempts === 0 &&
     (task.status === 'pending' || task.status === 'ready' || task.status === 'cancelled') &&
     dependentsOf(task.id, tasks).length === 0
+
+  /** Accepting is the person's call, but if the checks did not pass they are told before it is done. */
+  async function accept(): Promise<void> {
+    try {
+      const warning = acceptWarning(await window.shokuba.checks.forTask(task.id))
+      if (warning && !window.confirm(warning)) return
+    } catch {
+      // If the checks cannot be read, accepting is not held up by that.
+    }
+    await run(() => taskAction(task.id, { action: 'accept' }))
+  }
 
   async function run(work: () => Promise<{ ok: boolean; error?: string }>): Promise<void> {
     setError(null)
@@ -117,6 +130,13 @@ export function TaskDetail({ task, mission, tasks, onEdit }: Props) {
           version={`${task.status}:${task.updatedAt}`}
         />
       )}
+      {task.status !== 'pending' && task.status !== 'ready' && (
+        <TaskVerificationView
+          taskId={task.id}
+          status={task.status}
+          version={`${task.status}:${task.updatedAt}`}
+        />
+      )}
       {task.status === 'blocked' && task.blockedReason && (
         <div className="task-block">
           <h4>Why it is blocked</h4>
@@ -133,11 +153,7 @@ export function TaskDetail({ task, mission, tasks, onEdit }: Props) {
 
       {task.status === 'submitted' && !sendingBack && (
         <div className="actions">
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={() => void run(() => taskAction(task.id, { action: 'accept' }))}
-          >
+          <button type="button" className="btn btn-primary" onClick={() => void accept()}>
             Accept
           </button>
           <button type="button" className="btn" onClick={() => setSendingBack(true)}>

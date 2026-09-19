@@ -14,6 +14,8 @@ import type { Env, PlatformId } from '../platform'
 import { createClaudeCodeAdapter } from '../providers/claude-code/adapter'
 import { createMockAdapter } from '../providers/mock/adapter'
 import { ProviderRegistry } from '../providers/registry'
+import { CheckSettingsStore } from '../verification/settings'
+import { VerificationService } from '../verification/service'
 import { WorkspaceCleaner } from '../workspaces/cleaner'
 import { WorkspaceService } from '../workspaces/service'
 import { TaskWorkflow } from '../workspaces/workflow'
@@ -73,6 +75,10 @@ export interface AgentServices {
   tasks: TaskWorkflow
   /** Removes finished tasks' working folders once no agent is in them. */
   cleaner: WorkspaceCleaner
+  /** The checks a person has set up per project. */
+  checks: CheckSettingsStore
+  /** Runs those checks on submitted work and keeps the results. */
+  verification: VerificationService
   views: AgentViews
   /** Stops every running agent, then closes the report listener. */
   close(): Promise<void>
@@ -244,10 +250,24 @@ export async function createAgentServices(
     logger: services.logger,
   })
   const tasks = new TaskWorkflow(missions, workspaces)
+  const checks = new CheckSettingsStore({ db: services.db })
+  const verification = new VerificationService({
+    db: services.db,
+    events: services.events,
+    audit: services.audit,
+    settings: checks,
+    git,
+    missions,
+    workspaces,
+    platform: options.platform,
+    env: options.env,
+    logger: services.logger,
+  })
   const cleaner = new WorkspaceCleaner({
     workspaces,
     events: services.events,
-    inUse: () => runtime.runningFolders(),
+    // A folder is in use while an agent works in it, and while a run of checks is using it.
+    inUse: () => [...runtime.runningFolders(), ...verification.activeFolders()],
     platform: options.platform,
     logger: services.logger,
   })
@@ -281,6 +301,7 @@ export async function createAgentServices(
   breaker.start()
   router.start()
   dispatcher.start()
+  verification.start()
   cleaner.start()
 
   const views = new AgentViews(
@@ -302,9 +323,12 @@ export async function createAgentServices(
     workspaces,
     tasks,
     cleaner,
+    checks,
+    verification,
     views,
     async close() {
       cleaner.stop()
+      verification.stop()
       breaker.stop()
       router.stop()
       dispatcher.stop()

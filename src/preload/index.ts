@@ -54,6 +54,13 @@ const api: ShokubaApi = {
     remove: (taskId) => ipcRenderer.invoke(IPC.tasksRemove, { taskId }),
     changes: (taskId) => ipcRenderer.invoke(IPC.tasksChanges, { taskId }),
   },
+  checks: {
+    get: (repoRoot) => ipcRenderer.invoke(IPC.checksGet, { repoRoot }),
+    save: (input) => ipcRenderer.invoke(IPC.checksSave, input),
+    suggest: (repoRoot) => ipcRenderer.invoke(IPC.checksSuggest, { repoRoot }),
+    forTask: (taskId) => ipcRenderer.invoke(IPC.checksTask, { taskId }),
+    run: (taskId) => ipcRenderer.invoke(IPC.checksRun, { taskId }),
+  },
   messages: {
     list: () => ipcRenderer.invoke(IPC.messagesList),
     send: (input) => ipcRenderer.invoke(IPC.messagesSend, input),

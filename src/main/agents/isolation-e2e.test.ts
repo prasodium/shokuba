@@ -145,7 +145,7 @@ const until = (check: () => void, options: { timeout?: number } = {}): Promise<v
 async function startAgents(): Promise<AgentServices> {
   const started = await createAgentServices(services, {
     platform: toPlatformId(),
-    env: { PATH: '/usr/bin' },
+    env: process.env,
     home: '/home/u',
     providers: new ProviderRegistry([adapter]),
     git,
@@ -562,5 +562,105 @@ describe('cleaning up after a task', () => {
       repoName: 'repo',
       ahead: 1,
     })
+  })
+})
+
+describe('checks on submitted work, end to end', () => {
+  /** Commands run through the shell as a person would write them. */
+  const exists = (file: string): string =>
+    `node -e "process.exit(require('fs').existsSync('${file}') ? 0 : 1)"`
+
+  function setUpChecks(steps: Array<{ name: string; command: string }>, acknowledged = true) {
+    return agents.checks.save({
+      repoRoot: repo,
+      acknowledged,
+      steps: steps.map((step) => ({ kind: 'check' as const, ...step })),
+    })
+  }
+  const latest = async (task: Task) => (await agents.verification.forTask(task.id)).latest
+
+  it('runs on the agent’s committed work in its own folder, and passes when the work is right', async () => {
+    setUpChecks([{ name: 'Notes exist', command: exists('notes.txt') }])
+    const ren = await hire('Ren')
+    const { tasks } = launchMission(['Write notes', ren])
+    const task = tasks[0] as Task
+    await until(() => expect(statusOf(task.id)).toBe('in_progress'))
+    const folder = await doWork(ren, 'notes.txt', 'the notes\n')
+
+    await until(async () => expect((await latest(task))?.state).toBe('passed'))
+    const run = await latest(task)
+    expect(run).toMatchObject({ trigger: 'auto', commit: sh(folder, 'rev-parse', 'HEAD') })
+    expect(run?.results).toHaveLength(1)
+    expect(run?.results[0]).toMatchObject({ name: 'Notes exist', state: 'passed', exitCode: 0 })
+    // It checked the task's folder, which has the file; your own checkout never did.
+    expect(existsSync(join(repo, 'notes.txt'))).toBe(false)
+  })
+
+  it('fails when the work is not right, and says which check and what it printed', async () => {
+    setUpChecks([
+      { name: 'Notes exist', command: exists('notes.txt') },
+      { name: 'Says why', command: `node -e "console.log('checked the folder'); process.exit(2)"` },
+    ])
+    const ren = await hire('Ren')
+    const { tasks } = launchMission(['Forget the notes', ren])
+    const task = tasks[0] as Task
+    await until(() => expect(statusOf(task.id)).toBe('in_progress'))
+    await doWork(ren, 'something-else.txt', 'x\n')
+
+    await until(async () => expect((await latest(task))?.state).toBe('failed'))
+    const run = await latest(task)
+    expect(run?.results.map((r) => [r.name, r.state, r.exitCode])).toEqual([
+      ['Notes exist', 'failed', 1],
+      ['Says why', 'failed', 2],
+    ])
+    expect(run?.results[1]?.output).toContain('checked the folder')
+  })
+
+  it('runs where the agent worked, not in your own checkout', async () => {
+    setUpChecks([
+      {
+        name: 'Leaves a mark',
+        command: `node -e "require('fs').writeFileSync('ran-here.txt', process.cwd())"`,
+      },
+    ])
+    const ren = await hire('Ren')
+    const { tasks } = launchMission(['Anything', ren])
+    const task = tasks[0] as Task
+    await until(() => expect(statusOf(task.id)).toBe('in_progress'))
+    const folder = await doWork(ren, 'a.txt', 'one\nTWO\nthree\n')
+    await until(async () => expect((await latest(task))?.state).toBe('passed'))
+    expect(existsSync(join(folder, 'ran-here.txt'))).toBe(true)
+    expect(existsSync(join(repo, 'ran-here.txt'))).toBe(false)
+    expect(sh(repo, 'status', '--short')).toBe('')
+  })
+
+  it('does not run until the person has switched checks on', async () => {
+    setUpChecks([{ name: 'Would run', command: exists('notes.txt') }], false)
+    const ren = await hire('Ren')
+    const { tasks } = launchMission(['Anything', ren])
+    const task = tasks[0] as Task
+    await until(() => expect(statusOf(task.id)).toBe('in_progress'))
+    await doWork(ren, 'notes.txt', 'x\n')
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    expect(await latest(task)).toBeNull()
+    const verification = await agents.verification.forTask(task.id)
+    expect(verification).toMatchObject({
+      configured: false,
+      reason: 'Checks are set up for this project but not switched on.',
+    })
+  })
+
+  it('keeps the results after the task is accepted, and lists what it is set up to do', async () => {
+    setUpChecks([{ name: 'Notes exist', command: exists('notes.txt') }])
+    const ren = await hire('Ren')
+    const { tasks } = launchMission(['Write notes', ren])
+    const task = tasks[0] as Task
+    await until(() => expect(statusOf(task.id)).toBe('in_progress'))
+    await doWork(ren, 'notes.txt', 'x\n')
+    await until(async () => expect((await latest(task))?.state).toBe('passed'))
+    await agents.tasks.action(task.id, { action: 'accept' })
+    expect(statusOf(task.id)).toBe('done')
+    expect((await latest(task))?.state).toBe('passed')
+    expect(await agents.verification.suggest(repo)).toEqual([])
   })
 })

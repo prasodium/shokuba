@@ -11,6 +11,12 @@ import {
 } from '../employees'
 import type { ShokubaEvent } from '../events/schema'
 import type { MissionBranchInfo, TaskChanges } from '../git'
+import type {
+  CheckSettings,
+  CheckSettingsSave,
+  CheckStepInput,
+  TaskVerification,
+} from '../verification'
 import {
   CONVERSATION_ACTIONS,
   HumanMessageInputSchema,
@@ -83,6 +89,7 @@ export const TaskActionRequestSchema = z.strictObject({
   action: TaskActionSchema,
 })
 export const TaskIdRequestSchema = z.strictObject({ taskId: employeeId })
+export const RepoRootRequestSchema = z.strictObject({ repoRoot: z.string().min(1).max(1_024) })
 
 export const MessageSendRequestSchema = HumanMessageInputSchema
 export const ConversationIdRequestSchema = z.strictObject({ conversationId: employeeId })
@@ -181,6 +188,18 @@ export interface ShokubaApi {
     remove(taskId: string): Promise<void>
     /** What the task changed in its own Git branch, for review. */
     changes(taskId: string): Promise<TaskChanges>
+  }
+  checks: {
+    /** The checks set up for a project (a repository Shokuba has worked in). */
+    get(repoRoot: string): Promise<CheckSettings>
+    /** Replace a project's checks. Nothing runs without the acknowledgement. */
+    save(input: CheckSettingsSave): Promise<CheckSettings>
+    /** Suggestions from the project's own files. Nothing is saved. */
+    suggest(repoRoot: string): Promise<CheckStepInput[]>
+    /** Where a task stands on verification, and its latest run. */
+    forTask(taskId: string): Promise<TaskVerification>
+    /** Run the checks again on a task's work. */
+    run(taskId: string): Promise<void>
   }
   messages: {
     /** Recent conversations, newest first. */

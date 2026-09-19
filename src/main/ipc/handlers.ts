@@ -13,6 +13,7 @@ import {
   MissionCreateRequestSchema,
   MissionIdRequestSchema,
   MissionUpdateRequestSchema,
+  RepoRootRequestSchema,
   TaskActionRequestSchema,
   TaskCreateRequestSchema,
   TaskIdRequestSchema,
@@ -24,6 +25,7 @@ import {
   type TerminalChunk,
 } from '@shared/ipc/api'
 import { BreakerActionRequestSchema } from '@shared/breaker'
+import { CheckSettingsSaveSchema } from '@shared/verification'
 import { IPC } from '@shared/ipc/channels'
 import type { Services } from '../bootstrap'
 import type { AgentServices } from '../agents'
@@ -157,6 +159,31 @@ export function registerIpc(
   handle(IPC.tasksChanges, TaskIdRequestSchema, trusted, ({ taskId }) =>
     agents.workspaces.changes(taskId),
   )
+
+  // Checks are set per project, and only for a project Shokuba has actually worked in: a path
+  // sent from the page is never taken as a place to store settings or run anything.
+  const knownProject = (repoRoot: string): string => {
+    if (!agents.workspaces.knownRepos().includes(repoRoot)) {
+      throw new Error('That project is not one Shokuba has worked in')
+    }
+    return repoRoot
+  }
+  handle(IPC.checksGet, RepoRootRequestSchema, trusted, ({ repoRoot }) =>
+    agents.checks.get(knownProject(repoRoot)),
+  )
+  handle(IPC.checksSave, CheckSettingsSaveSchema, trusted, (input) => {
+    knownProject(input.repoRoot)
+    return agents.checks.save(input)
+  })
+  handle(IPC.checksSuggest, RepoRootRequestSchema, trusted, ({ repoRoot }) =>
+    agents.verification.suggest(knownProject(repoRoot)),
+  )
+  handle(IPC.checksTask, TaskIdRequestSchema, trusted, ({ taskId }) =>
+    agents.verification.forTask(taskId),
+  )
+  handle(IPC.checksRun, TaskIdRequestSchema, trusted, ({ taskId }) => {
+    agents.verification.runNow(taskId)
+  })
   handle(IPC.tasksRemove, TaskIdRequestSchema, trusted, ({ taskId }) => {
     agents.missions.removeTask(taskId)
   })

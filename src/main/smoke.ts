@@ -99,6 +99,8 @@ export async function runSmokeTest(): Promise<SmokeReport> {
 
     await run('isolation-pipeline', () => isolationPipeline(platform, dir, logger))
 
+    await run('verification-pipeline', () => verificationPipeline(platform, dir, logger))
+
     await run('locate-git', async () => {
       const found = await findExecutable('git', { platform, env: process.env, home: homedir() })
       if (!found) throw new Error('git not found on PATH or in common install locations')
@@ -932,6 +934,156 @@ async function isolationPipeline(
     throw new Error(`${message} [tasks: ${tasks.join(',') || 'none'}; terminal: ${tail}]`, {
       cause: error,
     })
+  } finally {
+    await agents.close()
+    services.close()
+  }
+}
+
+/**
+ * Checks on real processes: a demo agent's submitted work is checked by a real command Shokuba
+ * runs in the task's own folder. The first submission fails the check (the demo agent writes no
+ * file), the work is then fixed and sent back, and the second submission, on a new commit,
+ * passes. Only the "AI" is scripted; the check and its process are real.
+ */
+async function verificationPipeline(
+  platform: ReturnType<typeof toPlatformId>,
+  dir: string,
+  logger: ReturnType<typeof createLogger>,
+): Promise<string> {
+  const repo = join(dir, 'verification-repo')
+  mkdirSync(repo)
+  const plain = (...args: string[]): string =>
+    execFileSync(
+      'git',
+      [
+        '-c',
+        'user.name=Setup',
+        '-c',
+        'user.email=setup@example.invalid',
+        '-c',
+        'commit.gpgsign=false',
+        '-c',
+        'core.fsmonitor=false',
+        ...args,
+      ],
+      { cwd: repo, encoding: 'utf8', windowsHide: true },
+    ).trim()
+  plain('init', '-q', '-b', 'main')
+  writeFileSync(join(repo, 'a.txt'), 'one\n')
+  plain('add', '-A')
+  plain('commit', '-qm', 'base')
+
+  const services = createServices({
+    dataDir: join(dir, 'verification-pipeline'),
+    version: 'smoke',
+    platform,
+    logger,
+  })
+  const agents = await createAgentServices(services, {
+    platform,
+    env: process.env,
+    home: homedir(),
+    providers: new ProviderRegistry([createMockAdapter({ stepMs: 30 })]),
+    gracefulStopMs: 2_000,
+  })
+
+  let employeeId = ''
+  try {
+    // The project as Shokuba names it (the same lookup it uses for a task), so the settings match.
+    const git = await GitService.locate({
+      platform,
+      env: process.env,
+      home: homedir(),
+      dataDir: join(dir, 'verification-pipeline'),
+    })
+    const root = await git.repoRoot(repo)
+    agents.checks.save({
+      repoRoot: root,
+      acknowledged: true,
+      steps: [
+        {
+          kind: 'check',
+          name: 'Notes exist',
+          command: `node -e "process.exit(require('fs').existsSync('notes.txt') ? 0 : 1)"`,
+          timeoutSeconds: 60,
+        },
+      ],
+    })
+
+    const employee = await agents.employees.create({
+      name: 'Ada',
+      role: 'Tester',
+      providerId: 'mock',
+      workingDirectory: repo,
+    })
+    employeeId = employee.id
+    await agents.runtime.start(employee)
+    await waitFor(
+      () => agents.runtime.deliveryBlocker(employee.id) === null,
+      'the demo agent to report in',
+      20_000,
+    )
+
+    const mission = agents.missions.createMission({ title: 'Verification smoke' })
+    const task = agents.missions.createTask({
+      missionId: mission.id,
+      title: 'Write the notes',
+      assigneeId: employee.id,
+    })
+    const statusOf = (): string | undefined => agents.missions.getTask(task.id)?.status
+    const latest = async () => (await agents.verification.forTask(task.id)).latest
+    const settled = async (): Promise<boolean> => {
+      const run = await latest()
+      return run !== null && run.state !== 'running'
+    }
+    const waitSettled = async (what: string): Promise<void> => {
+      for (let waited = 0; waited < 40_000; waited += 100) {
+        if (await settled()) return
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+      throw new Error(`timed out waiting for ${what}`)
+    }
+
+    agents.missions.missionAction(mission.id, 'run')
+    await waitFor(() => statusOf() === 'submitted', 'the task to be submitted', 40_000)
+
+    // 1. The demo agent wrote no notes.txt, so the check fails, on the commit it submitted.
+    await waitSettled('the first run of checks')
+    const first = await latest()
+    if (first?.state !== 'failed' || first.results[0]?.exitCode !== 1) {
+      throw new Error(`expected the first run to fail the check: ${JSON.stringify(first)}`)
+    }
+    if (first.trigger !== 'auto') throw new Error('the first run should have started by itself')
+
+    // 2. The person fixes it (here, by adding the file) and sends it back; the agent resubmits.
+    const folder = agents.runtime.cwdOf(employee.id) ?? ''
+    writeFileSync(join(folder, 'notes.txt'), 'notes\n')
+    agents.missions.taskAction(task.id, { action: 'request-changes', note: 'Please look again.' })
+    await waitFor(() => statusOf() === 'in_progress', 'the task to be handed out again', 30_000)
+    await waitFor(() => statusOf() === 'submitted', 'the task to be submitted again', 40_000)
+
+    // 3. A new run, on a new commit, passes.
+    for (let waited = 0; waited < 40_000; waited += 100) {
+      const run = await latest()
+      if (run && run.id !== first.id && run.state !== 'running') break
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    const second = await latest()
+    if (second?.id === first.id || second?.state !== 'passed') {
+      throw new Error(`expected a second run that passed: ${JSON.stringify(second)}`)
+    }
+    if (second.commit === first.commit) throw new Error('the second run was on the same commit')
+    if (plain('rev-parse', 'main') === second.commit)
+      throw new Error('the check ran on your branch')
+    if (existsSync(join(repo, 'notes.txt'))) throw new Error('the check touched your checkout')
+    return 'a real check failed on the first submission, passed on the resubmitted commit, ran in the task’s own folder and left your checkout alone'
+  } catch (error) {
+    const tail = employeeId
+      ? JSON.stringify(agents.runtime.replay(employeeId).data.slice(-200))
+      : ''
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`${message} [terminal: ${tail}]`, { cause: error })
   } finally {
     await agents.close()
     services.close()

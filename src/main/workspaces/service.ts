@@ -335,6 +335,34 @@ export class WorkspaceService {
     return { kind: outcome.kind }
   }
 
+  // ---------- for verification ----------
+
+  /** Where a task's work is, if it has a working folder that still exists on record. */
+  infoFor(taskId: string): { repoRoot: string; folder: string; branch: string } | undefined {
+    const row = this.row(taskId)
+    if (!row || row.state !== 'active' || row.removed_at !== null) return undefined
+    if (!row.repo_root || !row.worktree_path || !row.branch) return undefined
+    return { repoRoot: row.repo_root, folder: row.worktree_path, branch: row.branch }
+  }
+
+  /** Why a task that was handed out has no working folder of its own, if that is so. */
+  isolationReason(taskId: string): string | null {
+    const row = this.row(taskId)
+    return row?.state === 'none' ? row.note : null
+  }
+
+  /** Every repository Shokuba has made a mission branch or a working folder in. */
+  knownRepos(): string[] {
+    const rows = this.deps.db
+      .prepare(
+        `SELECT repo_root FROM mission_branches
+         UNION SELECT repo_root FROM task_workspaces WHERE repo_root IS NOT NULL
+         ORDER BY repo_root`,
+      )
+      .all() as Array<{ repo_root: string }>
+    return rows.map((row) => row.repo_root)
+  }
+
   // ---------- cleaning up ----------
 
   /**

@@ -135,6 +135,37 @@ export class GitService {
     return this.tryRevParse(repo, assertStartPoint(revision))
   }
 
+  /** The names at the top of a commit's tree, for recognising what kind of project it is. */
+  async topLevelNames(repo: string, commit: string): Promise<Set<string>> {
+    const { stdout } = await this.git(repo, [
+      'ls-tree',
+      '--name-only',
+      '-z',
+      assertStartPoint(commit),
+    ])
+    return new Set(stdout.split('\0').filter((name) => name.length > 0))
+  }
+
+  /**
+   * A top-level file's text at a commit, or null if there is none. Only plain file names are
+   * accepted, so a path can never point anywhere else.
+   */
+  async showFile(
+    repo: string,
+    commit: string,
+    name: string,
+    maxBytes = 200_000,
+  ): Promise<string | null> {
+    if (!/^[A-Za-z0-9._-]+$/.test(name)) {
+      throw new GitError('unsafe', `"${name.slice(0, 40)}" is not a plain file name`)
+    }
+    const result = await this.git(repo, ['show', `${assertStartPoint(commit)}:${name}`], {
+      okCodes: [0, 128],
+      maxBytes,
+    })
+    return result.code === 0 ? result.stdout : null
+  }
+
   /** How many commits `branch` has that `base` does not, not counting merge commits. */
   async commitsAhead(repo: string, base: string, branch: string): Promise<number> {
     const { stdout } = await this.git(repo, [

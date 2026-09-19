@@ -1,4 +1,3 @@
-import { execFile } from 'node:child_process'
 import { constants as osConstants } from 'node:os'
 import { promises as fs } from 'node:fs'
 import { basename } from 'node:path'
@@ -9,6 +8,7 @@ import type { EventStore } from '../events/store'
 import { describeError, type Logger } from '../logging/logger'
 import {
   INTERRUPT_SEQUENCE,
+  executeTermination,
   getEnv,
   pathApi,
   planTerminate,
@@ -142,7 +142,7 @@ export class AgentRuntime {
   constructor(private readonly deps: AgentRuntimeDeps) {
     this.pasteSettleMs = deps.pasteSettleMs ?? PASTE_SETTLE_MS
     this.spawnPty = deps.spawnPty ?? spawnNodePty
-    this.killProcess = deps.killProcess ?? defaultKill
+    this.killProcess = deps.killProcess ?? executeTermination
     this.gracefulStopMs = deps.gracefulStopMs ?? GRACEFUL_STOP_MS
   }
 
@@ -633,15 +633,3 @@ function signalName(signal: number): string {
 }
 
 /** Execute a termination plan from the platform layer. */
-function defaultKill(plan: TerminationPlan): void {
-  if (plan.kind === 'signal-group') {
-    try {
-      process.kill(-plan.pid, plan.signal)
-    } catch (error) {
-      // ESRCH: the group is already gone, which is the outcome we wanted.
-      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
-    }
-    return
-  }
-  execFile(plan.command, plan.args, { windowsHide: true }, () => undefined)
-}
