@@ -193,4 +193,148 @@ describe('HookServer', () => {
     expect(() => idle.port).toThrow(/not listening/)
     await idle.close()
   })
+
+  describe('MCP endpoint', () => {
+    const rpc = { jsonrpc: '2.0', id: 1, method: 'ping' }
+
+    it("serves an authenticated agent's tool calls at its own /mcp URL", async () => {
+      const seen: unknown[] = []
+      const { mcpUrl, token } = server.register(
+        'e1',
+        () => {},
+        async (message) => {
+          seen.push(message)
+          return { jsonrpc: '2.0', id: 1, result: { ok: true } }
+        },
+      )
+      expect(mcpUrl).toBe(`http://127.0.0.1:${server.port}/mcp`)
+      const reply = await send({ url: mcpUrl, headers: json(token), body: JSON.stringify(rpc) })
+      expect(reply.status).toBe(200)
+      expect(JSON.parse(reply.body)).toEqual({ jsonrpc: '2.0', id: 1, result: { ok: true } })
+      expect(seen).toEqual([rpc])
+    })
+
+    it('answers a notification with 202 and no body', async () => {
+      const { mcpUrl, token } = server.register(
+        'e1',
+        () => {},
+        async () => null,
+      )
+      const reply = await send({
+        url: mcpUrl,
+        headers: json(token),
+        body: '{"jsonrpc":"2.0","method":"x"}',
+      })
+      expect(reply).toEqual({ status: 202, body: '' })
+    })
+
+    it("needs a token like /hook does, and one agent's token never reaches another's tools", async () => {
+      const a: unknown[] = []
+      const b: unknown[] = []
+      const regA = server.register(
+        'a',
+        () => {},
+        async (m) => (a.push(m), null),
+      )
+      const regB = server.register(
+        'b',
+        () => {},
+        async (m) => (b.push(m), null),
+      )
+      expect(
+        (
+          await send({
+            url: regA.mcpUrl,
+            headers: { 'content-type': 'application/json' },
+            body: '{}',
+          })
+        ).status,
+      ).toBe(401)
+      expect((await send({ url: regA.mcpUrl, headers: json('wrong'), body: '{}' })).status).toBe(
+        401,
+      )
+      await send({ url: regA.mcpUrl, headers: json(regA.token), body: '{"n":1}' })
+      await send({ url: regB.mcpUrl, headers: json(regB.token), body: '{"n":2}' })
+      expect(a).toEqual([{ n: 1 }])
+      expect(b).toEqual([{ n: 2 }])
+    })
+
+    it('applies the same Host, content-type, JSON and size rules', async () => {
+      const { mcpUrl, token } = server.register(
+        'e1',
+        () => {},
+        async () => null,
+      )
+      expect(
+        (await send({ url: mcpUrl, headers: json(token, { host: 'evil.example:80' }), body: '{}' }))
+          .status,
+      ).toBe(403)
+      expect(
+        (
+          await send({
+            url: mcpUrl,
+            headers: { authorization: `Bearer ${token}`, 'content-type': 'text/plain' },
+            body: '{}',
+          })
+        ).status,
+      ).toBe(415)
+      expect((await send({ url: mcpUrl, headers: json(token), body: '{nope' })).status).toBe(400)
+      expect(
+        (
+          await send({
+            url: mcpUrl,
+            headers: json(token),
+            body: JSON.stringify({ big: 'x'.repeat(4096) }),
+          })
+        ).status,
+      ).toBe(413)
+    })
+
+    it('politely refuses the streaming GET that MCP clients probe for, but only when authenticated', async () => {
+      const { mcpUrl, token } = server.register(
+        'e1',
+        () => {},
+        async () => null,
+      )
+      expect(
+        (await send({ url: mcpUrl, method: 'GET', headers: { authorization: `Bearer ${token}` } }))
+          .status,
+      ).toBe(405)
+      expect((await send({ url: mcpUrl, method: 'GET', headers: {} })).status).toBe(401)
+    })
+
+    it('does not exist for an agent registered without tools', async () => {
+      const { mcpUrl, token } = server.register('e1', () => {})
+      expect(
+        (await send({ url: mcpUrl, headers: json(token), body: JSON.stringify(rpc) })).status,
+      ).toBe(404)
+    })
+
+    it('answers 500, without details, if the tool layer throws', async () => {
+      const { mcpUrl, token } = server.register(
+        'e1',
+        () => {},
+        async () => {
+          throw new Error('database on fire')
+        },
+      )
+      const reply = await send({ url: mcpUrl, headers: json(token), body: JSON.stringify(rpc) })
+      expect(reply.status).toBe(500)
+      expect(reply.body).not.toContain('database on fire')
+      expect(logs.join('\n')).toContain('database on fire')
+    })
+
+    it('stops serving an agent once it is unregistered', async () => {
+      const registration = server.register(
+        'e1',
+        () => {},
+        async () => null,
+      )
+      registration.unregister()
+      expect(
+        (await send({ url: registration.mcpUrl, headers: json(registration.token), body: '{}' }))
+          .status,
+      ).toBe(401)
+    })
+  })
 })

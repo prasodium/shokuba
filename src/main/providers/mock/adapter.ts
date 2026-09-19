@@ -55,6 +55,7 @@ export function createMockAdapter(options: MockAdapterOptions = {}): ProviderAda
           // When the executable is Electron itself, this makes it behave as plain Node.
           ELECTRON_RUN_AS_NODE: '1',
           SHOKUBA_HOOK_URL: input.report.url,
+          SHOKUBA_MCP_URL: input.report.mcpUrl,
           ...(options.stepMs !== undefined && { SHOKUBA_MOCK_STEP_MS: String(options.stepMs) }),
         },
         files: [{ name: MOCK_SCRIPT_FILE, content: MOCK_AGENT_SCRIPT }],

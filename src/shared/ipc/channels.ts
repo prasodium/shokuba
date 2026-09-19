@@ -23,5 +23,15 @@ export const IPC = {
   /** main -> renderer push */
   terminalData: 'shokuba:terminal:data',
 
+  missionsList: 'shokuba:missions:list',
+  missionsCreate: 'shokuba:missions:create',
+  missionsUpdate: 'shokuba:missions:update',
+  missionsAction: 'shokuba:missions:action',
+  missionsArchive: 'shokuba:missions:archive',
+  tasksCreate: 'shokuba:tasks:create',
+  tasksUpdate: 'shokuba:tasks:update',
+  tasksAction: 'shokuba:tasks:action',
+  tasksRemove: 'shokuba:tasks:remove',
+
   systemPickDirectory: 'shokuba:system:pick-directory',
 } as const

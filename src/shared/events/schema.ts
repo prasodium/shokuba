@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { MISSION_STATUSES, TASK_STATUSES } from '../missions'
 import { RUNTIME_STATES } from '../types/agent'
 
 /**
@@ -103,6 +104,45 @@ export const EventInputSchema = z.discriminatedUnion('type', [
   event(
     'employee.updated',
     z.strictObject({ employeeId: id, fields: z.array(z.string().max(50)) }),
+  ),
+
+  // Missions and tasks. `missionId` / `taskId` in the envelope let the log be filtered by either.
+  event('mission.created', z.strictObject({ missionId: id, title: z.string().max(200) })),
+  event('mission.updated', z.strictObject({ missionId: id, fields: z.array(z.string().max(50)) })),
+  event(
+    'mission.status.changed',
+    z.strictObject({
+      missionId: id,
+      from: z.enum(MISSION_STATUSES),
+      to: z.enum(MISSION_STATUSES),
+      reason: z.string().max(500).optional(),
+    }),
+  ),
+  event('task.created', z.strictObject({ taskId: id, missionId: id, title: z.string().max(200) })),
+  event(
+    'task.updated',
+    z.strictObject({ taskId: id, missionId: id, fields: z.array(z.string().max(50)) }),
+  ),
+  event(
+    'task.status.changed',
+    z.strictObject({
+      taskId: id,
+      missionId: id,
+      from: z.enum(TASK_STATUSES),
+      to: z.enum(TASK_STATUSES),
+      reason: z.string().max(500).optional(),
+    }),
+  ),
+  event('task.assigned', z.strictObject({ taskId: id, missionId: id, employeeId: id.nullable() })),
+  /** A task was handed to an agent's terminal. */
+  event(
+    'task.dispatched',
+    z.strictObject({
+      taskId: id,
+      missionId: id,
+      employeeId: id,
+      attempt: z.number().int().min(1),
+    }),
   ),
 ])
 

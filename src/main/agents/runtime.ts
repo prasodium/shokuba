@@ -20,7 +20,10 @@ import {
 } from '../platform'
 import type { ProviderAdapter } from '../providers/types'
 import type { ProviderRegistry } from '../providers/registry'
+import type { AgentToolContext } from '../mcp/agent-tools'
+import type { McpEndpoint } from '../mcp/server'
 import type { HookRegistration, HookServer } from './hook-server'
+import { bracketedPaste } from './prompt'
 import { spawnNodePty, type PtyProcess, type PtySpawn } from './pty'
 import { Scrollback } from './scrollback'
 import { AgentTracker } from './tracker'
@@ -30,6 +33,8 @@ export const HOOK_TOKEN_ENV = 'SHOKUBA_HOOK_TOKEN'
 
 const DEFAULT_COLS = 120
 const DEFAULT_ROWS = 32
+/** After pasting, let the terminal finish taking the text before pressing Enter. */
+const PASTE_SETTLE_MS = 150
 const GRACEFUL_STOP_MS = 3_000
 const FORCE_STOP_MS = 2_000
 
@@ -40,6 +45,7 @@ export type AgentRuntimeErrorCode =
   | 'provider-unavailable'
   | 'invalid-working-directory'
   | 'launch-failed'
+  | 'not-ready'
 
 export class AgentRuntimeError extends Error {
   constructor(
@@ -63,9 +69,13 @@ export interface AgentRuntimeDeps {
   home: string
   /** Shokuba's data directory; each agent gets a folder under `agents/`. */
   dataDir: string
+  /** The tools agents may call (task submission etc.), served on each agent's own endpoint. */
+  mcp?: McpEndpoint<AgentToolContext>
   spawnPty?: PtySpawn
   killProcess?: (plan: TerminationPlan) => void
   gracefulStopMs?: number
+  /** Overridable so tests need not wait for a real terminal to settle. */
+  pasteSettleMs?: number
 }
 
 interface Session {
@@ -104,8 +114,10 @@ export class AgentRuntime {
   private readonly spawnPty: PtySpawn
   private readonly killProcess: (plan: TerminationPlan) => void
   private readonly gracefulStopMs: number
+  private readonly pasteSettleMs: number
 
   constructor(private readonly deps: AgentRuntimeDeps) {
+    this.pasteSettleMs = deps.pasteSettleMs ?? PASTE_SETTLE_MS
     this.spawnPty = deps.spawnPty ?? spawnNodePty
     this.killProcess = deps.killProcess ?? defaultKill
     this.gracefulStopMs = deps.gracefulStopMs ?? GRACEFUL_STOP_MS
@@ -155,9 +167,18 @@ export class AgentRuntime {
     const scrollback = new Scrollback()
 
     let session: Session | undefined
-    const registration = hooks.register(employee.id, (raw) => {
-      if (session) this.report(session, raw)
-    })
+    const { mcp } = this.deps
+    const registration = hooks.register(
+      employee.id,
+      (raw) => {
+        if (session) this.report(session, raw)
+      },
+      // Who is calling comes from the connection's token, never from anything in the message.
+      mcp
+        ? (message) =>
+            mcp.handle(message, { employeeId: employee.id, source: adapter.observation.source })
+        : undefined,
+    )
 
     try {
       const runDir = pathApi(platform).join(dataDir, 'agents', employee.id)
@@ -168,7 +189,11 @@ export class AgentRuntime {
         env,
         employee,
         executable: installation.path,
-        report: { url: registration.url, tokenEnvVar: HOOK_TOKEN_ENV },
+        report: {
+          url: registration.url,
+          tokenEnvVar: HOOK_TOKEN_ENV,
+          mcpUrl: registration.mcpUrl,
+        },
         runDir,
       })
       for (const file of launch.files) {
@@ -290,6 +315,47 @@ export class AgentRuntime {
 
   interrupt(employeeId: string): void {
     this.write(employeeId, INTERRUPT_SEQUENCE)
+  }
+
+  /**
+   * Why a prompt must not be pasted into this agent's terminal right now, or null if it may
+   * be. Pasting ends with Enter, so it is only safe when the agent is *known* to be sitting
+   * at its input: running, and idle as *reported* (not merely guessed). Never while it waits
+   * on a permission prompt, is starting up (setup or login screens), or has failed.
+   */
+  deliveryBlocker(employeeId: string): string | null {
+    const session = this.sessions.get(employeeId)
+    if (!session) return 'is not running'
+    const { state, stateSource } = session.tracker
+    if (state !== 'idle') return `is ${state}, not idle`
+    if (stateSource !== 'reported' && stateSource !== 'simulated') {
+      return 'looks idle, but that is only a guess'
+    }
+    return null
+  }
+
+  /**
+   * Give the agent a prompt: pasted as one block, then Enter. Refuses unless
+   * `deliveryBlocker` says it is safe, and re-checks after the paste settles.
+   */
+  async deliverPrompt(employeeId: string, text: string): Promise<void> {
+    const session = this.require(employeeId)
+    const blocker = this.deliveryBlocker(employeeId)
+    if (blocker) throw new AgentRuntimeError('not-ready', `${session.employee.name} ${blocker}`)
+
+    const paste = bracketedPaste(text)
+    session.pty.write(paste)
+    await new Promise((resolve) => setTimeout(resolve, this.pasteSettleMs))
+    if (this.sessions.get(employeeId) !== session) {
+      throw new AgentRuntimeError('not-running', `${session.employee.name} stopped during delivery`)
+    }
+    session.pty.write('\r')
+    this.deps.audit.record({
+      actor: 'system',
+      action: 'agent.deliver',
+      target: employeeId,
+      detail: { characters: paste.length },
+    })
   }
 
   /** Send keystrokes to the agent's terminal. */

@@ -1,4 +1,5 @@
 import type { Employee } from '@shared/employees'
+import { useMissions } from '../store/missions'
 import { useOffice } from '../store/office'
 import { StatePill } from './StatePill'
 
@@ -21,6 +22,8 @@ export function Roster({ onNew, onEdit }: Props) {
   const startAgent = useOffice((s) => s.startAgent)
   const stopAgent = useOffice((s) => s.stopAgent)
   const interruptAgent = useOffice((s) => s.interruptAgent)
+  const missions = useMissions((s) => s.missions)
+  const allTasks = missions.flatMap((m) => m.tasks)
 
   return (
     <section className="panel roster" aria-label="Employees">
@@ -72,6 +75,12 @@ export function Roster({ onNew, onEdit }: Props) {
                       {provider?.displayName ?? employee.providerId} ·{' '}
                       {folderName(employee.workingDirectory)}
                     </span>
+                    {(() => {
+                      const working = allTasks.find(
+                        (t) => t.assigneeId === employee.id && t.status === 'in_progress',
+                      )
+                      return working ? <span className="card-task">▸ {working.title}</span> : null
+                    })()}
                   </span>
                   <StatePill view={view} />
                 </button>

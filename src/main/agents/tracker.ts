@@ -33,6 +33,7 @@ interface ActiveTool {
  */
 export class AgentTracker {
   private current: RuntimeState = 'offline'
+  private currentSource: EventSource = 'system'
   private readonly active = new Map<string, ActiveTool>()
   private anonymous = 0
 
@@ -44,6 +45,11 @@ export class AgentTracker {
 
   get state(): RuntimeState {
     return this.current
+  }
+
+  /** How the current state is known: told by the agent, guessed, or set by Shokuba. */
+  get stateSource(): EventSource {
+    return this.currentSource
   }
 
   /** The process is being launched. */
@@ -198,6 +204,7 @@ export class AgentTracker {
     if (to === this.current) return []
     const from = this.current
     this.current = to
+    this.currentSource = source
     return [this.event('agent.state.changed', { from, to, reason: reason.slice(0, 500) }, source)]
   }
 

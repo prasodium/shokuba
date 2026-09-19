@@ -74,6 +74,8 @@ export async function runSmokeTest(): Promise<SmokeReport> {
 
     await run('agent-pipeline', () => agentPipeline(platform, dir, logger))
 
+    await run('mission-pipeline', () => missionPipeline(platform, dir, logger))
+
     await run('locate-git', async () => {
       const found = await findExecutable('git', { platform, env: process.env, home: homedir() })
       if (!found) throw new Error('git not found on PATH or in common install locations')
@@ -188,7 +190,14 @@ async function agentPipeline(
     await waitFor(() => seen('agent.turn.finished') > 0, 'the scripted turn to finish', 20_000)
 
     const tools = services.events.log.list({ type: 'agent.tool.started' })
-    if (tools.length !== 4) throw new Error(`expected 4 tool events, saw ${tools.length}`)
+    // Four scripted tools, then the demo agent asks Shokuba (over MCP) whether it has a task.
+    const toolNames = tools.map((event) =>
+      event.type === 'agent.tool.started' ? event.payload.toolName : '',
+    )
+    const expected = ['Read', 'Grep', 'Edit', 'Bash', 'mcp__shokuba__get_current_task']
+    if (toolNames.join(',') !== expected.join(',')) {
+      throw new Error(`expected tools ${expected.join(',')}, saw ${toolNames.join(',')}`)
+    }
     if (!tools.every((event) => event.source === 'simulated')) {
       throw new Error('demo activity must be labelled simulated')
     }
@@ -222,7 +231,7 @@ async function agentPipeline(
     if (seen('agent.error') !== 0)
       throw new Error('a requested stop must not be recorded as an error')
 
-    return `${changes.length} state changes (${[...new Set(changes)].join('>')}), 4 tool events, clean stop`
+    return `${changes.length} state changes (${[...new Set(changes)].join('>')}), ${tools.length} tool events, clean stop`
   } catch (error) {
     // Without this, a timeout on a machine nobody can log into says nothing about why.
     const states = services.events.log
@@ -232,6 +241,108 @@ async function agentPipeline(
     const message = error instanceof Error ? error.message : String(error)
     throw new Error(
       `${message} [states: ${states.join('>') || 'none'}; terminal tail: ${JSON.stringify(tail)}]`,
+      { cause: error },
+    )
+  } finally {
+    await agents.close()
+    services.close()
+  }
+}
+
+/**
+ * A mission across two agents on the real runtime: a task is pasted into a real terminal, the
+ * demo agent does its turn and submits through Shokuba's MCP tools over authenticated HTTP,
+ * a person accepts, and only then is the dependent task handed to the second agent.
+ */
+async function missionPipeline(
+  platform: ReturnType<typeof toPlatformId>,
+  dir: string,
+  logger: ReturnType<typeof createLogger>,
+): Promise<string> {
+  const services = createServices({
+    dataDir: join(dir, 'mission-pipeline'),
+    version: 'smoke',
+    platform,
+    logger,
+  })
+  const agents = await createAgentServices(services, {
+    platform,
+    env: process.env,
+    home: homedir(),
+    providers: new ProviderRegistry([createMockAdapter({ stepMs: 30 })]),
+    gracefulStopMs: 2_000,
+  })
+
+  const workdir = join(dir, 'mission-work')
+  mkdirSync(workdir)
+  const ids: string[] = []
+  let missionId: string | undefined
+
+  try {
+    const hire = async (name: string): Promise<string> => {
+      const employee = await agents.employees.create({
+        name,
+        role: 'Tester',
+        providerId: 'mock',
+        workingDirectory: workdir,
+      })
+      ids.push(employee.id)
+      await agents.runtime.start(employee)
+      return employee.id
+    }
+    const first = await hire('Ada')
+    const second = await hire('Bo')
+    // Tasks are only handed to an agent that has *reported* itself idle.
+    await waitFor(
+      () => ids.every((id) => agents.runtime.deliveryBlocker(id) === null),
+      'both demo agents to report in',
+      20_000,
+    )
+
+    const mission = agents.missions.createMission({ title: 'Smoke mission' })
+    missionId = mission.id
+    const a = agents.missions.createTask({
+      missionId: mission.id,
+      title: 'First',
+      assigneeId: first,
+    })
+    const b = agents.missions.createTask({
+      missionId: mission.id,
+      title: 'Second',
+      assigneeId: second,
+      dependsOn: [a.id],
+    })
+    const statusOf = (id: string): string => agents.missions.getTask(id)?.status ?? 'missing'
+    agents.missions.missionAction(mission.id, 'run')
+
+    await waitFor(() => statusOf(a.id) === 'submitted', 'the first task to be submitted', 30_000)
+    if (statusOf(b.id) !== 'pending')
+      throw new Error('the dependent task started before its dependency')
+    if (!agents.missions.getTask(a.id)?.summary) throw new Error('the agent submitted no summary')
+
+    agents.missions.taskAction(a.id, { action: 'accept' })
+    await waitFor(() => statusOf(b.id) === 'submitted', 'the second task to be submitted', 30_000)
+    agents.missions.taskAction(b.id, { action: 'accept' })
+    if (agents.missions.getMission(mission.id)?.status !== 'completed') {
+      throw new Error('the mission did not complete')
+    }
+
+    const submissions = services.events.log
+      .list({ type: 'task.status.changed', limit: 200 })
+      .filter((event) => event.type === 'task.status.changed' && event.payload.to === 'submitted')
+    if (!submissions.every((event) => event.source === 'simulated')) {
+      throw new Error('demo submissions must be labelled simulated')
+    }
+    const dispatched = services.events.log.list({ type: 'task.dispatched' }).length
+    return `2 tasks handed out (${dispatched} dispatches), submitted over MCP, accepted, mission completed`
+  } catch (error) {
+    const tasks = missionId
+      ? (agents.missions.listMissions().find((m) => m.mission.id === missionId)?.tasks ?? [])
+      : []
+    const tails = ids.map((id) => JSON.stringify(agents.runtime.replay(id).data.slice(-300)))
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(
+      `${message} [tasks: ${tasks.map((t) => `${t.title}=${t.status}`).join(', ') || 'none'}; terminals: ${tails.join(' | ')}]`,
       { cause: error },
     )
   } finally {

@@ -147,6 +147,7 @@ function start(dev?: DevRun): void {
         platform,
         env: process.env,
         home: homedir(),
+        version: app.getVersion(),
       })
     } catch (error) {
       logger.error('startup.failed', describeError(error))

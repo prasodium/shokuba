@@ -1,10 +1,38 @@
 import { PERMISSION_MODES } from '@shared/employees'
+import { AGENT_TOOL_PERMISSIONS, SHOKUBA_MCP_SERVER } from '../../mcp/agent-tools'
 import { getEnv, pathApi, type Env, type PlatformId } from '../../platform'
 import type { LaunchInput, LaunchSpec, ProviderAdapter } from '../types'
 import { detectClaudeCode, type DetectDeps } from './detect'
 import { buildHookSettings, parseClaudeHook } from './hooks'
 
 export const SETTINGS_FILE = 'claude-settings.json'
+export const MCP_CONFIG_FILE = 'claude-mcp.json'
+
+/** Who the agent is, and how to work with Shokuba. Appended to Claude Code's own prompt. */
+export function agentSystemPrompt(name: string, role: string): string {
+  return (
+    `You are ${name}, ${role}, on a team coordinated by Shokuba. ` +
+    'A message that begins with "[Shokuba task]" is a task assigned to you: do the work, then call the shokuba MCP tool ' +
+    'submit_task with a short, honest summary of what you did and how you checked it (or report_blocked if you cannot continue). ' +
+    'Use get_current_task to see the details again.'
+  )
+}
+
+/**
+ * Claude Code's MCP config for Shokuba's tools. The bearer token is a reference to the
+ * agent's environment variable, so it is never written to disk.
+ */
+export function buildMcpConfig(mcpUrl: string, tokenEnvVar: string): Record<string, unknown> {
+  return {
+    mcpServers: {
+      [SHOKUBA_MCP_SERVER]: {
+        type: 'http',
+        url: mcpUrl,
+        headers: { Authorization: `Bearer \${${tokenEnvVar}}` },
+      },
+    },
+  }
+}
 
 /** Claude Code's own account, endpoint and network settings. Not secrets meant for other tools. */
 const ALWAYS_INHERITED = [
@@ -75,8 +103,20 @@ export function createClaudeCodeAdapter(deps: DetectDeps = {}): ProviderAdapter 
 
     buildLaunch(input: LaunchInput): LaunchSpec {
       const { employee, runDir, report } = input
-      const settingsFile = pathApi(input.platform).join(runDir, SETTINGS_FILE)
-      const args = ['--settings', settingsFile, '--name', employee.name]
+      const paths = pathApi(input.platform)
+      const args = [
+        '--settings',
+        paths.join(runDir, SETTINGS_FILE),
+        // Shokuba's tools, pre-approved so an agent reporting back never hits a permission prompt.
+        '--mcp-config',
+        paths.join(runDir, MCP_CONFIG_FILE),
+        '--allowedTools',
+        AGENT_TOOL_PERMISSIONS.join(','),
+        '--append-system-prompt',
+        agentSystemPrompt(employee.name, employee.role),
+        '--name',
+        employee.name,
+      ]
       if (employee.model) args.push('--model', employee.model)
       if (employee.permissionMode !== 'default')
         args.push('--permission-mode', employee.permissionMode)
@@ -90,6 +130,10 @@ export function createClaudeCodeAdapter(deps: DetectDeps = {}): ProviderAdapter 
           {
             name: SETTINGS_FILE,
             content: JSON.stringify(buildHookSettings(report.url, report.tokenEnvVar), null, 2),
+          },
+          {
+            name: MCP_CONFIG_FILE,
+            content: JSON.stringify(buildMcpConfig(report.mcpUrl, report.tokenEnvVar), null, 2),
           },
         ],
       }

@@ -4,19 +4,25 @@ import type { AddressInfo } from 'node:net'
 import type { Logger } from '../logging/logger'
 
 const HOOK_PATH = '/hook'
+const MCP_PATH = '/mcp'
 /** Tool results (a big file read) can be large; anything beyond this is refused. */
 const DEFAULT_MAX_BODY_BYTES = 16 * 1024 * 1024
 const MAX_CONNECTIONS = 128
 
 export interface HookRegistration {
-  /** Full URL the agent should POST to. */
+  /** Full URL the agent should POST its status reports to. */
   url: string
+  /** Full URL of this agent's MCP endpoint (its tools). */
+  mcpUrl: string
   /** Secret identifying this agent. Hand it to the child through its environment only. */
   token: string
   unregister(): void
 }
 
 export type ReportHandler = (body: unknown) => void
+
+/** Answers one MCP (JSON-RPC) message; null means the message needs no reply. */
+export type McpHandler = (message: unknown) => Promise<unknown | null>
 
 function digest(token: string): string {
   return createHash('sha256').update(token).digest('hex')
@@ -38,7 +44,10 @@ function digest(token: string): string {
  */
 export class HookServer {
   private readonly server: Server
-  private readonly registrations = new Map<string, { employeeId: string; handler: ReportHandler }>()
+  private readonly registrations = new Map<
+    string,
+    { employeeId: string; handler: ReportHandler; mcp: McpHandler | undefined }
+  >()
   private address: AddressInfo | undefined
 
   constructor(
@@ -68,12 +77,13 @@ export class HookServer {
     return this.address.port
   }
 
-  register(employeeId: string, handler: ReportHandler): HookRegistration {
+  register(employeeId: string, handler: ReportHandler, mcp?: McpHandler): HookRegistration {
     const token = randomBytes(32).toString('base64url')
     const key = digest(token)
-    this.registrations.set(key, { employeeId, handler })
+    this.registrations.set(key, { employeeId, handler, mcp })
     return {
       url: `http://127.0.0.1:${this.port}${HOOK_PATH}`,
+      mcpUrl: `http://127.0.0.1:${this.port}${MCP_PATH}`,
       token,
       unregister: () => {
         this.registrations.delete(key)
@@ -94,7 +104,12 @@ export class HookServer {
       request.resume()
     }
 
-    if (request.method !== 'POST' || request.url !== HOOK_PATH) return reject(404)
+    const path = request.url
+    const isMcp = path === MCP_PATH
+    // /hook takes POST only. /mcp takes POST, and GET only so it can be refused politely
+    // (MCP clients probe for a streaming channel this server does not offer).
+    if (path !== HOOK_PATH && !isMcp) return reject(404)
+    if (request.method !== 'POST' && !(isMcp && request.method === 'GET')) return reject(404)
     if (request.headers.host !== `127.0.0.1:${this.port}`) return reject(403)
 
     const authorization = request.headers.authorization ?? ''
@@ -102,6 +117,8 @@ export class HookServer {
     // Looked up by hash so the comparison never touches the secret itself.
     const registration = presented ? this.registrations.get(digest(presented)) : undefined
     if (!registration) return reject(401)
+
+    if (request.method === 'GET') return reject(405)
 
     if (!(request.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) {
       return reject(415)
@@ -126,6 +143,30 @@ export class HookServer {
         body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
       } catch {
         return reject(400)
+      }
+
+      if (isMcp) {
+        const mcp = registration.mcp
+        if (!mcp) return reject(404)
+        mcp(body)
+          .then((reply) => {
+            if (reply === null) {
+              response.writeHead(202)
+              response.end()
+              return
+            }
+            response.writeHead(200, { 'content-type': 'application/json' })
+            response.end(JSON.stringify(reply))
+          })
+          .catch((error: unknown) => {
+            this.logger.error('mcp.handler.failed', {
+              employeeId: registration.employeeId,
+              message: error instanceof Error ? error.message : String(error),
+            })
+            response.writeHead(500, { 'content-type': 'text/plain' })
+            response.end()
+          })
+        return
       }
 
       try {

@@ -6,7 +6,11 @@ const input = (platform: 'darwin' | 'win32' | 'linux', executable: string) => ({
   env: {},
   executable,
   runDir: platform === 'win32' ? 'C:\\data\\agents\\e1' : '/data/agents/e1',
-  report: { url: 'http://127.0.0.1:9/hook', tokenEnvVar: 'SHOKUBA_HOOK_TOKEN' },
+  report: {
+    url: 'http://127.0.0.1:9/hook',
+    mcpUrl: 'http://127.0.0.1:9/mcp',
+    tokenEnvVar: 'SHOKUBA_HOOK_TOKEN',
+  },
   employee: {
     id: 'e1',
     name: 'Mika',

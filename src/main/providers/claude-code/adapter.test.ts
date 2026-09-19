@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { claudeInheritedEnv, createClaudeCodeAdapter, SETTINGS_FILE } from './adapter'
+import {
+  claudeInheritedEnv,
+  createClaudeCodeAdapter,
+  MCP_CONFIG_FILE,
+  SETTINGS_FILE,
+} from './adapter'
 
 const adapter = createClaudeCodeAdapter()
 
@@ -8,7 +13,11 @@ const input = (overrides: Partial<Parameters<typeof adapter.buildLaunch>[0]['emp
   env: {},
   executable: '/usr/local/bin/claude',
   runDir: '/data/agents/e1',
-  report: { url: 'http://127.0.0.1:9/hook', tokenEnvVar: 'SHOKUBA_HOOK_TOKEN' },
+  report: {
+    url: 'http://127.0.0.1:9/hook',
+    mcpUrl: 'http://127.0.0.1:9/mcp',
+    tokenEnvVar: 'SHOKUBA_HOOK_TOKEN',
+  },
   employee: {
     id: 'e1',
     name: 'Mika',
@@ -27,15 +36,41 @@ describe('claude-code adapter', () => {
     expect(adapter.observation).toMatchObject({ kind: 'hooks', source: 'reported' })
   })
 
-  it('launches claude with the generated hook settings and a session name', () => {
+  it('launches claude with the hook settings, the Shokuba tools, its role and a session name', () => {
     const launch = adapter.buildLaunch(input())
     expect(launch.file).toBe('/usr/local/bin/claude')
-    expect(launch.args).toEqual([
+    expect(launch.args.slice(0, 6)).toEqual([
       '--settings',
       `/data/agents/e1/${SETTINGS_FILE}`,
-      '--name',
-      'Mika',
+      '--mcp-config',
+      `/data/agents/e1/${MCP_CONFIG_FILE}`,
+      '--allowedTools',
+      'mcp__shokuba__get_current_task,mcp__shokuba__submit_task,mcp__shokuba__report_blocked',
     ])
+    const flag = launch.args.indexOf('--append-system-prompt')
+    expect(launch.args[flag + 1]).toContain('You are Mika, Engineer')
+    expect(launch.args.slice(-2)).toEqual(['--name', 'Mika'])
+  })
+
+  it("pre-approves only Shokuba's own three tools", () => {
+    const allowed =
+      adapter.buildLaunch(input()).args[
+        adapter.buildLaunch(input()).args.indexOf('--allowedTools') + 1
+      ]
+    expect(allowed?.split(',').every((tool) => tool.startsWith('mcp__shokuba__'))).toBe(true)
+    expect(allowed?.split(',')).toHaveLength(3)
+  })
+
+  it("writes an MCP config that points at this agent's endpoint and takes the token from the environment", () => {
+    const file = adapter.buildLaunch(input()).files.find((f) => f.name === MCP_CONFIG_FILE)
+    const config = JSON.parse(file?.content ?? '{}') as {
+      mcpServers: { shokuba: { type: string; url: string; headers: Record<string, string> } }
+    }
+    expect(config.mcpServers.shokuba).toEqual({
+      type: 'http',
+      url: 'http://127.0.0.1:9/mcp',
+      headers: { Authorization: 'Bearer ${SHOKUBA_HOOK_TOKEN}' },
+    })
   })
 
   it('passes the model and a non-default permission mode, and only then', () => {

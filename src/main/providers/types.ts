@@ -48,7 +48,7 @@ export interface LaunchInput {
   /** Absolute path to the executable, from `detect`. */
   executable: string
   /** Where the agent reports what it is doing. The token itself is only ever in the env. */
-  report: { url: string; tokenEnvVar: string }
+  report: { url: string; tokenEnvVar: string; mcpUrl: string }
   /** A directory Shokuba owns for this agent's generated files. */
   runDir: string
 }

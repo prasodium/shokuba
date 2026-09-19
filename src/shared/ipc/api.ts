@@ -9,6 +9,23 @@ import {
   type PermissionMode,
 } from '../employees'
 import type { ShokubaEvent } from '../events/schema'
+import {
+  MISSION_ACTIONS,
+  MissionInputSchema,
+  MissionUpdateSchema,
+  TaskActionSchema,
+  TaskInputSchema,
+  TaskUpdateSchema,
+  type Mission,
+  type MissionAction,
+  type MissionDetail,
+  type MissionInput,
+  type MissionUpdate,
+  type Task,
+  type TaskAction,
+  type TaskInput,
+  type TaskUpdate,
+} from '../missions'
 
 export const EventsListRequestSchema = z.strictObject({
   afterSeq: z.number().int().min(0).default(0),
@@ -34,6 +51,27 @@ export const TerminalResizeRequestSchema = z.strictObject({
   cols: z.number().int().min(1).max(1000),
   rows: z.number().int().min(1).max(500),
 })
+
+export const MissionCreateRequestSchema = MissionInputSchema
+export const MissionUpdateRequestSchema = z.strictObject({
+  missionId: employeeId,
+  patch: MissionUpdateSchema,
+})
+export const MissionActionRequestSchema = z.strictObject({
+  missionId: employeeId,
+  action: z.enum(MISSION_ACTIONS),
+})
+export const MissionIdRequestSchema = z.strictObject({ missionId: employeeId })
+export const TaskCreateRequestSchema = TaskInputSchema
+export const TaskUpdateRequestSchema = z.strictObject({
+  taskId: employeeId,
+  patch: TaskUpdateSchema,
+})
+export const TaskActionRequestSchema = z.strictObject({
+  taskId: employeeId,
+  action: TaskActionSchema,
+})
+export const TaskIdRequestSchema = z.strictObject({ taskId: employeeId })
 
 export interface AppInfo {
   name: string
@@ -107,6 +145,20 @@ export interface ShokubaApi {
     start(employeeId: string): Promise<void>
     stop(employeeId: string): Promise<void>
     interrupt(employeeId: string): Promise<void>
+  }
+  missions: {
+    list(): Promise<MissionDetail[]>
+    create(input: MissionInput): Promise<Mission>
+    update(missionId: string, patch: MissionUpdate): Promise<Mission>
+    /** Run, pause or cancel. Running starts handing ready tasks to idle employees. */
+    action(missionId: string, action: MissionAction): Promise<Mission>
+    archive(missionId: string): Promise<void>
+  }
+  tasks: {
+    create(input: TaskInput): Promise<Task>
+    update(taskId: string, patch: TaskUpdate): Promise<Task>
+    action(taskId: string, action: TaskAction): Promise<Task>
+    remove(taskId: string): Promise<void>
   }
   terminal: {
     write(employeeId: string, data: string): Promise<void>

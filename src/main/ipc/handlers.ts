@@ -6,6 +6,14 @@ import {
   EmployeeIdRequestSchema,
   EmployeeUpdateRequestSchema,
   EventsListRequestSchema,
+  MissionActionRequestSchema,
+  MissionCreateRequestSchema,
+  MissionIdRequestSchema,
+  MissionUpdateRequestSchema,
+  TaskActionRequestSchema,
+  TaskCreateRequestSchema,
+  TaskIdRequestSchema,
+  TaskUpdateRequestSchema,
   TerminalResizeRequestSchema,
   TerminalWriteRequestSchema,
   type AppInfo,
@@ -115,6 +123,32 @@ export function registerIpc(
   )
   handle(IPC.agentsInterrupt, EmployeeIdRequestSchema, trusted, ({ employeeId }) => {
     agents.runtime.interrupt(employeeId)
+  })
+
+  handle(IPC.missionsList, z.undefined(), trusted, () => agents.missions.listMissions())
+  handle(IPC.missionsCreate, MissionCreateRequestSchema, trusted, (input) =>
+    agents.missions.createMission(input),
+  )
+  handle(IPC.missionsUpdate, MissionUpdateRequestSchema, trusted, ({ missionId, patch }) =>
+    agents.missions.updateMission(missionId, patch),
+  )
+  handle(IPC.missionsAction, MissionActionRequestSchema, trusted, ({ missionId, action }) =>
+    agents.missions.missionAction(missionId, action),
+  )
+  handle(IPC.missionsArchive, MissionIdRequestSchema, trusted, ({ missionId }) => {
+    agents.missions.archiveMission(missionId)
+  })
+  handle(IPC.tasksCreate, TaskCreateRequestSchema, trusted, (input) =>
+    agents.missions.createTask(input),
+  )
+  handle(IPC.tasksUpdate, TaskUpdateRequestSchema, trusted, ({ taskId, patch }) =>
+    agents.missions.updateTask(taskId, patch),
+  )
+  handle(IPC.tasksAction, TaskActionRequestSchema, trusted, ({ taskId, action }) =>
+    agents.missions.taskAction(taskId, action),
+  )
+  handle(IPC.tasksRemove, TaskIdRequestSchema, trusted, ({ taskId }) => {
+    agents.missions.removeTask(taskId)
   })
 
   handle(IPC.terminalWrite, TerminalWriteRequestSchema, trusted, ({ employeeId, data }) => {

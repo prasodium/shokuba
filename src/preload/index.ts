@@ -39,6 +39,19 @@ const api: ShokubaApi = {
     stop: (employeeId) => ipcRenderer.invoke(IPC.agentsStop, { employeeId }),
     interrupt: (employeeId) => ipcRenderer.invoke(IPC.agentsInterrupt, { employeeId }),
   },
+  missions: {
+    list: () => ipcRenderer.invoke(IPC.missionsList),
+    create: (input) => ipcRenderer.invoke(IPC.missionsCreate, input),
+    update: (missionId, patch) => ipcRenderer.invoke(IPC.missionsUpdate, { missionId, patch }),
+    action: (missionId, action) => ipcRenderer.invoke(IPC.missionsAction, { missionId, action }),
+    archive: (missionId) => ipcRenderer.invoke(IPC.missionsArchive, { missionId }),
+  },
+  tasks: {
+    create: (input) => ipcRenderer.invoke(IPC.tasksCreate, input),
+    update: (taskId, patch) => ipcRenderer.invoke(IPC.tasksUpdate, { taskId, patch }),
+    action: (taskId, action) => ipcRenderer.invoke(IPC.tasksAction, { taskId, action }),
+    remove: (taskId) => ipcRenderer.invoke(IPC.tasksRemove, { taskId }),
+  },
   terminal: {
     write: (employeeId, data) => ipcRenderer.invoke(IPC.terminalWrite, { employeeId, data }),
     resize: (employeeId, cols, rows) =>
