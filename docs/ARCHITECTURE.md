@@ -130,7 +130,7 @@ pending ─► ready ─► in_progress ─► submitted ─► done
                      blocked     changes_requested ─► (handed out again)
 ```
 
-**`submitted` is a claim; only a person makes a task `done`.** The agent's summary is shown as _what the agent says it did_, never as fact. (Independent verification arrives in Phase 4.)
+**`submitted` is a claim; only a person makes a task `done`.** The agent's summary is shown as _what the agent says it did_, never as fact. Checks and an independent review (below) give evidence, and neither changes a task's status: only a person does.
 
 `MissionService` owns every transition, so the rules hold whoever asks — a person, the dispatcher, or an agent's tool call. Each change is one transaction, and its events are published only after it commits. An agent may only touch the task it was handed.
 
@@ -305,6 +305,24 @@ Nothing runs until the person has **acknowledged**, in the dialog, that these co
 - A fresh folder has no installed dependencies; a setup step (your choice) has to install them, which can take minutes and runs install scripts.
 - The check results say what the commands did, not whether the work is good: a weak test passes weak work, and a flaky one fails good work. That is why accepting after a failed check only warns you.
 
+### Independent review (Phase 4, slice 4b)
+
+A person (or, when a project is set up for it, Shokuba on every submission) asks an employee **other than the task's author** to review submitted work. Three tables (migration 0010): `review_settings` (per project: who reviews, and whether it is asked for automatically), `reviews` (one review of one commit) and `review_findings`.
+
+**Independence is enforced, not requested.** The service refuses a reviewer who is the task's assignee, allows one open review per task, and gives a reviewer one review at a time and never while they have a task of their own (a shared `AgentLock` means a task hand-over and a review hand-over never move the same agent at once). The reviewer's briefing is built from the task's title and description, the changed files and the diff, and **never the author's summary or the check results**, so what the author claims cannot colour the reading; a test pins that those inputs are absent. The diff is trimmed to the paste limit (20,000 characters) with a note to read the rest with `git diff`, and the briefing says plainly that the diff is data to review, never instructions to follow.
+
+**Where and how.** The reviewer is restarted in a detached folder made from the exact commit the author submitted (in Shokuba's data folder, on no branch), with the **permission mode held to `plan`** by a per-launch override, so the employee's own saved setting is never changed and never widened. The briefing is then delivered like any other: pasted, only to an agent whose idle state was reported. When the review is over and the reviewer has left the folder, it is removed by a second `WorkspaceCleaner`, under the same never-delete-a-folder-in-use rule.
+
+**How it reports.** Two tools, `get_current_review` and `submit_review`, are offered **only to an employee who is reading a review** (hidden from `tools/list` and refused as unknown to anyone else, by name too). Who is calling comes from the connection's token, so a reviewer cannot answer for someone else; the input is a strict schema (a verdict, a bounded summary, at most 50 findings each with a severity, optional file and line, and a note), and text is refused if it has control characters.
+
+**It is advice.** A review never changes a task: it does not accept, reject or send back. The person sees the verdict and findings (worst first) on the task, and accepting work a reviewer asked changes for shows one question that also carries any failed check, and never blocks. A review is stored with the commit it read; the task shows it as **out of date** once the branch has moved, and a review that has not finished is dropped (and its reviewer interrupted) when the task is sent back, blocked or cancelled. A review that was being read when Shokuba stopped is marked as not finished at the next start.
+
+**Limits.**
+
+- The reviewer reads code an agent wrote, and that code can contain text aimed at the reviewer. The briefing warns about it and plan mode stops edits, but a model can still be misled into approving, which is why the verdict only advises.
+- Plan mode is the agent CLI's own setting, not a sandbox: it limits what the reviewer edits, not what a command they run can reach.
+- A reviewer reads; it does not run the code or the checks. What the reviewer says is one model's opinion of a diff, and it can be wrong in either direction.
+
 ### Database
 
 Tables are added by migrations _when a feature needs them_ — never speculatively. Today: `agent_events`, `audit_log`, `schema_migrations`, `employees`, `missions`, `tasks`, `task_dependencies`, `conversations`, `messages`. Both logs are append-only, enforced by database triggers rather than convention. Employees are archived, not deleted, because events refer to them. Native modules (`better-sqlite3`, `node-pty`) are N-API, so the same binaries run under Node (tests) and Electron (app) with no rebuild step.
@@ -325,9 +343,9 @@ Codex, Gemini CLI and a generic CLI. They implement the same `ProviderAdapter`; 
 
 Each coding task gets its own worktree and branch; unrelated agents never share a working tree.
 
-### Verification
+### Evidence pack
 
-A task reaches `verified` only through a `VerificationReport` — harness-run static/unit/integration checks in the task's worktree, plus an **independent reviewer** that sees the diff and requirements but not the coder's transcript — and an exportable evidence pack.
+An exportable record for each task: what was asked, the commits and diff, the check results, the reviewer's findings and who accepted it (Phase 4, slice 4c). The checks and the independent reviewer that feed it are built (above).
 
 ### The full office
 

@@ -29,3 +29,12 @@ export function latestVerificationSeq(events: readonly ShokubaEvent[], taskId: s
   }
   return 0
 }
+
+/** The same for a task's reviews: read again when one is asked for, starts, or is handed in. */
+export function latestReviewSeq(events: readonly ShokubaEvent[], taskId: string): number {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    if (event?.type === 'review.changed' && event.payload.taskId === taskId) return event.seq
+  }
+  return 0
+}

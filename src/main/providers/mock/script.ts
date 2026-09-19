@@ -14,7 +14,8 @@
  * runaway exchange between two agents. Typing "loop" makes it repeat one call until Shokuba's
  * circuit breaker refuses it (and then stop, as a sensible agent would); "stubborn" keeps
  * trying regardless, until it is interrupted. "plan" makes a demo manager draft a small mission
- * for the first person who reports to them, using the manager's planning tools. When Shokuba refuses a call it does not make it,
+ * for the first person who reports to them, using the manager's planning tools. Asked to review
+ * someone's work it reads the request back and hands in a small review. When Shokuba refuses a call it does not make it,
  * and reports nothing more about it, exactly as Claude Code does. Plain CommonJS so it runs
  * under Node and Electron-as-Node alike.
  */
@@ -178,6 +179,32 @@ async function runPlan() {
   say('[demo] the draft is ready for the person to review')
 }
 
+// A review: read the request back the way a reviewer would, then hand in what was found.
+async function runReview() {
+  say('[demo] reading the change to review...')
+  await sleep(stepMs)
+  const current = await useShokubaTool('get_current_review', {})
+  if (current.startsWith('You have no review')) {
+    say('[demo] ' + current)
+    return
+  }
+  const id = 'toolu_' + Math.random().toString(36).slice(2, 10)
+  const input = { file_path: cwd + '/README.md' }
+  await report({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: input, tool_use_id: id })
+  await sleep(stepMs)
+  await report({ hook_event_name: 'PostToolUse', tool_name: 'Read', tool_input: input, tool_use_id: id, duration_ms: stepMs })
+  say('[demo] handing in the review')
+  const answer = await useShokubaTool('submit_review', {
+    verdict: 'approve',
+    summary: 'Demo review (simulated): read the change and found nothing that stops it being accepted.',
+    findings: [
+      { severity: 'minor', file: 'src/index.ts', line: 1, note: 'Demo finding (simulated): a short comment here would help the next reader.' },
+      { severity: 'nit', note: 'Demo finding (simulated): a nit with no file attached.' },
+    ],
+  })
+  say('[demo] ' + answer)
+}
+
 async function runTurn(input) {
   busy = true
   aborted = false
@@ -185,6 +212,8 @@ async function runTurn(input) {
   const typed = input.trim()
   if (input.startsWith('[Shokuba message]')) {
     await handleMessage(input)
+  } else if (input.startsWith('[Shokuba review]')) {
+    await runReview()
   } else if (typed === 'loop' || typed === 'stubborn') {
     await runLoop(typed === 'stubborn')
   } else if (typed === 'plan') {

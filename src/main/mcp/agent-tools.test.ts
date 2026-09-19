@@ -1,16 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { MAX_QUEUED_PER_RECIPIENT } from '@shared/messages'
 import type { Mission } from '@shared/missions'
+import type { Review, ReviewSubmit } from '@shared/reviews'
 import { createMissionFixture, type MissionFixture } from '../missions/fixtures'
 import {
   AGENT_TOOL_NAMES,
   AGENT_TOOL_PERMISSIONS,
   MANAGER_TOOL_NAMES,
   MANAGER_TOOL_PERMISSIONS,
+  REVIEW_TOOL_NAMES,
+  REVIEW_TOOL_PERMISSIONS,
   createAgentTools,
   type AgentToolContext,
 } from './agent-tools'
 import { MessageService } from '../messages/service'
+import { ReviewError } from '../reviews/service'
 import { McpEndpoint } from './server'
 
 let fx: MissionFixture
@@ -65,7 +69,7 @@ const handOut = (title: string, assigneeId: string) => {
 }
 
 describe('agent tools', () => {
-  it("are the five every agent has, plus a manager's, under the shokuba server name", () => {
+  it("are the five every agent has, plus a manager's and a reviewer's, under the shokuba server name", () => {
     expect([...AGENT_TOOL_NAMES]).toEqual([
       'get_current_task',
       'submit_task',
@@ -82,13 +86,16 @@ describe('agent tools', () => {
     ])
     expect(MANAGER_TOOL_PERMISSIONS).toEqual(MANAGER_TOOL_NAMES.map((n) => `mcp__shokuba__${n}`))
     const names = tools().map((tool) => tool.name)
-    expect(names).toEqual([...AGENT_TOOL_NAMES, ...MANAGER_TOOL_NAMES])
+    expect(REVIEW_TOOL_PERMISSIONS).toEqual(REVIEW_TOOL_NAMES.map((n) => `mcp__shokuba__${n}`))
+    expect(names).toEqual([...AGENT_TOOL_NAMES, ...MANAGER_TOOL_NAMES, ...REVIEW_TOOL_NAMES])
   })
 
-  it("offer a manager's tools to managers only: every one of them is gated, and no other is", () => {
+  it("offer the manager's and the reviewer's tools only to those they are for: each is gated, and no other is", () => {
     for (const tool of tools()) {
-      const isManagerTool = (MANAGER_TOOL_NAMES as readonly string[]).includes(tool.name)
-      expect(typeof tool.visibleTo === 'function', tool.name).toBe(isManagerTool)
+      const gated =
+        (MANAGER_TOOL_NAMES as readonly string[]).includes(tool.name) ||
+        (REVIEW_TOOL_NAMES as readonly string[]).includes(tool.name)
+      expect(typeof tool.visibleTo === 'function', tool.name).toBe(gated)
     }
   })
 
@@ -651,5 +658,130 @@ describe('saving work when a task is submitted', () => {
     expect(isError).toBe(true)
     expect(text).toMatch(/no task/i)
     expect(seen).toEqual([])
+  })
+})
+
+describe("a reviewer's tools", () => {
+  const reading = new Set<string>()
+  const handedIn: Array<{ id: string; input: ReviewSubmit }> = []
+  let refuse: ReviewError | null = null
+
+  beforeEach(() => {
+    reading.clear()
+    handedIn.length = 0
+    refuse = null
+    mcp = new McpEndpoint(
+      { name: 'shokuba', version: 't' },
+      createAgentTools(fx.missions, messages, team, {
+        reviews: {
+          hasActive: (id) => reading.has(id),
+          current: async (id) => (reading.has(id) ? '[Shokuba review]\nRead this.' : null),
+          submit: (id, input) => {
+            if (refuse) throw refuse
+            handedIn.push({ id, input })
+            return {
+              verdict: input.verdict,
+              findings: input.findings ?? [],
+            } as unknown as Review
+          },
+        },
+      }),
+    )
+  })
+
+  const toolsFor = async (employeeId: string): Promise<string[]> => {
+    const reply = await mcp.handle(
+      { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+      { employeeId, source: 'reported' },
+    )
+    return (reply?.result as { tools: Array<{ name: string }> }).tools.map((t) => t.name)
+  }
+
+  it('are offered only while that employee is reading a review', async () => {
+    expect(await toolsFor('mika')).toEqual([...AGENT_TOOL_NAMES])
+    reading.add('mika')
+    expect(await toolsFor('mika')).toEqual([...AGENT_TOOL_NAMES, ...REVIEW_TOOL_NAMES])
+    expect(await toolsFor('ren')).toEqual([...AGENT_TOOL_NAMES])
+    reading.delete('mika')
+    expect(await toolsFor('mika')).toEqual([...AGENT_TOOL_NAMES])
+  })
+
+  it('cannot be called by anyone else, even by name', async () => {
+    reading.add('mika')
+    for (const name of REVIEW_TOOL_NAMES) {
+      const reply = await mcp.handle(
+        { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: {} } },
+        { employeeId: 'ren', source: 'reported' },
+      )
+      expect(reply?.error?.message, name).toBe(`Unknown tool "${name}"`)
+    }
+    expect(handedIn).toEqual([])
+  })
+
+  it('show the reviewer their review again', async () => {
+    reading.add('mika')
+    const { text, isError } = await callTool('mika', 'get_current_review')
+    expect(isError).toBe(false)
+    expect(text).toBe('[Shokuba review]\nRead this.')
+  })
+
+  it('hand in a review as the caller', async () => {
+    reading.add('mika')
+    const { text, isError } = await callTool('mika', 'submit_review', {
+      verdict: 'request_changes',
+      summary: 'Does not validate the email.',
+      findings: [{ severity: 'major', file: 'login.ts', line: 3, note: 'No validation.' }],
+    })
+    expect(isError).toBe(false)
+    expect(text).toBe(
+      'Review handed in: request changes, with 1 finding. A person will read it. You are done; do not change anything.',
+    )
+    expect(handedIn.map((h) => h.id)).toEqual(['mika'])
+  })
+
+  it('have no way to hand in a review as someone else', async () => {
+    reading.add('mika')
+    const { isError } = await callTool('mika', 'submit_review', {
+      verdict: 'approve',
+      summary: 'Fine.',
+      reviewerId: 'ren',
+    })
+    expect(isError).toBe(true)
+    expect(handedIn).toEqual([])
+  })
+
+  it('say "0 findings" for an approval with nothing to report', async () => {
+    reading.add('mika')
+    const { text } = await callTool('mika', 'submit_review', {
+      verdict: 'approve',
+      summary: 'Fine.',
+    })
+    expect(text).toContain('Review handed in: approve, with 0 findings.')
+  })
+
+  it('turn away something that is not a proper review before it reaches the service', async () => {
+    reading.add('mika')
+    const bad = await callTool('mika', 'submit_review', { verdict: 'lgtm', summary: 'ok' })
+    expect(bad.isError).toBe(true)
+    expect(handedIn).toEqual([])
+  })
+
+  it('tell the model why the service refused, in words it can act on', async () => {
+    reading.add('mika')
+    refuse = new ReviewError('no-review', 'You have no review in progress.')
+    const { text, isError } = await callTool('mika', 'submit_review', {
+      verdict: 'approve',
+      summary: 'Fine.',
+    })
+    expect(isError).toBe(true)
+    expect(text).toBe('You have no review in progress.')
+  })
+
+  it('are not offered at all when reviews are not switched on', async () => {
+    mcp = new McpEndpoint(
+      { name: 'shokuba', version: 't' },
+      createAgentTools(fx.missions, messages, team),
+    )
+    expect(await toolsFor('mika')).toEqual([...AGENT_TOOL_NAMES])
   })
 })

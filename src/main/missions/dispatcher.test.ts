@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Mission } from '@shared/missions'
 import { createLogger } from '../logging/logger'
 import { createMissionFixture, type MissionFixture } from './fixtures'
+import { AgentLock } from '../agents/lock'
 import { Dispatcher, type DeliveryPort, type WorkspacePort } from './dispatcher'
 
 /** A stand-in for the agent runtime: which agents are deliverable, and what was sent. */
@@ -370,5 +371,78 @@ describe('giving each task its own working folder', () => {
     expect(located.log).toEqual(['deliver'])
     expect(status(t.id)).toBe('in_progress')
     plain.stop()
+  })
+})
+
+describe('sharing agents with something else that moves them', () => {
+  it('leaves an agent alone while something else holds it, and takes it when it is free', async () => {
+    const lock = new AgentLock()
+    const shared = new Dispatcher({
+      missions: fx.missions,
+      delivery,
+      events: fx.services.events,
+      logger: createLogger(() => {}),
+      now: () => clock,
+      lock,
+    })
+    const t = add('Wait for me', 'mika')
+    delivery.ready.add('mika')
+    run()
+    lock.acquire('mika') // a review is moving this agent
+    await shared.tick()
+    expect(status(t.id)).toBe('ready')
+    expect(delivery.delivered).toEqual([])
+
+    lock.release('mika')
+    await shared.tick()
+    expect(status(t.id)).toBe('in_progress')
+    shared.stop()
+  })
+
+  it('lets go of the agent when the hand-over is done, and when it fails', async () => {
+    const lock = new AgentLock()
+    const shared = new Dispatcher({
+      missions: fx.missions,
+      delivery,
+      events: fx.services.events,
+      logger: createLogger(() => {}),
+      now: () => clock,
+      lock,
+    })
+    const t = add('First try fails', 'mika')
+    delivery.ready.add('mika')
+    delivery.failWith = 'the terminal is gone'
+    run()
+    await shared.tick()
+    expect(status(t.id)).toBe('ready')
+    expect(lock.isHeld('mika')).toBe(false)
+
+    delivery.failWith = null
+    clock += 6_000
+    await shared.tick()
+    expect(status(t.id)).toBe('in_progress')
+    expect(lock.isHeld('mika')).toBe(false)
+    shared.stop()
+  })
+
+  it('does not hand a task to an agent that is busy with something else', async () => {
+    let busy = true
+    const shared = new Dispatcher({
+      missions: fx.missions,
+      delivery,
+      events: fx.services.events,
+      logger: createLogger(() => {}),
+      now: () => clock,
+      busy: () => busy,
+    })
+    const t = add('Not now', 'mika')
+    delivery.ready.add('mika')
+    run()
+    await shared.tick()
+    expect(status(t.id)).toBe('ready')
+    busy = false
+    await shared.tick()
+    expect(status(t.id)).toBe('in_progress')
+    shared.stop()
   })
 })

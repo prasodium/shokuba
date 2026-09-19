@@ -14,6 +14,7 @@ import {
   MissionIdRequestSchema,
   MissionUpdateRequestSchema,
   RepoRootRequestSchema,
+  ReviewRequestSchema,
   TaskActionRequestSchema,
   TaskCreateRequestSchema,
   TaskIdRequestSchema,
@@ -25,6 +26,7 @@ import {
   type TerminalChunk,
 } from '@shared/ipc/api'
 import { BreakerActionRequestSchema } from '@shared/breaker'
+import { ReviewSettingsSaveSchema } from '@shared/reviews'
 import { CheckSettingsSaveSchema } from '@shared/verification'
 import { IPC } from '@shared/ipc/channels'
 import type { Services } from '../bootstrap'
@@ -183,6 +185,16 @@ export function registerIpc(
   )
   handle(IPC.checksRun, TaskIdRequestSchema, trusted, ({ taskId }) => {
     agents.verification.runNow(taskId)
+  })
+  handle(IPC.reviewsTask, TaskIdRequestSchema, trusted, ({ taskId }) =>
+    agents.reviews.forTask(taskId),
+  )
+  handle(IPC.reviewsRequest, ReviewRequestSchema, trusted, ({ taskId, reviewerId }) =>
+    agents.reviews.request(taskId, reviewerId, 'manual'),
+  )
+  handle(IPC.reviewsSettingsSave, ReviewSettingsSaveSchema, trusted, (input) => {
+    knownProject(input.repoRoot)
+    return agents.reviews.saveSettings(input)
   })
   handle(IPC.tasksRemove, TaskIdRequestSchema, trusted, ({ taskId }) => {
     agents.missions.removeTask(taskId)

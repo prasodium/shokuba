@@ -52,20 +52,25 @@ export function runTone(run: CheckRun): 'good' | 'bad' | 'neutral' {
 }
 
 /**
- * What to say before a person accepts work whose checks did not pass, or null if there is nothing
- * to warn about. It is a warning and never a block: the person decides, and checks can be wrong
+ * What gives pause before a person accepts work whose checks did not pass, or null if there is
+ * nothing. It only ever informs and never blocks: the person decides, and checks can be wrong
  * (a flaky test, a missing dependency) as easily as the work.
  */
-export function acceptWarning(verification: TaskVerification): string | null {
+export function acceptConcern(verification: TaskVerification): string | null {
   const run = verification.latest
   if (!run) return null
-  if (run.state === 'failed') {
-    return `${runHeadline(run)}.\n\nAccept the work anyway?`
-  }
-  if (run.state === 'error') {
-    return `${runHeadline(run)}, so this work has not been checked.\n\nAccept it anyway?`
-  }
+  if (run.state === 'failed') return `${runHeadline(run)}.`
+  if (run.state === 'error') return `${runHeadline(run)}, so this work has not been checked.`
   return null
+}
+
+/**
+ * The one question put to the person before accepting, made from whatever gave them pause (the
+ * checks, a reviewer), or null when nothing did. Accepting is never blocked, only asked about.
+ */
+export function acceptQuestion(concerns: ReadonlyArray<string | null>): string | null {
+  const present = concerns.filter((concern): concern is string => concern !== null)
+  return present.length === 0 ? null : `${present.join('\n\n')}\n\nAccept the work anyway?`
 }
 
 /** Whether the checks can be run again by hand right now. */

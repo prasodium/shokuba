@@ -1,19 +1,22 @@
 import { promises as fs } from 'node:fs'
 import type { EventType, ShokubaEvent } from '@shared/events/schema'
-import type { Task } from '@shared/missions'
 import type { EventStore } from '../events/store'
 import { describeError, type Logger } from '../logging/logger'
 import { isPathInside, type PlatformId } from '../platform'
 
-/** The part of the workspace service the cleaner needs. */
+/**
+ * What the cleaner needs from whoever owns working folders (a task's, a review's): which folders
+ * are due to be removed, and a way to remove one. `key` says which owner a folder belongs to.
+ */
 export interface Removals {
-  pendingRemoval(): Array<{ task: Task; folder: string }>
-  removeFolder(task: Task): Promise<boolean>
+  pendingRemoval(): Array<{ key: string; folder: string }>
+  removeFolder(key: string): Promise<boolean>
 }
 
 /** Events after which a folder might have become removable. */
 const TRIGGERS: ReadonlySet<EventType> = new Set([
   'task.status.changed',
+  'review.changed',
   'agent.started',
   'agent.stopped',
 ])
@@ -86,7 +89,7 @@ export class WorkspaceCleaner {
   private async pass(): Promise<number> {
     const { workspaces, platform } = this.deps
     let removed = 0
-    for (const { task, folder } of workspaces.pendingRemoval()) {
+    for (const { key, folder } of workspaces.pendingRemoval()) {
       if (this.stopped) break
       // Re-read who is running each time: an agent may have started or stopped since the last one.
       // The same place can be spelled two ways (a symbolic link, a short Windows name), and the
@@ -97,7 +100,7 @@ export class WorkspaceCleaner {
         .some((cwd) => isPathInside(folder, cwd, platform) || isPathInside(real, cwd, platform))
       if (occupied) continue
       try {
-        if (await workspaces.removeFolder(task)) removed += 1
+        if (await workspaces.removeFolder(key)) removed += 1
       } catch (error) {
         this.log(error)
       }

@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { CheckResult, CheckRun, TaskVerification } from '@shared/verification'
-import { acceptWarning, canRunAgain, durationText, runHeadline, runTone } from './summary'
+import {
+  acceptConcern,
+  acceptQuestion,
+  canRunAgain,
+  durationText,
+  runHeadline,
+  runTone,
+} from './summary'
 
 const result = (patch: Partial<CheckResult>): CheckResult => ({
   position: 0,
@@ -98,28 +105,44 @@ describe('runTone', () => {
   })
 })
 
-describe('acceptWarning', () => {
+describe('acceptConcern', () => {
   it('says nothing when the checks passed, are running, or have not been run', () => {
-    expect(acceptWarning(verification(run({ state: 'passed' })))).toBeNull()
-    expect(acceptWarning(verification(run({ state: 'running' })))).toBeNull()
-    expect(acceptWarning(verification(run({ state: 'cancelled' })))).toBeNull()
-    expect(acceptWarning(verification(null))).toBeNull()
+    expect(acceptConcern(verification(run({ state: 'passed' })))).toBeNull()
+    expect(acceptConcern(verification(run({ state: 'running' })))).toBeNull()
+    expect(acceptConcern(verification(run({ state: 'cancelled' })))).toBeNull()
+    expect(acceptConcern(verification(null))).toBeNull()
   })
 
-  it('warns, and only warns, when the checks did not pass', () => {
-    const warning = acceptWarning(
+  it('names what did not pass', () => {
+    const concern = acceptConcern(
       verification(
         run({ state: 'failed', results: [result({ name: 'Test', state: 'failed', exitCode: 1 })] }),
       ),
     )
-    expect(warning).toBe('1 of 1 checks did not pass: Test.\n\nAccept the work anyway?')
+    expect(concern).toBe('1 of 1 checks did not pass: Test.')
   })
 
-  it('warns that work has not been checked when the checks could not run', () => {
-    const warning = acceptWarning(
+  it('says the work has not been checked when the checks could not run', () => {
+    const concern = acceptConcern(
       verification(run({ state: 'error', note: 'The task’s working folder is gone.' })),
     )
-    expect(warning).toContain('so this work has not been checked')
+    expect(concern).toContain('so this work has not been checked')
+  })
+})
+
+describe('acceptQuestion', () => {
+  it('asks nothing when nothing gave pause', () => {
+    expect(acceptQuestion([])).toBeNull()
+    expect(acceptQuestion([null, null])).toBeNull()
+  })
+
+  it('asks once, whatever the number of concerns, and only ever asks', () => {
+    expect(acceptQuestion(['Two checks failed.'])).toBe(
+      'Two checks failed.\n\nAccept the work anyway?',
+    )
+    expect(acceptQuestion(['Two checks failed.', null, 'Sora asked for changes.'])).toBe(
+      'Two checks failed.\n\nSora asked for changes.\n\nAccept the work anyway?',
+    )
   })
 })
 

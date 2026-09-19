@@ -226,6 +226,59 @@ describe('a task’s working folder', () => {
   })
 })
 
+describe('a folder to read the work in', () => {
+  it('is the code at a commit, on no branch, and leaves your checkout alone', async () => {
+    const folder = await startTask('d1')
+    write(folder, 'a.txt', 'one\nTWO\nthree\n')
+    const commit = (await git.commitAll(repo, folder, 'work', 'Ren')) as string
+    const reading = git.worktreePath(repo, 'review-d1')
+    await git.createDetachedWorktree(repo, reading, commit)
+
+    expect(read(reading, 'a.txt')).toBe('one\nTWO\nthree\n')
+    expect(sh(reading, 'rev-parse', 'HEAD')).toBe(commit)
+    expect(sh(reading, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('HEAD') // detached: no branch
+    expect(sh(repo, 'status', '--short')).toBe('')
+    expect(sh(repo, 'branch', '--list', '*review*')).toBe('')
+  })
+
+  it('cannot change the task’s work, whatever is done in it', async () => {
+    const folder = await startTask('d2')
+    write(folder, 'a.txt', 'one\nTWO\nthree\n')
+    const commit = (await git.commitAll(repo, folder, 'work', 'Ren')) as string
+    const reading = git.worktreePath(repo, 'review-d2')
+    await git.createDetachedWorktree(repo, reading, commit)
+
+    write(reading, 'a.txt', 'a reviewer scribbled here\n')
+    sh(reading, 'add', '-A')
+    sh(reading, 'commit', '-qm', 'scribble')
+    // The task's branch and its own folder are untouched.
+    expect(sh(repo, 'rev-parse', taskBranch('d2'))).toBe(commit)
+    expect(read(folder, 'a.txt')).toBe('one\nTWO\nthree\n')
+  })
+
+  it('takes only a full commit id or one of its own branches, and only inside its data folder', async () => {
+    const commit = baseCommit()
+    for (const bad of ['HEAD', 'main', '--force']) {
+      const error = await failure(
+        git.createDetachedWorktree(repo, git.worktreePath(repo, 'review-d3'), bad),
+      )
+      expect(error.code, bad).toBe('unsafe')
+    }
+    expect(
+      (await failure(git.createDetachedWorktree(repo, join(dir, 'elsewhere'), commit))).code,
+    ).toBe('unsafe')
+    expect(existsSync(join(dir, 'elsewhere'))).toBe(false)
+  })
+
+  it('is removed like any working folder', async () => {
+    const reading = git.worktreePath(repo, 'review-d4')
+    await git.createDetachedWorktree(repo, reading, baseCommit())
+    await git.removeWorktree(repo, reading)
+    expect(existsSync(reading)).toBe(false)
+    expect(sh(repo, 'worktree', 'list')).not.toContain('review-d4')
+  })
+})
+
 describe('committing a task’s work', () => {
   it('says nothing changed when nothing did', async () => {
     const folder = await startTask('c1')

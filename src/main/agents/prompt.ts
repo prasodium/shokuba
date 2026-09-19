@@ -1,4 +1,4 @@
-const MAX_PROMPT_CHARS = 20_000
+export const MAX_PROMPT_CHARS = 20_000
 
 /** The escape character that starts terminal control sequences. */
 const ESC = String.fromCharCode(0x1b)

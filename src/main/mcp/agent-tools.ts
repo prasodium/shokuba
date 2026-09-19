@@ -5,6 +5,8 @@ import { HUMAN, MESSAGE_KINDS } from '@shared/messages'
 import { MessageError, type MessageService } from '../messages/service'
 import { ManagerPlanning } from '../missions/planning'
 import { MissionError, type MissionService } from '../missions/service'
+import { ReviewError } from '../reviews/service'
+import { ReviewSubmitSchema, type Review, type ReviewSubmit } from '@shared/reviews'
 import { defineTool, McpToolError, type McpTool } from './server'
 
 /** The name agents see Shokuba under; tools appear as `mcp__shokuba__<tool>`. */
@@ -26,12 +28,17 @@ export const MANAGER_TOOL_NAMES = [
   'team_status',
 ] as const
 
+/** Tools only someone who is reading a review is offered: seeing it again, and handing it in. */
+export const REVIEW_TOOL_NAMES = ['get_current_review', 'submit_review'] as const
+
 /**
  * The tools an agent may always use, even paused: they are how it hands work back to a person.
  * Everything else can be denied by the circuit breaker.
  */
 export const HAND_BACK_TOOLS: ReadonlySet<string> = new Set(
-  ['get_current_task', 'submit_task', 'report_blocked'].map((name) => `mcp__shokuba__${name}`),
+  ['get_current_task', 'submit_task', 'report_blocked', ...REVIEW_TOOL_NAMES].map(
+    (name) => `mcp__shokuba__${name}`,
+  ),
 )
 
 /** Full names, as Claude Code's permission rules refer to them. */
@@ -41,6 +48,14 @@ export const AGENT_TOOL_PERMISSIONS = AGENT_TOOL_NAMES.map(
 
 /** A manager's tools too, pre-approved so drafting a plan never stops at a permission prompt. */
 export const MANAGER_TOOL_PERMISSIONS = MANAGER_TOOL_NAMES.map(
+  (name) => `mcp__${SHOKUBA_MCP_SERVER}__${name}`,
+)
+
+/**
+ * Pre-approved for everyone, since anyone may be asked to review; the tools are hidden from, and
+ * refused to, anyone who is not reading a review at that moment.
+ */
+export const REVIEW_TOOL_PERMISSIONS = REVIEW_TOOL_NAMES.map(
   (name) => `mcp__${SHOKUBA_MCP_SERVER}__${name}`,
 )
 
@@ -67,7 +82,11 @@ function explain<T>(work: () => T): T {
   try {
     return work()
   } catch (error) {
-    if (error instanceof MissionError || error instanceof MessageError) {
+    if (
+      error instanceof MissionError ||
+      error instanceof MessageError ||
+      error instanceof ReviewError
+    ) {
       throw new McpToolError(error.message)
     }
     throw error
@@ -107,7 +126,16 @@ function managerOf(team: Team, employeeId: string): TeamMember | undefined {
  * sends while answering a message counts as a reply, so a runaway exchange is stopped.
  */
 /** Things that should happen because an agent used a tool, kept out of the tools themselves. */
+/** What the review tools need from the review service. */
+export interface ReviewsPort {
+  hasActive(employeeId: string): boolean
+  current(employeeId: string): Promise<string | null>
+  submit(employeeId: string, input: ReviewSubmit): Review
+}
+
 export interface AgentToolHooks {
+  /** Present when reviews are available; the review tools are offered only while one is being read. */
+  reviews?: ReviewsPort
   /**
    * An agent is about to submit a task: save its work first, so that by the time the task shows
    * as submitted the work already exists. A failure here never fails the tool.
@@ -387,6 +415,33 @@ export function createAgentTools(
       input: z.object({}),
       visibleTo: managerOnly,
       handler: (_args, ctx) => explain(() => planning.teamStatus(ctx.employeeId)),
+    }),
+
+    // ---------- a reviewer's tools ----------
+
+    defineTool<AgentToolContext, z.ZodObject<Record<string, never>>>({
+      name: 'get_current_review',
+      description:
+        'Shows the review you were asked to do again: what was asked for, where the code is, and the change. Only available while you are reviewing something.',
+      input: z.object({}),
+      visibleTo: (ctx) => hooks.reviews?.hasActive(ctx.employeeId) === true,
+      handler: async (_args, ctx) =>
+        (await hooks.reviews?.current(ctx.employeeId)) ?? 'You have no review in progress.',
+    }),
+
+    defineTool({
+      name: 'submit_review',
+      description:
+        'Hand in your review of the work you were asked to read. Give a verdict (approve, request_changes or comment), a short summary, and your findings: each with a severity (blocker, major, minor or nit), the file and line if you can, and what is wrong. Report only what you actually found. A person reads it and decides; it does not accept or reject anything by itself.',
+      input: ReviewSubmitSchema,
+      visibleTo: (ctx) => hooks.reviews?.hasActive(ctx.employeeId) === true,
+      handler: (args, ctx) =>
+        explain(() => {
+          if (!hooks.reviews) throw new McpToolError('Reviews are not available.')
+          const review = hooks.reviews.submit(ctx.employeeId, args)
+          const count = review.findings.length
+          return `Review handed in: ${review.verdict?.replace('_', ' ')}, with ${count} finding${count === 1 ? '' : 's'}. A person will read it. You are done; do not change anything.`
+        }),
     }),
   ]
 }

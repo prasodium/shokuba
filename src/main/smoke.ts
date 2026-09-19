@@ -101,6 +101,8 @@ export async function runSmokeTest(): Promise<SmokeReport> {
 
     await run('verification-pipeline', () => verificationPipeline(platform, dir, logger))
 
+    await run('review-pipeline', () => reviewPipeline(platform, dir, logger))
+
     await run('locate-git', async () => {
       const found = await findExecutable('git', { platform, env: process.env, home: homedir() })
       if (!found) throw new Error('git not found on PATH or in common install locations')
@@ -1084,6 +1086,144 @@ async function verificationPipeline(
       : ''
     const message = error instanceof Error ? error.message : String(error)
     throw new Error(`${message} [terminal: ${tail}]`, { cause: error })
+  } finally {
+    await agents.close()
+    services.close()
+  }
+}
+
+/**
+ * An independent review on real processes: one demo agent does a task and submits it, and a
+ * different demo agent is restarted in a folder of its own that holds the code as submitted, is
+ * handed the review, reads it and hands in its findings through the real `submit_review` tool.
+ * The task itself is left exactly where it was (the review is advice), your checkout and main
+ * branch are untouched, and the reviewer's folder is removed once they have left it. Only the
+ * "AI" is scripted.
+ */
+async function reviewPipeline(
+  platform: ReturnType<typeof toPlatformId>,
+  dir: string,
+  logger: ReturnType<typeof createLogger>,
+): Promise<string> {
+  const repo = join(dir, 'review-repo')
+  mkdirSync(repo)
+  const plain = (...args: string[]): string =>
+    execFileSync(
+      'git',
+      [
+        '-c',
+        'user.name=Setup',
+        '-c',
+        'user.email=setup@example.invalid',
+        '-c',
+        'commit.gpgsign=false',
+        '-c',
+        'core.fsmonitor=false',
+        ...args,
+      ],
+      { cwd: repo, encoding: 'utf8', windowsHide: true },
+    ).trim()
+  plain('init', '-q', '-b', 'main')
+  writeFileSync(join(repo, 'a.txt'), 'one\n')
+  plain('add', '-A')
+  plain('commit', '-qm', 'base')
+  const mainBefore = plain('rev-parse', 'main')
+
+  const services = createServices({
+    dataDir: join(dir, 'review-pipeline'),
+    version: 'smoke',
+    platform,
+    logger,
+  })
+  const agents = await createAgentServices(services, {
+    platform,
+    env: process.env,
+    home: homedir(),
+    providers: new ProviderRegistry([createMockAdapter({ stepMs: 30 })]),
+    gracefulStopMs: 2_000,
+  })
+
+  let reviewerId = ''
+  try {
+    const hire = async (name: string) => {
+      const employee = await agents.employees.create({
+        name,
+        role: 'Engineer',
+        providerId: 'mock',
+        workingDirectory: repo,
+      })
+      await agents.runtime.start(employee)
+      await waitFor(
+        () => agents.runtime.deliveryBlocker(employee.id) === null,
+        `${name} to report in`,
+        20_000,
+      )
+      return employee
+    }
+    const author = await hire('Ada')
+    const reviewer = await hire('Bo')
+    reviewerId = reviewer.id
+
+    const mission = agents.missions.createMission({ title: 'Review smoke' })
+    const task = agents.missions.createTask({
+      missionId: mission.id,
+      title: 'Write the notes',
+      assigneeId: author.id,
+    })
+    const statusOf = (): string | undefined => agents.missions.getTask(task.id)?.status
+    agents.missions.missionAction(mission.id, 'run')
+    await waitFor(() => statusOf() === 'submitted', 'the task to be submitted', 40_000)
+    const authorFolder = agents.runtime.cwdOf(author.id) ?? ''
+    const submitted = plain('rev-parse', `shokuba/task/${task.id}`)
+
+    // 1. Ask a different employee to review it; the author cannot be the one.
+    let refused = false
+    try {
+      await agents.reviews.request(task.id, author.id, 'manual')
+    } catch {
+      refused = true
+    }
+    if (!refused) throw new Error('the author was allowed to review their own work')
+    await agents.reviews.request(task.id, reviewer.id, 'manual')
+
+    // 2. The reviewer was restarted in a folder of its own, reads the review and hands it in.
+    let latest = (await agents.reviews.forTask(task.id)).latest
+    for (let waited = 0; waited < 60_000 && latest?.state !== 'submitted'; waited += 100) {
+      if (latest?.state === 'error' || latest?.state === 'cancelled') break
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      latest = (await agents.reviews.forTask(task.id)).latest
+    }
+    if (latest?.state !== 'submitted') {
+      throw new Error(`the review did not finish: ${JSON.stringify(latest)}`)
+    }
+    if (latest.reviewerId !== reviewer.id) throw new Error('someone else reviewed it')
+    if (latest.commit !== submitted) throw new Error('the review is of a different commit')
+    if (latest.verdict !== 'approve' || latest.findings.length !== 2) {
+      throw new Error(`unexpected review: ${JSON.stringify(latest)}`)
+    }
+    const readingFolder = agents.runtime.cwdOf(reviewer.id) ?? ''
+    if (!agents.runtime.replay(reviewer.id).data.includes('working in: review-')) {
+      throw new Error('the reviewer was not started in a folder of its own')
+    }
+    if (readingFolder === authorFolder) throw new Error('the reviewer read in the author’s folder')
+
+    // 3. It is advice: the task is exactly where it was, and nothing of yours moved.
+    if (statusOf() !== 'submitted') throw new Error(`the review moved the task to ${statusOf()}`)
+    if (plain('rev-parse', 'main') !== mainBefore) throw new Error('main moved')
+    if (plain('status', '--short') !== '') throw new Error('your checkout was changed')
+
+    // 4. Once the reviewer has left, their folder goes and the author's stays.
+    if (!existsSync(readingFolder)) throw new Error('the folder went while the reviewer was in it')
+    await agents.runtime.stop(reviewer.id)
+    await waitFor(() => !existsSync(readingFolder), 'the reviewer’s folder to be removed', 20_000)
+    if (!existsSync(authorFolder)) throw new Error('the author’s folder was removed')
+    return 'a different demo agent was restarted in a folder of its own at the submitted commit, read the review and handed in its findings; the task stayed as it was, your checkout and main were untouched, and the reviewer’s folder was removed once they left'
+  } catch (error) {
+    const tail = reviewerId
+      ? JSON.stringify(agents.runtime.replay(reviewerId).data.slice(-300))
+      : ''
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`${message} [reviewer terminal: ${tail}]`, { cause: error })
   } finally {
     await agents.close()
     services.close()

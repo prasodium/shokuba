@@ -212,6 +212,19 @@ describe('AgentRuntime.start', () => {
     expect(agents.runtime.cwdOf(mika.id)).toBe(workdir)
   })
 
+  it('can hold one launch to a stricter permission mode, without changing the employee', async () => {
+    const mika = await employee({ permissionMode: 'default' })
+    await agents.runtime.start(mika, { permissionMode: 'plan' })
+    expect(launches[0]?.employee.permissionMode).toBe('plan')
+    // Nothing about the employee changed, and the next launch uses their own setting again.
+    expect(mika.permissionMode).toBe('default')
+    const stopping = agents.runtime.stop(mika.id)
+    spawned[0]?.pty.exit(0)
+    await stopping
+    await agents.runtime.start(mika)
+    expect(launches[1]?.employee.permissionMode).toBe('default')
+  })
+
   it("writes the adapter's files into a private run directory", async () => {
     const mika = await employee()
     await agents.runtime.start(mika)

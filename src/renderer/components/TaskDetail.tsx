@@ -7,8 +7,10 @@ import { TASK_STATUS_LABELS } from '../missions/labels'
 import { useMissions } from '../store/missions'
 import { useOffice } from '../store/office'
 import { TaskChangesView } from './TaskChangesView'
+import { TaskReviewView } from './TaskReviewView'
 import { TaskVerificationView } from './TaskVerificationView'
-import { acceptWarning } from '../verification/summary'
+import { reviewConcern } from '../reviews/summary'
+import { acceptConcern, acceptQuestion } from '../verification/summary'
 
 interface Props {
   task: Task
@@ -50,14 +52,26 @@ export function TaskDetail({ task, mission, tasks, onEdit }: Props) {
     (task.status === 'pending' || task.status === 'ready' || task.status === 'cancelled') &&
     dependentsOf(task.id, tasks).length === 0
 
-  /** Accepting is the person's call, but if the checks did not pass they are told before it is done. */
+  /**
+   * Accepting is the person's call, but if the checks did not pass, or a reviewer asked for
+   * changes, they are told before it is done. Neither is ever a block.
+   */
   async function accept(): Promise<void> {
+    const concerns: Array<string | null> = []
     try {
-      const warning = acceptWarning(await window.shokuba.checks.forTask(task.id))
-      if (warning && !window.confirm(warning)) return
+      concerns.push(acceptConcern(await window.shokuba.checks.forTask(task.id)))
     } catch {
       // If the checks cannot be read, accepting is not held up by that.
     }
+    try {
+      const review = await window.shokuba.reviews.forTask(task.id)
+      const name = employees.find((e) => e.id === review.latest?.reviewerId)?.name ?? 'The reviewer'
+      concerns.push(reviewConcern(review, name))
+    } catch {
+      // Nor by a review that cannot be read.
+    }
+    const question = acceptQuestion(concerns)
+    if (question && !window.confirm(question)) return
     await run(() => taskAction(task.id, { action: 'accept' }))
   }
 
@@ -134,6 +148,14 @@ export function TaskDetail({ task, mission, tasks, onEdit }: Props) {
         <TaskVerificationView
           taskId={task.id}
           status={task.status}
+          version={`${task.status}:${task.updatedAt}`}
+        />
+      )}
+      {task.status !== 'pending' && task.status !== 'ready' && (
+        <TaskReviewView
+          taskId={task.id}
+          status={task.status}
+          assigneeId={task.assigneeId}
           version={`${task.status}:${task.updatedAt}`}
         />
       )}

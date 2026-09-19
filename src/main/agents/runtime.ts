@@ -1,7 +1,7 @@
 import { constants as osConstants } from 'node:os'
 import { promises as fs } from 'node:fs'
 import { basename } from 'node:path'
-import type { Employee } from '@shared/employees'
+import type { Employee, PermissionMode } from '@shared/employees'
 import type { EventInput } from '@shared/events/schema'
 import type { AuditLog } from '../events/audit'
 import type { EventStore } from '../events/store'
@@ -162,13 +162,16 @@ export class AgentRuntime {
    * otherwise (a task's isolated working folder), which is how one agent process is tied to
    * one task's branch.
    */
-  async start(employee: Employee, options: { cwd?: string } = {}): Promise<void> {
+  async start(
+    employee: Employee,
+    options: { cwd?: string; permissionMode?: PermissionMode } = {},
+  ): Promise<void> {
     if (this.sessions.has(employee.id) || this.starting.has(employee.id)) {
       throw new AgentRuntimeError('already-running', `${employee.name} is already running`)
     }
     this.starting.add(employee.id)
     try {
-      await this.launch(employee, options.cwd ?? employee.workingDirectory)
+      await this.launch(employee, options.cwd ?? employee.workingDirectory, options.permissionMode)
     } finally {
       this.starting.delete(employee.id)
     }
@@ -198,7 +201,11 @@ export class AgentRuntime {
     return this.deliveryBlocker(employeeId) === null
   }
 
-  private async launch(employee: Employee, directory: string): Promise<void> {
+  private async launch(
+    employee: Employee,
+    directory: string,
+    permissionMode?: PermissionMode,
+  ): Promise<void> {
     const { platform, env, home, dataDir, hooks } = this.deps
 
     const adapter = this.deps.providers.get(employee.providerId)
@@ -237,7 +244,9 @@ export class AgentRuntime {
       const launch = adapter.buildLaunch({
         platform,
         env,
-        employee,
+        // For this launch only: a reviewer's session is held to plan mode whatever the employee's
+        // own setting is. The employee's record and what the runtime keeps are not changed.
+        employee: permissionMode ? { ...employee, permissionMode } : employee,
         team: this.deps.teamOf?.(employee.id) ?? { manager: null, reports: [] },
         executable: installation.path,
         report: {

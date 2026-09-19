@@ -1400,6 +1400,57 @@ h4 {
 .check-result[data-state='error'] .check-state {
   color: var(--red);
 }
+.review-summary {
+  margin: 0 0 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.findings {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.finding {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  gap: 10px;
+  align-items: baseline;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  font-size: 12.5px;
+}
+.finding-severity {
+  font-weight: 700;
+}
+.finding[data-severity='blocker'] .finding-severity,
+.finding[data-severity='major'] .finding-severity {
+  color: var(--red);
+}
+.finding[data-severity='nit'] .finding-severity {
+  color: var(--muted);
+}
+.finding-note {
+  overflow-wrap: anywhere;
+}
+.finding-place {
+  margin-right: 8px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.review-settings {
+  margin: 6px 0;
+}
+.review-settings summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12.5px;
+}
 .check-detail {
   padding: 4px 8px 8px;
 }

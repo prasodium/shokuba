@@ -3,6 +3,7 @@ import { CircuitBreaker } from '../breaker/breaker'
 import { EmployeeService } from '../employees/service'
 import { GitError } from '../git/runner'
 import { GitService } from '../git/service'
+import type { PermissionMode } from '@shared/employees'
 import { createAgentTools, SHOKUBA_MCP_INSTRUCTIONS } from '../mcp/agent-tools'
 import { McpEndpoint } from '../mcp/server'
 import { MessageRouter } from '../messages/router'
@@ -14,6 +15,7 @@ import type { Env, PlatformId } from '../platform'
 import { createClaudeCodeAdapter } from '../providers/claude-code/adapter'
 import { createMockAdapter } from '../providers/mock/adapter'
 import { ProviderRegistry } from '../providers/registry'
+import { ReviewService } from '../reviews/service'
 import { CheckSettingsStore } from '../verification/settings'
 import { VerificationService } from '../verification/service'
 import { WorkspaceCleaner } from '../workspaces/cleaner'
@@ -21,6 +23,7 @@ import { WorkspaceService } from '../workspaces/service'
 import { TaskWorkflow } from '../workspaces/workflow'
 import { HookServer } from './hook-server'
 import type { PtySpawn } from './pty'
+import { AgentLock } from './lock'
 import { AgentRuntime } from './runtime'
 import { AgentViews } from './views'
 
@@ -75,10 +78,14 @@ export interface AgentServices {
   tasks: TaskWorkflow
   /** Removes finished tasks' working folders once no agent is in them. */
   cleaner: WorkspaceCleaner
+  /** Does the same for the folders reviewers read in. */
+  reviewCleaner: WorkspaceCleaner
   /** The checks a person has set up per project. */
   checks: CheckSettingsStore
   /** Runs those checks on submitted work and keeps the results. */
   verification: VerificationService
+  /** Has a different employee read submitted work and report what they found. */
+  reviews: ReviewService
   views: AgentViews
   /** Stops every running agent, then closes the report listener. */
   close(): Promise<void>
@@ -188,6 +195,11 @@ export async function createAgentServices(
         beforeSubmit: async (task) => {
           await workspaces.commit(task)
         },
+        reviews: {
+          hasActive: (id: string) => reviews.hasActive(id),
+          current: (id: string) => reviews.current(id),
+          submit: (id: string, input) => reviews.submit(id, input),
+        },
       },
     ),
   )
@@ -264,7 +276,14 @@ export async function createAgentServices(
     logger: services.logger,
   })
   const cleaner = new WorkspaceCleaner({
-    workspaces,
+    workspaces: {
+      pendingRemoval: () =>
+        workspaces.pendingRemoval().map(({ task, folder }) => ({ key: task.id, folder })),
+      removeFolder: async (taskId: string) => {
+        const task = missions.getTask(taskId)
+        return task ? workspaces.removeFolder(task) : false
+      },
+    },
     events: services.events,
     // A folder is in use while an agent works in it, and while a run of checks is using it.
     inUse: () => [...runtime.runningFolders(), ...verification.activeFolders()],
@@ -273,28 +292,68 @@ export async function createAgentServices(
   })
 
   const restartWaitMs = options.restartWaitMs ?? DEFAULT_RESTART_WAIT_MS
+  // One agent process per piece of work: stop the running one, start a fresh one in the folder
+  // the work is in, and wait until it has reported in and can be handed the briefing.
+  const restartIn = async (
+    id: string,
+    cwd: string,
+    launch: { permissionMode?: PermissionMode } = {},
+  ): Promise<void> => {
+    const employee = employees.get(id)
+    if (!employee) throw new Error('That employee no longer exists')
+    await runtime.stop(id)
+    await runtime.start(employee, {
+      cwd,
+      ...(launch.permissionMode && { permissionMode: launch.permissionMode }),
+    })
+    if (!(await runtime.waitUntilDeliverable(id, restartWaitMs))) {
+      throw new Error('the agent did not come back ready in time')
+    }
+  }
+  const delivery = {
+    deliveryBlocker: (id: string) => runtime.deliveryBlocker(id),
+    deliverPrompt: (id: string, text: string) => runtime.deliverPrompt(id, text),
+    cwdOf: (id: string) => runtime.cwdOf(id),
+    restartIn,
+  }
+
+  // Handing out a task and handing out a review both move an agent; never both at once.
+  const lock = new AgentLock()
+  const reviews: ReviewService = new ReviewService({
+    db: services.db,
+    events: services.events,
+    audit: services.audit,
+    git,
+    missions,
+    employees: { get: (id: string) => employees.get(id) },
+    workspaces,
+    delivery,
+    allows: (id: string) => breaker.allowsTasks(id),
+    lock,
+    interrupt: (id: string) => runtime.interrupt(id),
+    logger: services.logger,
+  })
+  const reviewCleaner = new WorkspaceCleaner({
+    workspaces: {
+      pendingRemoval: () => reviews.pendingRemoval(),
+      removeFolder: (reviewId: string) => reviews.removeFolder(reviewId),
+    },
+    events: services.events,
+    inUse: () => [...runtime.runningFolders(), ...verification.activeFolders()],
+    platform: options.platform,
+    logger: services.logger,
+  })
+
   const dispatcher = new Dispatcher({
     missions,
-    delivery: {
-      deliveryBlocker: (id: string) => runtime.deliveryBlocker(id),
-      deliverPrompt: (id: string, text: string) => runtime.deliverPrompt(id, text),
-      cwdOf: (id: string) => runtime.cwdOf(id),
-      // One agent process per task: stop the running one, start a fresh one in the task's folder,
-      // and wait until it has reported in and can be handed the briefing.
-      restartIn: async (id: string, cwd: string) => {
-        const employee = employees.get(id)
-        if (!employee) throw new Error('That employee no longer exists')
-        await runtime.stop(id)
-        await runtime.start(employee, { cwd })
-        if (!(await runtime.waitUntilDeliverable(id, restartWaitMs))) {
-          throw new Error('the agent did not come back ready in time')
-        }
-      },
-    },
+    delivery,
     events: services.events,
     logger: services.logger,
     allowsTasks: (id: string) => breaker.allowsTasks(id),
     workspaces,
+    lock,
+    // Someone reading a review is not handed a task until they have handed it in.
+    busy: (id: string) => reviews.hasActive(id),
   })
   // The breaker starts first, so it sees an agent's event before anyone acts on it; then the
   // router, so an idle agent is offered its messages before its next task.
@@ -302,7 +361,9 @@ export async function createAgentServices(
   router.start()
   dispatcher.start()
   verification.start()
+  reviews.start()
   cleaner.start()
+  reviewCleaner.start()
 
   const views = new AgentViews(
     services.events.bus,
@@ -323,11 +384,15 @@ export async function createAgentServices(
     workspaces,
     tasks,
     cleaner,
+    reviewCleaner,
     checks,
     verification,
+    reviews,
     views,
     async close() {
+      reviewCleaner.stop()
       cleaner.stop()
+      reviews.stop()
       verification.stop()
       breaker.stop()
       router.stop()

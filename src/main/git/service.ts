@@ -289,6 +289,20 @@ export class GitService {
   }
 
   /**
+   * A working folder at a commit, on no branch: for reading the code as it was submitted (a
+   * reviewer). Anything done in it is on no branch, so it can never reach the task's work.
+   */
+  async createDetachedWorktree(repo: string, dir: string, commit: string): Promise<void> {
+    assertStartPoint(commit)
+    this.assertInsideWorktrees(dir)
+    if (await exists(dir)) {
+      throw new GitError('exists', 'That working folder already exists')
+    }
+    await fs.mkdir(pathApi(this.options.platform).dirname(dir), { recursive: true })
+    await this.exclusive(repo, () => this.git(repo, ['worktree', 'add', '--detach', dir, commit]))
+  }
+
+  /**
    * Give an existing task branch a working folder again, for when the folder was removed but the
    * branch (and the work on it) remains.
    */

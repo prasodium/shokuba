@@ -50,20 +50,20 @@ describe('claude-code adapter', () => {
       '--mcp-config',
       `/data/agents/e1/${MCP_CONFIG_FILE}`,
       '--allowedTools',
-      'mcp__shokuba__get_current_task,mcp__shokuba__submit_task,mcp__shokuba__report_blocked,mcp__shokuba__list_teammates,mcp__shokuba__send_message',
+      'mcp__shokuba__get_current_task,mcp__shokuba__submit_task,mcp__shokuba__report_blocked,mcp__shokuba__list_teammates,mcp__shokuba__send_message,mcp__shokuba__get_current_review,mcp__shokuba__submit_review',
     ])
     const flag = launch.args.indexOf('--append-system-prompt')
     expect(launch.args[flag + 1]).toContain('You are Mika, Engineer')
     expect(launch.args.slice(-2)).toEqual(['--name', 'Mika'])
   })
 
-  it("pre-approves only Shokuba's own three tools", () => {
+  it("pre-approves only Shokuba's own tools: the five every agent has and the two a reviewer uses", () => {
     const allowed =
       adapter.buildLaunch(input()).args[
         adapter.buildLaunch(input()).args.indexOf('--allowedTools') + 1
       ]
     expect(allowed?.split(',').every((tool) => tool.startsWith('mcp__shokuba__'))).toBe(true)
-    expect(allowed?.split(',')).toHaveLength(5)
+    expect(allowed?.split(',')).toHaveLength(7)
   })
 
   it("writes an MCP config that points at this agent's endpoint and takes the token from the environment", () => {

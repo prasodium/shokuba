@@ -11,6 +11,7 @@ import {
 } from '../employees'
 import type { ShokubaEvent } from '../events/schema'
 import type { MissionBranchInfo, TaskChanges } from '../git'
+import type { ReviewSettings, ReviewSettingsSave, TaskReview } from '../reviews'
 import type {
   CheckSettings,
   CheckSettingsSave,
@@ -90,6 +91,11 @@ export const TaskActionRequestSchema = z.strictObject({
 })
 export const TaskIdRequestSchema = z.strictObject({ taskId: employeeId })
 export const RepoRootRequestSchema = z.strictObject({ repoRoot: z.string().min(1).max(1_024) })
+/** Ask for a review of a task; no reviewer means the project's own. */
+export const ReviewRequestSchema = z.strictObject({
+  taskId: employeeId,
+  reviewerId: employeeId.nullable(),
+})
 
 export const MessageSendRequestSchema = HumanMessageInputSchema
 export const ConversationIdRequestSchema = z.strictObject({ conversationId: employeeId })
@@ -200,6 +206,14 @@ export interface ShokubaApi {
     forTask(taskId: string): Promise<TaskVerification>
     /** Run the checks again on a task's work. */
     run(taskId: string): Promise<void>
+  }
+  reviews: {
+    /** Where a task stands on independent review, and the project's review settings. */
+    forTask(taskId: string): Promise<TaskReview>
+    /** Ask a different employee to review a task's submitted work. */
+    request(taskId: string, reviewerId: string | null): Promise<void>
+    /** Who reviews a project's work, and whether it is asked for on every submission. */
+    saveSettings(input: ReviewSettingsSave): Promise<ReviewSettings>
   }
   messages: {
     /** Recent conversations, newest first. */

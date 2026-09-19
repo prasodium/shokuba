@@ -345,6 +345,21 @@ export class WorkspaceService {
     return { repoRoot: row.repo_root, folder: row.worktree_path, branch: row.branch }
   }
 
+  /**
+   * The commit a task's work is compared against for review: the mission branch as it is now
+   * (so the review shows only this task's own change), or where the task started.
+   */
+  async reviewBase(taskId: string): Promise<string | undefined> {
+    const { git } = this.deps
+    const row = this.row(taskId)
+    if (!git || !row?.repo_root || !row.branch) return undefined
+    const mission =
+      row.state === 'active'
+        ? await git.resolve(row.repo_root, missionBranch(row.mission_id))
+        : null
+    return mission ?? row.base_commit ?? undefined
+  }
+
   /** Why a task that was handed out has no working folder of its own, if that is so. */
   isolationReason(taskId: string): string | null {
     const row = this.row(taskId)

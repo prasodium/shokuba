@@ -34,6 +34,8 @@ const TRIGGERS: ReadonlySet<EventType> = new Set([
   'agent.started',
   // A person lifting a restriction can free a task that was being held back.
   'breaker.state.changed',
+  // Someone who finished reading a review (or lost it) is free for a task again.
+  'review.changed',
 ])
 
 /** After a failed delivery, leave that task alone for a while instead of retrying in a loop. */
@@ -66,6 +68,10 @@ export class Dispatcher {
       allowsTasks?: (employeeId: string) => boolean
       /** Gives each task its own working folder, and puts the agent in it. */
       workspaces?: WorkspacePort
+      /** Only one thing at a time may move an agent (a task here, a review elsewhere). */
+      lock?: { acquire(employeeId: string): boolean; release(employeeId: string): void }
+      /** Is this agent busy with something that is not a task (reading a review)? */
+      busy?: (employeeId: string) => boolean
       now?: () => number
     },
   ) {}
@@ -126,7 +132,7 @@ export class Dispatcher {
   }
 
   private async pass(): Promise<void> {
-    const { missions, delivery, logger } = this.deps
+    const { missions, delivery } = this.deps
     if (this.stopped) return
     const now = (this.deps.now ?? Date.now)()
     const claimedAgents = new Set<string>()
@@ -140,57 +146,75 @@ export class Dispatcher {
       if (delivery.deliveryBlocker(agent) !== null) continue
       if (this.deps.allowsTasks && !this.deps.allowsTasks(agent)) continue
 
+      if (this.deps.busy?.(agent)) continue
+
       claimedAgents.add(agent)
-
-      // Before the task is claimed: put the agent in the task's own working folder. The agent is
-      // restarted there, and restarting after the claim would make the stop look like the agent
-      // died mid-task and block it.
-      let note = ''
-      if (this.deps.workspaces) {
-        try {
-          const prepared = await this.deps.workspaces.prepare(task)
-          const want = prepared?.cwd ?? (await this.deps.workspaces.home(task))
-          note = prepared?.note ?? ''
-          if (want !== undefined && delivery.restartIn && delivery.cwdOf?.(agent) !== want) {
-            await delivery.restartIn(agent, want)
-          }
-          if (this.stopped) return
-          // Restarted or not, it must be safe to hand it input; if not, the next event tries again.
-          if (delivery.deliveryBlocker(agent) !== null) continue
-        } catch (error) {
-          const { message } = describeError(error)
-          logger.warn('dispatcher.workspace.failed', {
-            taskId: task.id,
-            employeeId: agent,
-            message,
-          })
-          this.cooldown.set(task.id, now + RETRY_COOLDOWN_MS)
-          setTimeout(() => this.schedule(), RETRY_COOLDOWN_MS + 50).unref?.()
-          continue
-        }
-      }
-
-      let claimed
+      // Only one thing at a time may move an agent.
+      if (this.deps.lock && !this.deps.lock.acquire(agent)) continue
       try {
-        claimed = missions.markDispatched(task.id)
-      } catch {
-        continue // someone else changed it first
-      }
-
-      try {
-        const briefing = missions.briefing(task.id)
-        await delivery.deliverPrompt(agent, note ? `${briefing}\n\n${note}` : briefing)
-        if (this.stopped) return
-        missions.announceDispatched(claimed)
-        this.cooldown.delete(task.id)
-      } catch (error) {
-        const { message } = describeError(error)
-        logger.warn('dispatcher.delivery.failed', { taskId: task.id, employeeId: agent, message })
-        this.cooldown.set(task.id, now + RETRY_COOLDOWN_MS)
-        missions.revertDispatch(task.id, `could not reach the agent: ${message}`)
-        // Try again after the cooldown even if nothing else happens in the meantime.
-        setTimeout(() => this.schedule(), RETRY_COOLDOWN_MS + 50).unref?.()
+        if ((await this.handOver(task, agent, now)) === 'stop') return
+      } finally {
+        this.deps.lock?.release(agent)
       }
     }
+  }
+
+  /**
+   * Put the agent where the task's work happens, claim the task and hand it over. Returns 'stop'
+   * if the dispatcher was stopped part-way, so the rest of the pass is not carried on.
+   */
+  private async handOver(task: Task, agent: string, now: number): Promise<'stop' | 'next'> {
+    const { missions, delivery, logger } = this.deps
+
+    // Before the task is claimed: put the agent in the task's own working folder. The agent is
+    // restarted there, and restarting after the claim would make the stop look like the agent
+    // died mid-task and block it.
+    let note = ''
+    if (this.deps.workspaces) {
+      try {
+        const prepared = await this.deps.workspaces.prepare(task)
+        const want = prepared?.cwd ?? (await this.deps.workspaces.home(task))
+        note = prepared?.note ?? ''
+        if (want !== undefined && delivery.restartIn && delivery.cwdOf?.(agent) !== want) {
+          await delivery.restartIn(agent, want)
+        }
+        if (this.stopped) return 'stop'
+        // Restarted or not, it must be safe to hand it input; if not, the next event tries again.
+        if (delivery.deliveryBlocker(agent) !== null) return 'next'
+      } catch (error) {
+        const { message } = describeError(error)
+        logger.warn('dispatcher.workspace.failed', {
+          taskId: task.id,
+          employeeId: agent,
+          message,
+        })
+        this.cooldown.set(task.id, now + RETRY_COOLDOWN_MS)
+        setTimeout(() => this.schedule(), RETRY_COOLDOWN_MS + 50).unref?.()
+        return 'next'
+      }
+    }
+
+    let claimed
+    try {
+      claimed = missions.markDispatched(task.id)
+    } catch {
+      return 'next' // someone else changed it first
+    }
+
+    try {
+      const briefing = missions.briefing(task.id)
+      await delivery.deliverPrompt(agent, note ? `${briefing}\n\n${note}` : briefing)
+      if (this.stopped) return 'stop'
+      missions.announceDispatched(claimed)
+      this.cooldown.delete(task.id)
+    } catch (error) {
+      const { message } = describeError(error)
+      logger.warn('dispatcher.delivery.failed', { taskId: task.id, employeeId: agent, message })
+      this.cooldown.set(task.id, now + RETRY_COOLDOWN_MS)
+      missions.revertDispatch(task.id, `could not reach the agent: ${message}`)
+      // Try again after the cooldown even if nothing else happens in the meantime.
+      setTimeout(() => this.schedule(), RETRY_COOLDOWN_MS + 50).unref?.()
+    }
+    return 'next'
   }
 }

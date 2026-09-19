@@ -215,6 +215,19 @@ export const EventInputSchema = z.discriminatedUnion('type', [
       step: z.string().max(60).optional(),
     }),
   ),
+  // An independent review of a task's work. Who and what state; never the findings themselves.
+  event(
+    'review.changed',
+    z.strictObject({
+      taskId: id,
+      missionId: id,
+      reviewId: id,
+      reviewerId: id,
+      change: z.enum(['requested', 'started', 'submitted', 'cancelled', 'error']),
+      verdict: z.enum(['approve', 'request_changes', 'comment']).optional(),
+      commit: z.string().max(80).optional(),
+    }),
+  ),
   event(
     'breaker.state.changed',
     z.strictObject({

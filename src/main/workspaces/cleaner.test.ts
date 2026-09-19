@@ -2,22 +2,21 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { Task } from '@shared/missions'
 import { createLogger } from '../logging/logger'
 import { createMissionFixture, type MissionFixture } from '../missions/fixtures'
 import { toPlatformId } from '../platform'
 import { WorkspaceCleaner, type Removals } from './cleaner'
 
-/** A stand-in for the workspace service: which folders are due, and which were removed. */
+/** A stand-in for whoever owns working folders: which are due, and which were removed. */
 class FakeRemovals implements Removals {
-  due: Array<{ task: Task; folder: string }> = []
+  due: Array<{ key: string; folder: string }> = []
   readonly removed: string[] = []
   failFor = new Set<string>()
-  pendingRemoval(): Array<{ task: Task; folder: string }> {
+  pendingRemoval(): Array<{ key: string; folder: string }> {
     return this.due.filter((entry) => !this.removed.includes(entry.folder))
   }
-  async removeFolder(task: Task): Promise<boolean> {
-    const entry = this.due.find((d) => d.task.id === task.id)
+  async removeFolder(key: string): Promise<boolean> {
+    const entry = this.due.find((d) => d.key === key)
     if (!entry) return false
     if (this.failFor.has(entry.folder)) throw new Error('locked')
     this.removed.push(entry.folder)
@@ -29,7 +28,8 @@ let fx: MissionFixture
 let removals: FakeRemovals
 let occupied: string[]
 let cleaner: WorkspaceCleaner
-let task: Task
+let taskId = ''
+let missionId = ''
 
 const isWindows = toPlatformId() === 'win32'
 const folder = (name: string): string =>
@@ -41,7 +41,9 @@ beforeEach(() => {
   fx = createMissionFixture()
   fx.addEmployee('ren')
   const mission = fx.missions.createMission({ title: 'M' })
-  task = fx.missions.createTask({ missionId: mission.id, title: 'T', assigneeId: 'ren' })
+  const task = fx.missions.createTask({ missionId: mission.id, title: 'T', assigneeId: 'ren' })
+  taskId = task.id
+  missionId = mission.id
   removals = new FakeRemovals()
   occupied = []
   cleaner = new WorkspaceCleaner({
@@ -61,7 +63,7 @@ afterEach(() => {
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 20))
 const due = (name: string): void => {
   // One task per folder, as in real life.
-  removals.due.push({ task: { ...task, id: `task-${name}` }, folder: folder(name) })
+  removals.due.push({ key: `task-${name}`, folder: folder(name) })
 }
 
 describe('WorkspaceCleaner', () => {
@@ -126,7 +128,7 @@ describe('WorkspaceCleaner', () => {
     fx.services.events.publish({
       type: 'task.status.changed',
       source: 'user',
-      payload: { taskId: task.id, missionId: task.missionId, from: 'submitted', to: 'done' },
+      payload: { taskId, missionId, from: 'submitted', to: 'done' },
     })
     await settle()
     expect(removals.removed).toEqual([folder('a')])
@@ -197,7 +199,7 @@ describe('WorkspaceCleaner', () => {
         const alias = join(base, 'alias')
         mkdirSync(actual)
         symlinkSync(actual, alias)
-        removals.due.push({ task: { ...task, id: 'task-linked' }, folder: alias })
+        removals.due.push({ key: 'task-linked', folder: alias })
         occupied = [actual]
         expect(await cleaner.sweep()).toBe(0)
         expect(removals.removed).toEqual([])
