@@ -11,7 +11,7 @@ import {
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { toPlatformId } from '../platform'
+import { removeTree, toPlatformId } from '../platform'
 import { missionBranch, taskBranch } from './refs'
 import { GitError } from './runner'
 import { GitService } from './service'
@@ -67,7 +67,10 @@ beforeEach(async () => {
   })
 })
 
-afterEach(() => rmSync(dir, { recursive: true, force: true }))
+// Git makes its files read-only, which a plain delete cannot remove on Windows.
+afterEach(async () => {
+  await removeTree(dir)
+})
 
 const baseCommit = (): string => sh(repo, 'rev-parse', 'HEAD')
 

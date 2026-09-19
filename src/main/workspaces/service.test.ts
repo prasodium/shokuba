@@ -15,7 +15,7 @@ import type { Task } from '@shared/missions'
 import { GitService } from '../git/service'
 import { createLogger } from '../logging/logger'
 import { createMissionFixture, type MissionFixture } from '../missions/fixtures'
-import { toPlatformId } from '../platform'
+import { removeTree, toPlatformId } from '../platform'
 import { WorkspaceService, type WorkspaceEmployee } from './service'
 
 let dir: string
@@ -79,9 +79,10 @@ beforeEach(async () => {
   missionId = fx.missions.createMission({ title: 'Ship login' }).id
 })
 
-afterEach(() => {
+afterEach(async () => {
   fx.cleanup()
-  rmSync(dir, { recursive: true, force: true })
+  // Git makes its files read-only, which a plain delete cannot remove on Windows.
+  await removeTree(dir)
 })
 
 function build(service: GitService | undefined, unavailable?: string): WorkspaceService {

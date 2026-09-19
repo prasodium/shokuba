@@ -5,7 +5,6 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
-  rmSync,
   writeFileSync,
 } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
@@ -16,7 +15,7 @@ import type { Mission, Task } from '@shared/missions'
 import { createServices, type Services } from '../bootstrap'
 import { GitService } from '../git/service'
 import { createLogger } from '../logging/logger'
-import { toPlatformId } from '../platform'
+import { removeTree, toPlatformId } from '../platform'
 import type { TerminationPlan } from '../platform/process'
 import { parseClaudeHook } from '../providers/claude-code/hooks'
 import { ProviderRegistry } from '../providers/registry'
@@ -219,7 +218,8 @@ afterEach(async () => {
   await agents.hooks.close()
   agents.views.dispose()
   services.close()
-  rmSync(dir, { recursive: true, force: true })
+  // Git makes its files read-only, which a plain delete cannot remove on Windows.
+  await removeTree(dir)
 })
 
 async function hire(name: string, folder = repo): Promise<Employee> {
