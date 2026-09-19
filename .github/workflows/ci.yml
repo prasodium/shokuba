@@ -42,4 +42,7 @@ jobs:
 
       - name: Smoke test (Linux, headless)
         if: runner.os == 'Linux'
+        env:
+          # The runner has no set-uid chrome-sandbox helper; the smoke test loads no web content.
+          SHOKUBA_ELECTRON_ARGS: --no-sandbox
         run: xvfb-run -a npm run smoke

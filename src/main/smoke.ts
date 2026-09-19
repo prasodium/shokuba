@@ -95,7 +95,12 @@ export async function runSmokeTest(): Promise<SmokeReport> {
 function spawnAndRead(platform: ReturnType<typeof toPlatformId>, cwd: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const env = safeChildEnv(platform, process.env, { ELECTRON_RUN_AS_NODE: '1' })
-    const child = pty.spawn(process.execPath, ['-e', "process.stdout.write('pty-ok')"], {
+    // The child lingers briefly after writing: Windows ConPTY can lose the output of a
+    // process that exits instantly. It also reports its Node version so a failure shows
+    // which runtime actually ran.
+    const script =
+      "process.stdout.write('pty-ok node=' + process.versions.node); setTimeout(() => {}, 500)"
+    const child = pty.spawn(process.execPath, ['-e', script], {
       name: 'xterm-256color',
       cols: 80,
       rows: 24,
@@ -119,7 +124,7 @@ function spawnAndRead(platform: ReturnType<typeof toPlatformId>, cwd: string): P
     child.onExit(({ exitCode }) => {
       clearTimeout(timer)
       if (exitCode === 0 && output.includes('pty-ok'))
-        resolve(`pid ${child.pid} exited 0, output "pty-ok"`)
+        resolve(`pid ${child.pid} exited 0, output "${output.trim()}"`)
       else reject(new Error(`exit ${exitCode}, output "${output.trim()}"`))
     })
   })

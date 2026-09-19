@@ -12,7 +12,12 @@ const electronBinary = require('electron') // path to the Electron executable
 const env = { ...process.env }
 delete env.ELECTRON_RUN_AS_NODE
 
-const result = spawnSync(electronBinary, ['.', '--shokuba-smoke-test'], {
+// Extra Electron flags for environments that need them. CI on Linux sets `--no-sandbox`
+// because GitHub's runners do not install Electron's chrome-sandbox helper as set-uid root.
+// The smoke test opens no window and loads no untrusted content.
+const extraArgs = (process.env.SHOKUBA_ELECTRON_ARGS ?? '').split(/\s+/).filter(Boolean)
+
+const result = spawnSync(electronBinary, ['.', ...extraArgs, '--shokuba-smoke-test'], {
   env,
   encoding: 'utf8',
   timeout: 90_000,
