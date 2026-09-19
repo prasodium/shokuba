@@ -47,8 +47,13 @@ child.stderr.setEncoding('utf8').on('data', (chunk) => (stderr += chunk))
 
 const timer = setTimeout(() => {
   console.error(`Smoke test timed out after ${LIMIT_MS / 1000}s.`)
-  console.error(running ? `It was still running: ${running}` : 'No check was running.')
+  console.error(
+    running
+      ? `It was still running: ${running}`
+      : 'No check was running: every check that started had finished, so the app did not exit.',
+  )
   report()
+  if (stderr.trim()) console.error(`Electron's error output:\n${stderr.trim().slice(-2000)}`)
   child.kill()
   process.exit(1)
 }, LIMIT_MS)
@@ -78,6 +83,9 @@ child.on('close', () => {
     console.log(`  ${check.ok ? 'PASS' : 'FAIL'}  ${name}  -  ${check.detail}`)
   }
   report()
+  // Notes the run made about itself (a temp folder it could not remove, for example).
+  for (const note of stderr.split('\n').filter((l) => l.startsWith('smoke:')))
+    console.log(`  ${note}`)
   console.log(result.ok ? '\nSmoke test passed.' : '\nSmoke test FAILED.')
   process.exit(result.ok ? 0 : 1)
 })

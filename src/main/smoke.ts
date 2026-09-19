@@ -103,7 +103,12 @@ export async function runSmokeTest(): Promise<SmokeReport> {
       return found
     })
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    // A folder left behind is harmless; failing or hanging over it would hide the real result.
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+    } catch (error) {
+      process.stderr.write(`smoke: could not remove ${dir}: ${describeError(error).message}\n`)
+    }
   }
 
   return {
@@ -730,9 +735,12 @@ async function gitWorktrees(
         'user.email=setup@example.invalid',
         '-c',
         'commit.gpgsign=false',
+        // No background file-watching process: it would keep the folder busy after the check.
+        '-c',
+        'core.fsmonitor=false',
         ...args,
       ],
-      { cwd: repo, encoding: 'utf8' },
+      { cwd: repo, encoding: 'utf8', windowsHide: true },
     ).trim()
   plain('init', '-q', '-b', 'main')
   writeFileSync(join(repo, 'a.txt'), 'one\ntwo\nthree\n')
@@ -773,10 +781,7 @@ async function gitWorktrees(
   if (conflict.kind !== 'conflict' || conflict.files.join() !== 'a.txt') {
     throw new Error(`the second task should conflict: ${JSON.stringify(conflict)}`)
   }
-  const author = execFileSync('git', ['log', '-1', '--format=%an', taskBranch('one')], {
-    cwd: repo,
-    encoding: 'utf8',
-  }).trim()
+  const author = plain('log', '-1', '--format=%an', taskBranch('one'))
   if (author !== 'Ada') throw new Error(`commit author was "${author}"`)
 
   await git.removeWorktree(root, first)

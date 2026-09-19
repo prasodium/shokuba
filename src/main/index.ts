@@ -191,9 +191,15 @@ function start(dev?: DevRun): void {
 
 if (process.argv.includes(SMOKE_FLAG)) {
   void app.whenReady().then(async () => {
-    const report = await runSmokeTest()
-    process.stdout.write(`SHOKUBA_SMOKE ${JSON.stringify(report)}\n`)
-    app.exit(report.ok ? 0 : 1)
+    try {
+      const report = await runSmokeTest()
+      process.stdout.write(`SHOKUBA_SMOKE ${JSON.stringify(report)}\n`)
+      app.exit(report.ok ? 0 : 1)
+    } catch (error) {
+      // Whatever went wrong, end the run: a smoke test that hangs hides the real problem.
+      process.stderr.write(`smoke: the run failed: ${describeError(error).message}\n`)
+      app.exit(1)
+    }
   })
 } else {
   const screenshotArg = process.argv.find((arg) => arg.startsWith(SCREENSHOT_PREFIX))
