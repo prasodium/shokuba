@@ -138,6 +138,10 @@ function current(employee: Employee): Agent {
 }
 
 /** Bring the agent services up over the current database, as Shokuba does at startup. */
+/** Wait for something that involves real Git work; a Windows runner needs far longer than a laptop. */
+const until = (check: () => void, options: { timeout?: number } = {}): Promise<void> =>
+  vi.waitFor(check, { timeout: 20_000, interval: 25, ...options })
+
 async function startAgents(): Promise<AgentServices> {
   const started = await createAgentServices(services, {
     platform: toPlatformId(),
@@ -226,7 +230,7 @@ async function hire(name: string, folder = repo): Promise<Employee> {
     workingDirectory: folder,
   })
   await agents.runtime.start(employee)
-  await vi.waitFor(() => expect(agents.runtime.deliveryBlocker(employee.id)).toBeNull())
+  await until(() => expect(agents.runtime.deliveryBlocker(employee.id)).toBeNull())
   return employee
 }
 
@@ -266,7 +270,7 @@ describe('a task in its own branch, end to end', () => {
 
     const { mission, tasks } = launchMission(['Build it', ren])
     const task = tasks[0] as Task
-    await vi.waitFor(() => expect(statusOf(task.id)).toBe('in_progress'))
+    await until(() => expect(statusOf(task.id)).toBe('in_progress'))
 
     // A second process was started, in the task's folder, and the first one stopped.
     expect(spawns).toHaveLength(2)
@@ -278,7 +282,7 @@ describe('a task in its own branch, end to end', () => {
     expect(sh(repo, 'branch', '--list', `shokuba/mission/${mission.id}`)).toContain(mission.id)
 
     // The briefing went to the new agent, with where it is working; the old one was not touched.
-    await vi.waitFor(() => expect(typed(now)).toContain('Build it'))
+    await until(() => expect(typed(now)).toContain('Build it'))
     expect(typed(now)).toContain('isolated in its own Git branch')
     expect(typed(now)).toContain(now.options.cwd)
     expect(typed(before)).not.toContain('Build it')
@@ -291,7 +295,7 @@ describe('a task in its own branch, end to end', () => {
     const ren = await hire('Ren')
     const { tasks } = launchMission(['Build it', ren])
     const task = tasks[0] as Task
-    await vi.waitFor(() => expect(statusOf(task.id)).toBe('in_progress'))
+    await until(() => expect(statusOf(task.id)).toBe('in_progress'))
     const cwd = await doWork(ren, 'a.txt', 'one\nTWO\nthree\n')
 
     expect(sh(cwd, 'log', '-1', '--format=%an|%s')).toBe('Ren|Task: Build it')
@@ -308,7 +312,7 @@ describe('a task in its own branch, end to end', () => {
     const ren = await hire('Ren')
     const { mission, tasks } = launchMission(['Build it', ren])
     const task = tasks[0] as Task
-    await vi.waitFor(() => expect(statusOf(task.id)).toBe('in_progress'))
+    await until(() => expect(statusOf(task.id)).toBe('in_progress'))
     await doWork(ren, 'a.txt', 'one\nTWO\nthree\n')
     const mainBefore = sh(repo, 'rev-parse', 'main')
 
@@ -336,12 +340,12 @@ describe('a task in its own branch, end to end', () => {
       dependsOn: [first.id],
     })
     agents.missions.missionAction(mission.id, 'run')
-    await vi.waitFor(() => expect(statusOf(first.id)).toBe('in_progress'))
+    await until(() => expect(statusOf(first.id)).toBe('in_progress'))
     await doWork(ren, 'a.txt', 'one\nFIRST\nthree\n')
     await agents.tasks.action(first.id, { action: 'accept' })
 
     // The second task is handed out only now, and its folder already has the first one's change.
-    await vi.waitFor(() => expect(statusOf(second.id)).toBe('in_progress'))
+    await until(() => expect(statusOf(second.id)).toBe('in_progress'))
     const folder = current(sora).options.cwd
     expect(readFileSync(join(folder, 'a.txt'), 'utf8')).toBe('one\nFIRST\nthree\n')
   })
@@ -351,8 +355,8 @@ describe('a task in its own branch, end to end', () => {
     const sora = await hire('Sora')
     const { mission, tasks } = launchMission(['Ren’s change', ren], ['Sora’s change', sora])
     const [renTask, soraTask] = tasks as [Task, Task]
-    await vi.waitFor(() => expect(statusOf(renTask.id)).toBe('in_progress'))
-    await vi.waitFor(() => expect(statusOf(soraTask.id)).toBe('in_progress'))
+    await until(() => expect(statusOf(renTask.id)).toBe('in_progress'))
+    await until(() => expect(statusOf(soraTask.id)).toBe('in_progress'))
     await doWork(ren, 'a.txt', 'one\nFROM-REN\nthree\n')
     const soraFolder = await doWork(sora, 'a.txt', 'one\nFROM-SORA\nthree\n')
 
@@ -368,10 +372,10 @@ describe('a task in its own branch, end to end', () => {
 
     // She is still in her own folder, so she is given the task again there, without a restart.
     const spawnsBefore = spawns.length
-    await vi.waitFor(() => expect(statusOf(soraTask.id)).toBe('in_progress'))
+    await until(() => expect(statusOf(soraTask.id)).toBe('in_progress'))
     expect(spawns).toHaveLength(spawnsBefore)
     expect(current(sora).options.cwd).toBe(soraFolder)
-    await vi.waitFor(() => expect(typed(current(sora))).toContain('git merge shokuba/mission/'))
+    await until(() => expect(typed(current(sora))).toContain('git merge shokuba/mission/'))
 
     // She resolves it the way she was told, and submits again; now it is accepted.
     const agent = current(sora)
@@ -399,11 +403,11 @@ describe('when a task cannot be isolated', () => {
     const ren = await hire('Ren', plain)
     const { tasks } = launchMission(['No repo here', ren])
     const task = tasks[0] as Task
-    await vi.waitFor(() => expect(statusOf(task.id)).toBe('in_progress'))
+    await until(() => expect(statusOf(task.id)).toBe('in_progress'))
 
     expect(spawns).toHaveLength(1)
     expect(current(ren).options.cwd).toBe(realpathSync.native(plain))
-    await vi.waitFor(() => expect(typed(current(ren))).toContain('No repo here'))
+    await until(() => expect(typed(current(ren))).toContain('No repo here'))
     expect(typed(current(ren))).not.toContain('isolated in its own Git branch')
     expect(await agents.workspaces.changes(task.id)).toEqual({
       isolated: false,
@@ -419,7 +423,7 @@ describe('when a task cannot be isolated', () => {
     reportIn = false // the fresh agent starts but never gets to its prompt
     const { tasks } = launchMission(['Build it', ren])
     const task = tasks[0] as Task
-    await vi.waitFor(() => expect(spawns).toHaveLength(2), { timeout: 3_000 })
+    await until(() => expect(spawns).toHaveLength(2))
     await new Promise((resolve) => setTimeout(resolve, 1_800))
     expect(statusOf(task.id)).toBe('ready')
     expect(typed(current(ren))).toBe('')
@@ -432,7 +436,7 @@ describe('what the person is told', () => {
     const { tasks } = launchMission(['Build it', ren])
     const task = tasks[0] as Task
     expect(await agents.workspaces.changes(task.id)).toEqual({ isolated: false, reason: null })
-    await vi.waitFor(() => expect(statusOf(task.id)).toBe('in_progress'))
+    await until(() => expect(statusOf(task.id)).toBe('in_progress'))
     const changes = await agents.workspaces.changes(task.id)
     expect(changes).toMatchObject({ isolated: true, branch: `shokuba/task/${task.id}`, files: [] })
     expect(existsSync(current(ren).options.cwd)).toBe(true)
@@ -448,7 +452,7 @@ describe('cleaning up after a task', () => {
   ): Promise<{ task: Task; folder: string; mission: Mission }> {
     const { mission, tasks } = launchMission([title, who])
     const task = tasks[0] as Task
-    await vi.waitFor(() => expect(statusOf(task.id)).toBe('in_progress'))
+    await until(() => expect(statusOf(task.id)).toBe('in_progress'))
     const folder = await doWork(who, file, `${title}\n`)
     await agents.tasks.action(task.id, { action: 'accept' })
     return { task, folder, mission }
@@ -469,7 +473,7 @@ describe('cleaning up after a task', () => {
       dependsOn: [first.id],
     })
     agents.missions.missionAction(mission.id, 'run')
-    await vi.waitFor(() => expect(statusOf(first.id)).toBe('in_progress'))
+    await until(() => expect(statusOf(first.id)).toBe('in_progress'))
     const folder = await doWork(ren, 'first.txt', 'First\n')
 
     // Submitted, not yet accepted: its folder is kept, whatever else happens.
@@ -478,8 +482,8 @@ describe('cleaning up after a task', () => {
 
     // Accepting it hands Ren the second task, in a folder of its own; the first is now unoccupied.
     await agents.tasks.action(first.id, { action: 'accept' })
-    await vi.waitFor(() => expect(statusOf(second.id)).toBe('in_progress'))
-    await vi.waitFor(() => expect(existsSync(folder)).toBe(false))
+    await until(() => expect(statusOf(second.id)).toBe('in_progress'))
+    await until(() => expect(existsSync(folder)).toBe(false))
 
     // The branch, and the work on it, stay, and can still be reviewed.
     expect(sh(repo, 'branch', '--list', `shokuba/task/${first.id}`)).toContain(first.id)
@@ -499,14 +503,14 @@ describe('cleaning up after a task', () => {
     const { folder } = await acceptedTask(ren, 'First', 'first.txt')
     expect(existsSync(folder)).toBe(true)
     await agents.runtime.stop(ren.id)
-    await vi.waitFor(() => expect(existsSync(folder)).toBe(false))
+    await until(() => expect(existsSync(folder)).toBe(false))
   })
 
   it('saves a cancelled task’s unsaved work to its branch before removing its folder', async () => {
     const ren = await hire('Ren')
     const { mission, tasks } = launchMission(['Abandoned', ren])
     const task = tasks[0] as Task
-    await vi.waitFor(() => expect(statusOf(task.id)).toBe('in_progress'))
+    await until(() => expect(statusOf(task.id)).toBe('in_progress'))
     const folder = current(ren).options.cwd
     writeFileSync(join(folder, 'unsaved.txt'), 'the agent had not submitted this\n')
 
@@ -515,7 +519,7 @@ describe('cleaning up after a task', () => {
     expect(existsSync(folder)).toBe(true) // Ren is still in it
 
     await agents.runtime.stop(ren.id)
-    await vi.waitFor(() => expect(existsSync(folder)).toBe(false))
+    await until(() => expect(existsSync(folder)).toBe(false))
     expect(sh(repo, 'show', `shokuba/task/${task.id}:unsaved.txt`)).toBe(
       'the agent had not submitted this',
     )
@@ -526,7 +530,7 @@ describe('cleaning up after a task', () => {
     const ren = await hire('Ren')
     const { tasks } = launchMission(['Build it', ren])
     const task = tasks[0] as Task
-    await vi.waitFor(() => expect(statusOf(task.id)).toBe('in_progress'))
+    await until(() => expect(statusOf(task.id)).toBe('in_progress'))
     const folder = await doWork(ren, 'a.txt', 'one\nTWO\nthree\n')
     await agents.runtime.stop(ren.id)
     await new Promise((resolve) => setTimeout(resolve, 100))
@@ -542,7 +546,7 @@ describe('cleaning up after a task', () => {
     expect(existsSync(folder)).toBe(true)
 
     agents = await startAgents()
-    await vi.waitFor(() => expect(existsSync(folder)).toBe(false))
+    await until(() => expect(existsSync(folder)).toBe(false))
   })
 
   it('shows where the mission’s accepted work is collecting', async () => {
