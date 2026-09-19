@@ -4,19 +4,20 @@ Shokuba is developed **macOS first**. Windows and Linux are designed for from th
 
 ## Status
 
-|                                                                           | macOS | Windows                           | Linux                             |
-| ------------------------------------------------------------------------- | ----- | --------------------------------- | --------------------------------- |
-| CI: install, typecheck, lint, unit tests                                  | ✅    | ✅                                | ✅                                |
-| CI: in-Electron smoke test (SQLite, restart persistence, real PTY, Git)   | ✅    | ✅                                | ✅ (headless, `--no-sandbox`)     |
-| Agent pipeline: demo agent in a real PTY → hook server → events → stop    | ✅    | ✅                                | ✅                                |
-| Two-agent mission: task pasted into a real terminal → MCP submit → accept | ✅    | ✅                                | ✅                                |
-| Runaway two-agent conversation stopped at the hop limit                   | ✅    | ✅                                | ✅                                |
-| Runaway agent refused, held back from tasks, then paused and interrupted  | ✅    | ✅                                | ✅                                |
-| Manager drafts a mission; nothing sent until run; direct message refused  | ✅    | ✅                                | ✅                                |
-| Git: task worktrees, commit, merge, conflict; main and checkout untouched | ✅    | ✅                                | ✅                                |
-| App window rendered and inspected                                         | ✅    | 🔜 not yet seen on a real desktop | 🔜 not yet seen on a real desktop |
-| Platform-layer branches unit-tested                                       | ✅    | ✅ (also simulated on any host)   | ✅ (also simulated on any host)   |
-| Packaging / installers                                                    | 🔜    | 🔜                                | 🔜                                |
+|                                                                                | macOS | Windows                           | Linux                             |
+| ------------------------------------------------------------------------------ | ----- | --------------------------------- | --------------------------------- |
+| CI: install, typecheck, lint, unit tests                                       | ✅    | ✅                                | ✅                                |
+| CI: in-Electron smoke test (SQLite, restart persistence, real PTY, Git)        | ✅    | ✅                                | ✅ (headless, `--no-sandbox`)     |
+| Agent pipeline: demo agent in a real PTY → hook server → events → stop         | ✅    | ✅                                | ✅                                |
+| Two-agent mission: task pasted into a real terminal → MCP submit → accept      | ✅    | ✅                                | ✅                                |
+| Runaway two-agent conversation stopped at the hop limit                        | ✅    | ✅                                | ✅                                |
+| Runaway agent refused, held back from tasks, then paused and interrupted       | ✅    | ✅                                | ✅                                |
+| Manager drafts a mission; nothing sent until run; direct message refused       | ✅    | ✅                                | ✅                                |
+| Git: task worktrees, commit, merge, conflict; main and checkout untouched      | ✅    | ✅                                | ✅                                |
+| A task in its own branch: agent restarted in its folder, commit, accept merges | ✅    | 🔜 pending CI                     | 🔜 pending CI                     |
+| App window rendered and inspected                                              | ✅    | 🔜 not yet seen on a real desktop | 🔜 not yet seen on a real desktop |
+| Platform-layer branches unit-tested                                            | ✅    | ✅ (also simulated on any host)   | ✅ (also simulated on any host)   |
+| Packaging / installers                                                         | 🔜    | 🔜                                | 🔜                                |
 
 CI runs on GitHub-hosted runners, so "✅" means the core, the native modules and a real pseudo-terminal work on that OS. It does **not** yet mean someone has used the UI there: the smoke test opens no window. macOS is the supported platform until that gap is closed. We say so rather than claim support we haven't verified.
 

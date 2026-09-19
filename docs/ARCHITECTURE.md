@@ -226,9 +226,9 @@ A plan only becomes real when a person presses **Run mission**, and a person sti
 
 **Limits.** These are guardrails, not a judgement of the plan: a manager can still draft a poor, padded or misleading plan within the caps, and you are the one who reads it. The caps are constants in `planning.ts`, not settings. Nothing stops a draft's tasks being assigned to people who are busy; the dispatcher's usual rules decide when each is sent once you run it.
 
-### Git (Phase 3, slice 3a: built, not yet used by tasks)
+### Git (Phase 3, slice 3a)
 
-`GitService` (`src/main/git/`) is the layer tasks will use to work in isolation: a branch and a working folder per task, a diff to review, and merging accepted work. Nothing calls it yet; slices 3b and 3c wire it to dispatch and to accepting a task.
+`GitService` (`src/main/git/`) is the layer tasks will use to work in isolation: a branch and a working folder per task, a diff to review, and merging accepted work. Slice 3b connects it to dispatch and to accepting a task (next section).
 
 **The model.** A mission gets a branch `shokuba/mission/<id>`, cut from the repository's current commit. Each task gets `shokuba/task/<id>` and its own working folder under `<data>/worktrees/`, never inside your project. Accepting a task merges its branch into the mission branch; you merge the mission branch yourself. (Missions and tasks use separate prefixes because Git cannot hold `shokuba/x` and `shokuba/x/y` at once.)
 
@@ -245,6 +245,31 @@ A plan only becomes real when a person presses **Run mission**, and a person sti
 - Commits are made with a per-command identity (`Shokuba (name)`, an address that can never be real), so **your own Git settings are never read or written** for authorship or signing.
 
 **Limits.** Attributes are ignored by Shokuba's own commands, so files a repository stores with Git LFS are committed as they are on disk, custom merge drivers do not run, and line-ending rules from `.gitattributes` are not applied (your own `core.autocrlf` still is). A task's folder is a fresh checkout, so dependencies such as `node_modules` are not there: the agent has to install them, and Shokuba does not run setup commands. Committing takes everything that is not ignored, so a secret file the project does not ignore would land in the local task branch (it is never pushed). This isolates work; it is not a sandbox, since an agent can still run Git commands that reach elsewhere.
+
+### Task isolation (Phase 3, slice 3b)
+
+`WorkspaceService` (`src/main/workspaces/`) decides whether a task is isolated and how, using `GitService`. Two tables record it (migration 0007): `mission_branches` (one branch per mission and repository) and `task_workspaces` (a task's branch, folder and commits, and `state`: `active`, `merged`, `none` or `removed`; `none` carries the reason it was not isolated).
+
+**Handing a task over.** In the dispatcher's pass, for a task whose assignee's folder is in a Git repository:
+
+1. The task's working folder is made (or reused, if it is being handed out again): a branch `shokuba/task/<id>` cut from the mission branch, which itself is cut once from the repository's current commit. An employee who works in a subfolder of the repository keeps working in that subfolder.
+2. The agent is **restarted in that folder** and Shokuba waits until it has reported idle. An agent's file access starts in the folder it was launched in, so this is what makes the isolation real, not a request. This happens **before** the task is claimed: stopping the agent publishes `agent.stopped`, which the dispatcher reads as "the agent died mid-task", so restarting after the claim would block the task it was about to hand over.
+3. The task is claimed and the briefing is pasted, with a note saying where the agent is working and that Shokuba saves its work. An agent that is already in the right folder (a task sent back to it) is not restarted.
+
+**Saving and reviewing.** When the agent calls `submit_task`, its work is committed **before** the task shows as submitted (author `Shokuba (name)`), so a submitted task never lacks its changes. The task detail shows the changed files and a diff, read through `tasks.changes` and rendered as plain text.
+
+**Accepting.** `TaskWorkflow` merges the task's branch into the mission branch before accepting the task, so tasks that depend on it start from it. If it conflicts with work accepted earlier, the task is **not** accepted: it goes back to its agent as "changes requested" with the files named and the steps to fix it (merge the mission branch in its own folder, resolve, submit again), and nothing on the mission branch changes. **Your own branches are never touched and nothing is pushed**; the mission branch is yours to review and merge.
+
+**When a task cannot be isolated** (the folder is not a repository, it has no commits, Git is missing or older than 2.40, or the working folder could not be made) the task runs in the employee's own folder exactly as it always did, the task detail says why, and an agent left in an earlier task's folder is put back in its own. A Git problem never fails a task.
+
+**Limits.**
+
+- **A fresh agent session per task:** slower to start, and the agent does not remember earlier tasks. A stuck login screen on the restarted agent leaves the task waiting, unclaimed, until the wait (90 seconds) runs out and it is tried again.
+- The mission branch is cut from the repository's **last commit** when the mission's first task is handed out. Uncommitted changes in your checkout, and commits made to your branch later, are not in it.
+- A task's folder has no installed dependencies (for example `node_modules`); the agent has to install them.
+- Everything not ignored in the folder is committed to the local task branch, including a secret the project does not ignore. Nothing is pushed.
+- The agent can run Git in its folder, including switching branches or merging. Shokuba merges `shokuba/task/<id>` as it finds it.
+- **Working folders are not removed yet** (slice 3c), so finished tasks leave folders under Shokuba's data folder, and a running agent stays in its last task's folder until its next task.
 
 ### Database
 
