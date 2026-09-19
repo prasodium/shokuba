@@ -4,6 +4,7 @@
 // Usage: npm run smoke   (builds first)
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
+import { clearTimeout, setTimeout } from 'node:timers'
 
 const require = createRequire(import.meta.url)
 const electronBinary = require('electron') // path to the Electron executable
