@@ -206,7 +206,25 @@ When an employee reports `report_blocked`, their manager is also sent a `warning
 
 **What each agent is told.** At launch the agent's system prompt says what its role is for, who its manager is (and that it does not message the person directly), or, for a manager, who reports to them and that they are the one who talks to the person. `list_teammates` shows the same structure. **The prompt is read when the agent starts**, so if you change someone's role, instructions or team while they run, they hear about it at their next start; the messaging rule itself is checked live on every message, and `list_teammates` is always current.
 
-**Limits.** The rule governs the message channel, not what the person can see: an agent's terminal and its task summaries are still visible to you. A manager who is wrong or manipulated can still mislead you, and an employee can still mislead their manager. A manager has no special powers yet beyond being the route to you (slice 2e adds drafting missions).
+**Limits.** The rule governs the message channel, not what the person can see: an agent's terminal and its task summaries are still visible to you. A manager who is wrong or manipulated can still mislead you, and an employee can still mislead their manager. A manager can also draft missions for their team (see below), but never run them.
+
+### Manager planning (Phase 2, slice 2e)
+
+A manager's agent can plan work for its team, but only as a **draft**. Five extra MCP tools are offered to managers and to no one else (`tools/list` leaves them out for everyone else, and calling one by name answers as if it did not exist):
+
+| Tool            | What it does                                                                                                                                |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `draft_mission` | Starts a draft mission, recorded as the manager's (`missions.created_by`, migration 0006).                                                  |
+| `add_task`      | Adds a task to one of the manager's drafts: assigned to the manager or someone who reports to them, with dependencies by id or exact title. |
+| `remove_task`   | Removes a task from one of the manager's drafts.                                                                                            |
+| `get_draft`     | Shows a draft (or lists open drafts) so the manager can check the plan before telling the person.                                           |
+| `team_status`   | Read-only: who reports to the manager, whether they are running, and what they are on.                                                      |
+
+The rules live in one place, `ManagerPlanning` (`src/main/missions/planning.ts`), and the tools only translate to and from text. A manager may change only a mission **it drafted itself**, only while it is still a **draft**, may assign only to **itself or its own team**, and may have at most 3 open drafts of 25 tasks each. It cannot run, pause, cancel or archive a mission, and cannot accept, retry or change anything a person or another manager created. Everything else is the ordinary `MissionService`, so titles, dependencies, cycles and control characters are checked exactly as for a person. Events for what a manager does carry `source: reported` and the manager's id, so the log says an agent did it.
+
+A plan only becomes real when a person presses **Run mission**, and a person still accepts each task. The Missions tab says who drafted a mission, and, while it is a draft, that nothing has been sent. The manager is told (by its instructions) to message the person when a draft is ready.
+
+**Limits.** These are guardrails, not a judgement of the plan: a manager can still draft a poor, padded or misleading plan within the caps, and you are the one who reads it. The caps are constants in `planning.ts`, not settings. Nothing stops a draft's tasks being assigned to people who are busy; the dispatcher's usual rules decide when each is sent once you run it.
 
 ### Database
 
