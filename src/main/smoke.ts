@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as pty from 'node-pty'
@@ -9,6 +10,8 @@ import { createServices } from './bootstrap'
 import { MIGRATIONS } from './database/migrations'
 import { createLogger, describeError } from './logging/logger'
 import { findExecutable, safeChildEnv, shellCommand, toPlatformId } from './platform'
+import { GitService } from './git/service'
+import { missionBranch, taskBranch } from './git/refs'
 import { createMockAdapter } from './providers/mock/adapter'
 import { ProviderRegistry } from './providers/registry'
 
@@ -83,6 +86,8 @@ export async function runSmokeTest(): Promise<SmokeReport> {
     await run('breaker-pipeline', () => breakerPipeline(platform, dir, logger))
 
     await run('team-pipeline', () => teamPipeline(platform, dir, logger))
+
+    await run('git-worktrees', () => gitWorktrees(platform, dir))
 
     await run('locate-git', async () => {
       const found = await findExecutable('git', { platform, env: process.env, home: homedir() })
@@ -693,4 +698,85 @@ async function teamPipeline(
     await agents.close()
     services.close()
   }
+}
+
+/**
+ * Git on this machine, the way tasks will use it: a mission branch, two task branches in their
+ * own working folders, work committed as the employee, one accepted, one that conflicts, and
+ * through it all your own checkout and main branch untouched. Run on every OS because paths and
+ * process handling are where Git differs most.
+ */
+async function gitWorktrees(
+  platform: ReturnType<typeof toPlatformId>,
+  dir: string,
+): Promise<string> {
+  const repo = join(dir, 'git-repo')
+  mkdirSync(repo)
+  const plain = (...args: string[]): string =>
+    execFileSync(
+      'git',
+      [
+        '-c',
+        'user.name=Setup',
+        '-c',
+        'user.email=setup@example.invalid',
+        '-c',
+        'commit.gpgsign=false',
+        ...args,
+      ],
+      { cwd: repo, encoding: 'utf8' },
+    ).trim()
+  plain('init', '-q', '-b', 'main')
+  writeFileSync(join(repo, 'a.txt'), 'one\ntwo\nthree\n')
+  plain('add', '-A')
+  plain('commit', '-qm', 'base')
+  const mainBefore = plain('rev-parse', 'main')
+
+  const git = await GitService.locate({
+    platform,
+    env: process.env,
+    home: homedir(),
+    dataDir: join(dir, 'git-data'),
+  })
+  const version = await git.version()
+  const root = await git.repoRoot(repo)
+  const head = await git.head(root)
+
+  const mission = missionBranch('smoke')
+  await git.ensureBranch(root, mission, head.commit)
+  const finish = async (id: string, text: string): Promise<string> => {
+    const folder = git.worktreePath(root, id)
+    await git.createWorktree(root, folder, taskBranch(id), mission)
+    writeFileSync(join(folder, 'a.txt'), text)
+    const commit = await git.commitAll(root, folder, `Task ${id}`, 'Ada')
+    if (!commit) throw new Error(`nothing was committed for ${id}`)
+    return folder
+  }
+  const first = await finish('one', 'one\nFIRST\nthree\n')
+  const second = await finish('two', 'one\nSECOND\nthree\n')
+
+  const files = await git.changedFiles(root, head.commit, taskBranch('one'))
+  if (files.length !== 1 || files[0]?.path !== 'a.txt') {
+    throw new Error(`unexpected changed files: ${JSON.stringify(files)}`)
+  }
+  const merged = await git.merge(root, mission, taskBranch('one'), 'Accept: one', 'Shokuba')
+  if (merged.kind !== 'merged') throw new Error(`the first task did not merge: ${merged.kind}`)
+  const conflict = await git.merge(root, mission, taskBranch('two'), 'Accept: two', 'Shokuba')
+  if (conflict.kind !== 'conflict' || conflict.files.join() !== 'a.txt') {
+    throw new Error(`the second task should conflict: ${JSON.stringify(conflict)}`)
+  }
+  const author = execFileSync('git', ['log', '-1', '--format=%an', taskBranch('one')], {
+    cwd: repo,
+    encoding: 'utf8',
+  }).trim()
+  if (author !== 'Ada') throw new Error(`commit author was "${author}"`)
+
+  await git.removeWorktree(root, first)
+  await git.removeWorktree(root, second)
+  if (plain('rev-parse', 'main') !== mainBefore) throw new Error('main moved')
+  if (plain('status', '--short') !== '') throw new Error('your checkout was changed')
+  if (readFileSync(join(repo, 'a.txt'), 'utf8') !== 'one\ntwo\nthree\n') {
+    throw new Error('a file in your checkout was changed')
+  }
+  return `git ${version.text}: mission branch, 2 task worktrees, work committed as the employee, 1 merged, 1 conflict named, worktrees removed; main and your checkout untouched`
 }
