@@ -226,6 +226,26 @@ A plan only becomes real when a person presses **Run mission**, and a person sti
 
 **Limits.** These are guardrails, not a judgement of the plan: a manager can still draft a poor, padded or misleading plan within the caps, and you are the one who reads it. The caps are constants in `planning.ts`, not settings. Nothing stops a draft's tasks being assigned to people who are busy; the dispatcher's usual rules decide when each is sent once you run it.
 
+### Git (Phase 3, slice 3a: built, not yet used by tasks)
+
+`GitService` (`src/main/git/`) is the layer tasks will use to work in isolation: a branch and a working folder per task, a diff to review, and merging accepted work. Nothing calls it yet; slices 3b and 3c wire it to dispatch and to accepting a task.
+
+**The model.** A mission gets a branch `shokuba/mission/<id>`, cut from the repository's current commit. Each task gets `shokuba/task/<id>` and its own working folder under `<data>/worktrees/`, never inside your project. Accepting a task merges its branch into the mission branch; you merge the mission branch yourself. (Missions and tasks use separate prefixes because Git cannot hold `shokuba/x` and `shokuba/x/y` at once.)
+
+**Merging without a checkout.** `git merge-tree --write-tree` computes the merge in Git's object store, `commit-tree` writes the merge commit, and `update-ref` moves the branch only if it is still where the merge started. No working folder is touched, so your own checkout never changes, and a conflict is an answer (the files are named, nothing is changed), not a half-merged tree to clean up. This needs Git 2.38+, and 2.40+ for the attribute setting below, so Shokuba requires **Git 2.40 or newer** and says so when it is older.
+
+**What keeps it safe.**
+
+- It creates or moves only `shokuba/mission/<id>` and `shokuba/task/<id>` branches, built from ids and never from text an agent wrote, and every operation checks the name, so it cannot move `main` or any branch of yours. Start points must be a full commit id or one of these branches, never a revision expression.
+- Working folders are created and removed only inside `<data>/worktrees`; a path outside it is refused, so a bug cannot delete something of yours.
+- Git runs with an argument list, never through a shell, with a time limit and a cap on the output it reads.
+- A repository's **hooks** never run from these commands (`core.hooksPath` points at an empty folder), and the **filters and merge drivers its attributes name** never run (attributes are not read). Otherwise a repository an agent had written to could make Shokuba run a command for it, at the moment you accept a task. Diffs disable external diff programs and text conversion.
+- A branch is moved only if it is still where the merge started, and never while it is checked out in a working folder.
+- Commands that change one repository run one at a time.
+- Commits are made with a per-command identity (`Shokuba (name)`, an address that can never be real), so **your own Git settings are never read or written** for authorship or signing.
+
+**Limits.** Attributes are ignored by Shokuba's own commands, so files a repository stores with Git LFS are committed as they are on disk, custom merge drivers do not run, and line-ending rules from `.gitattributes` are not applied (your own `core.autocrlf` still is). A task's folder is a fresh checkout, so dependencies such as `node_modules` are not there: the agent has to install them, and Shokuba does not run setup commands. Committing takes everything that is not ignored, so a secret file the project does not ignore would land in the local task branch (it is never pushed). This isolates work; it is not a sandbox, since an agent can still run Git commands that reach elsewhere.
+
 ### Database
 
 Tables are added by migrations _when a feature needs them_ — never speculatively. Today: `agent_events`, `audit_log`, `schema_migrations`, `employees`, `missions`, `tasks`, `task_dependencies`, `conversations`, `messages`. Both logs are append-only, enforced by database triggers rather than convention. Employees are archived, not deleted, because events refer to them. Native modules (`better-sqlite3`, `node-pty`) are N-API, so the same binaries run under Node (tests) and Electron (app) with no rebuild step.

@@ -42,7 +42,7 @@ Shokuba is being built in the open, in small, tested increments. Here is exactly
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | ✅ **Working today**    | Employees you can create, edit and start · a real terminal for each (xterm.js + PTY) · **Claude Code** launched in it · an isometric voxel office whose bubbles follow the event stream · a simulated demo agent (no AI account needed) · **missions with a task graph** · **messages between agents with loop protection** · **a circuit breaker for runaway agents** · **teams with a manager who talks to you and drafts missions for the team** · event log, redaction, hardened IPC · CI on macOS, Linux and Windows |
 | 🔬 **Not yet verified** | Claude Code, _interactively_, reporting through its hooks and calling the mission tools. Both hook delivery and the MCP handshake are verified against the real Claude Code 2.1.276 in headless mode, and the real interface runs in the terminal, but the interactive end-to-end check is pending (see the [roadmap](docs/ROADMAP.md))                                                                                                                                                                                   |
-| 🚧 **Building next**    | Git worktree isolation: a branch and working tree per task                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 🚧 **Building next**    | Git isolation: a branch and working folder per task. The Git layer is built and tested; connecting it to tasks is next                                                                                                                                                                                                                                                                                                                                                                                                    |
 | 🗺️ **Planned**          | Independent verification & evidence packs · Codex / Gemini CLI / custom providers · GitHub issue → verified PR · the full office (rooms, walking, handoffs) · replay                                                                                                                                                                                                                                                                                                                                                      |
 
 <p align="center">
@@ -101,7 +101,7 @@ Events are **persisted before they are broadcast**, so the live office and a lat
 
 ## Try it
 
-**Requirements:** Node.js 22+, Git. macOS is the supported platform today ([status of other platforms](docs/PLATFORMS.md)).
+**Requirements:** Node.js 22+, Git (2.40+ for the task isolation being built now). macOS is the supported platform today ([status of other platforms](docs/PLATFORMS.md)).
 
 ```bash
 git clone https://github.com/prasodium/shokuba.git
@@ -114,7 +114,7 @@ npm run dev          # launch the app
 
 **With Claude Code:** if `claude` is installed (on your `PATH`, or bundled in the VS Code / Cursor extension), it appears as a provider. Choose a working folder and start the employee. The first time, Claude Code may show its own one-time setup (theme, login) in the terminal panel — finish it there. Shokuba launches Claude Code with permission checks **on** and never offers a way to turn them off.
 
-Verify your setup end to end — this builds the app and runs it inside real Electron, checking SQLite, a restart, a real pseudo-terminal, the whole agent pipeline (a demo agent reporting through the hook server into events, an interrupt, a clean stop), a two-agent mission (a task pasted into a real terminal, submitted over MCP, accepted by a person, releasing the dependent task), a runaway two-agent conversation stopped at the hop limit, a looping agent refused and then paused by the circuit breaker, a manager drafting a plan that goes nowhere until you run it, and Git detection:
+Verify your setup end to end — this builds the app and runs it inside real Electron, checking SQLite, a restart, a real pseudo-terminal, the whole agent pipeline (a demo agent reporting through the hook server into events, an interrupt, a clean stop), a two-agent mission (a task pasted into a real terminal, submitted over MCP, accepted by a person, releasing the dependent task), a runaway two-agent conversation stopped at the hop limit, a looping agent refused and then paused by the circuit breaker, a manager drafting a plan that goes nowhere until you run it, real Git worktrees and merges that leave your checkout untouched, and Git detection:
 
 ```bash
 npm run smoke
@@ -130,6 +130,7 @@ Electron 44.4.3 / Node 24.21.0 (ABI 149) on darwin-arm64
   PASS  message-pipeline
   PASS  breaker-pipeline
   PASS  team-pipeline
+  PASS  git-worktrees
   PASS  locate-git
 ```
 

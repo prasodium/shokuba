@@ -36,7 +36,11 @@ Built in slices, each checked before the next.
 
 ## Phase 3 — Git
 
-- [ ] Worktree + branch per task, diffs, commits, merge and conflict handling
+Built in slices, each checked before the next.
+
+- [x] **3a: The Git layer.** Making a mission branch and a branch plus working folder per task (in Shokuba's data folder, never in your project), committing a task's work as the employee, listing and showing what a task changed, and merging a task into its mission branch **without checking anything out**, with a conflict reported by file and nothing changed. It can only create or move `shokuba/…` branches, so it cannot move `main`, and a repository's hooks, filters and merge drivers never run from it. Verified against real Git on macOS, Linux and Windows. **Not yet used by tasks:** nothing in the app calls it until 3b
+- [ ] 3b: A branch and working folder per task: a fresh agent started in the task's folder, the work committed when the agent submits, and the diff shown in the task's detail. A task whose folder is not a Git repo runs as today, labelled "not isolated"
+- [ ] 3c: Accepting a task merges it into its mission branch; a conflict sends the task back to the agent with the files named; finished working folders are removed. Shokuba never touches `main` and never pushes: you merge the mission branch yourself
 
 ## Phase 4 — Verification
 
