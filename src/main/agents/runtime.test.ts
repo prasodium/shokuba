@@ -85,7 +85,7 @@ function fakeAdapter(): ProviderAdapter {
 }
 
 beforeEach(async () => {
-  dir = realpathSync(mkdtempSync(join(tmpdir(), 'shokuba-runtime-')))
+  dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'shokuba-runtime-')))
   workdir = join(dir, 'work')
   mkdirSync(workdir)
   spawned = []

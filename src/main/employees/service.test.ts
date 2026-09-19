@@ -16,7 +16,7 @@ let running: Set<string>
 let service: EmployeeService
 
 beforeEach(() => {
-  dir = realpathSync(mkdtempSync(join(tmpdir(), 'shokuba-employees-')))
+  dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'shokuba-employees-')))
   workdir = join(dir, 'work')
   mkdirSync(workdir)
   services = createServices({

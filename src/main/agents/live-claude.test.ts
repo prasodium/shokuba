@@ -33,7 +33,7 @@ const SETUP_HINT =
 describe.skipIf(!LIVE)('live Claude Code', () => {
   it('reports a real turn through hooks', async () => {
     const platform = toPlatformId()
-    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'shokuba-live-')))
+    const dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'shokuba-live-')))
     const workdir = join(dir, 'work')
     mkdirSync(workdir)
     writeFileSync(join(workdir, 'hello.txt'), 'Kumquat is the first word of this file.\n')
