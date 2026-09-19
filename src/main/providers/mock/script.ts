@@ -13,7 +13,8 @@
  * With SHOKUBA_MOCK_CHATTY=1 it answers every message it receives, which lets a test start a
  * runaway exchange between two agents. Typing "loop" makes it repeat one call until Shokuba's
  * circuit breaker refuses it (and then stop, as a sensible agent would); "stubborn" keeps
- * trying regardless, until it is interrupted. "plan" makes a demo manager draft a small mission
+ * trying regardless, until it is interrupted. "test" runs a test command for a good while (ten steps'
+ * worth), long enough for the office to send them to the QA bench. "plan" makes a demo manager draft a small mission
  * for the first person who reports to them, using the manager's planning tools. Asked to review
  * someone's work it reads the request back and hands in a small review. When Shokuba refuses a call it does not make it,
  * and reports nothing more about it, exactly as Claude Code does. Plain CommonJS so it runs
@@ -205,6 +206,24 @@ async function runReview() {
   say('[demo] ' + answer)
 }
 
+// One long test run, so the office has time to send them to the QA bench and bring them back.
+async function runTests() {
+  say('[demo] running the tests...')
+  const id = 'toolu_' + Math.random().toString(36).slice(2, 10)
+  const input = { command: 'npm test' }
+  const answer = await report({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: input, tool_use_id: id })
+  const why = refusal(answer)
+  if (why) {
+    say('[demo] refused: ' + why)
+    return
+  }
+  const started = Date.now()
+  while (!aborted && Date.now() - started < stepMs * 10) await sleep(100)
+  if (aborted) return
+  await report({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: input, tool_use_id: id, duration_ms: stepMs * 10 })
+  say('[demo] the tests passed')
+}
+
 async function runTurn(input) {
   busy = true
   aborted = false
@@ -218,6 +237,8 @@ async function runTurn(input) {
     await runLoop(typed === 'stubborn')
   } else if (typed === 'plan') {
     await runPlan()
+  } else if (typed === 'test') {
+    await runTests()
   } else {
     say('[demo] on it...')
     await sleep(stepMs)

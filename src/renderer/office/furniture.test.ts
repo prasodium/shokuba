@@ -14,6 +14,7 @@ import {
   personBoxes,
   plantBoxes,
   rug,
+  walkerBoxes,
 } from './furniture'
 import { PARTITION_HEIGHT, buildOffice, type Rect } from './map'
 import { poseFor } from './pose'
@@ -135,5 +136,76 @@ describe('walls', () => {
   it('cover the floor they were given, exactly', () => {
     const wall = partitionBox(piece)
     expect([wall.x, wall.y, wall.w, wall.d]).toEqual([piece.x, piece.y, piece.w, piece.d])
+  })
+})
+
+describe('a person on their feet', () => {
+  const here = { x: 10, y: 6 }
+  const still = (facing: 0 | 1 | 2 | 3) => walkerBoxes(here, facing, 0, false, 0x336699)
+
+  it('stands on the floor, about a person’s height, around the point they are at', () => {
+    for (const facing of [0, 1, 2, 3] as const) {
+      const boxes = still(facing)
+      expect(Math.min(...boxes.map((b) => b.z))).toBe(0)
+      const top = Math.max(...boxes.map((b) => b.z + b.h))
+      expect(top).toBeGreaterThan(1.3)
+      expect(top).toBeLessThan(1.7)
+      for (const b of boxes) {
+        expect(b.w).toBeGreaterThan(0)
+        expect(b.d).toBeGreaterThan(0)
+        expect(b.x).toBeGreaterThan(here.x - 0.5)
+        expect(b.x + b.w).toBeLessThan(here.x + 0.5)
+        expect(b.y).toBeGreaterThan(here.y - 0.5)
+        expect(b.y + b.d).toBeLessThan(here.y + 0.5)
+      }
+    }
+  })
+
+  it('is dressed in their colour, and has the same parts whichever way they face', () => {
+    for (const facing of [0, 1, 2, 3] as const) {
+      expect(still(facing).some((b) => b.color === 0x336699)).toBe(true)
+      expect(still(facing)).toHaveLength(still(0).length)
+    }
+  })
+
+  it('has their face on the side they are facing, and their back to where they came from', () => {
+    const eyes = (facing: 0 | 1 | 2 | 3) =>
+      still(facing).filter((b) => b.h === 0.06 && b.w * b.d < 0.001 + 0.06 * 0.01)
+    // Facing +y the eyes are in front (larger y); facing -y they are behind (smaller y).
+    expect(eyes(0).every((b) => b.y > here.y)).toBe(true)
+    expect(eyes(2).every((b) => b.y < here.y)).toBe(true)
+    expect(eyes(1).every((b) => b.x > here.x)).toBe(true)
+    expect(eyes(3).every((b) => b.x < here.x)).toBe(true)
+  })
+
+  it('swings the legs one against the other, and the arms against the legs, while walking', () => {
+    const legs = (phase: number) =>
+      walkerBoxes(here, 0, phase, true, 0x336699)
+        .filter((b) => b.h === 0.58)
+        .sort((a, b) => a.x - b.x)
+    const early = legs(0.25)
+    const late = legs(0.75)
+    expect(early[0]?.y).not.toBeCloseTo(early[1]?.y ?? 0)
+    // Half a stride on, the legs have swapped places.
+    expect(early[0]?.y).toBeCloseTo(late[1]?.y ?? 0, 5)
+    expect(early[1]?.y).toBeCloseTo(late[0]?.y ?? 0, 5)
+  })
+
+  it('hangs still when not walking, whatever the phase', () => {
+    const a = walkerBoxes(here, 0, 0.25, false, 0x336699)
+    const b = walkerBoxes(here, 0, 0.75, false, 0x336699)
+    expect(a).toEqual(b)
+  })
+
+  it('is drawn farthest part first, so nothing is hidden the wrong way round', () => {
+    for (const facing of [0, 1, 2, 3] as const) {
+      const boxes = walkerBoxes(here, facing, 0.3, true, 0x336699)
+      const key = (b: (typeof boxes)[number]) => b.x + b.w / 2 + b.y + b.d / 2 + b.z * 0.01
+      for (let i = 1; i < boxes.length; i += 1) {
+        expect(key(boxes[i] as (typeof boxes)[number])).toBeGreaterThanOrEqual(
+          key(boxes[i - 1] as (typeof boxes)[number]) - 1e-9,
+        )
+      }
+    }
   })
 })

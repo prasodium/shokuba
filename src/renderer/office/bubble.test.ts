@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { initialView, type AgentView } from '@shared/agents/view'
-import { BREAKER_HELP, BREAKER_LABELS, STATE_LABELS, bubbleFor, provenance, toneOf } from './bubble'
+import {
+  AWAY_NOTES,
+  BREAKER_HELP,
+  BREAKER_LABELS,
+  STATE_LABELS,
+  bubbleFor,
+  provenance,
+  toneOf,
+} from './bubble'
 import { RUNTIME_STATES } from '@shared/types/agent'
 
 const view = (patch: Partial<AgentView>): AgentView => ({ ...initialView('e1', 't'), ...patch })
@@ -118,5 +126,51 @@ describe('the circuit breaker in the office', () => {
       expect(BREAKER_LABELS[level]).toBeTruthy()
       expect(BREAKER_HELP[level]).toBeTruthy()
     }
+  })
+})
+
+describe('someone who is away from their desk', () => {
+  const testing = (source: 'reported' | 'inferred' | 'simulated' | 'system') =>
+    view({
+      state: 'testing',
+      stateSource: source,
+      activity: { toolName: 'Bash', summary: 'npm test' },
+    })
+
+  it('says where they are, instead of what they are running', () => {
+    const away = bubbleFor(testing('inferred'), 'qa')
+    expect(away.detail).toBe('at the QA bench')
+    expect(away.label).toBe('Testing')
+    expect(bubbleFor(testing('inferred'), null).detail).toBe('npm test')
+    expect(bubbleFor(testing('inferred')).detail).toBe('npm test')
+  })
+
+  it('is always marked as our reading of what the agent is doing, even if the state was reported', () => {
+    expect(bubbleFor(testing('reported'), 'qa').provenance).toBe('inferred')
+    expect(bubbleFor(testing('inferred'), 'qa').provenance).toBe('inferred')
+    expect(bubbleFor(testing('system'), 'qa').provenance).toBe('inferred')
+  })
+
+  it('leaves a demo marked as a demo, since nothing in it is real', () => {
+    expect(bubbleFor(testing('simulated'), 'qa').provenance).toBe('demo')
+  })
+
+  it('does not mark someone at their desk any differently than before', () => {
+    expect(bubbleFor(testing('reported')).provenance).toBeNull()
+    expect(bubbleFor(testing('simulated')).provenance).toBe('demo')
+  })
+
+  it('has a way of saying each kind of place, and keeps the tone and any caution', () => {
+    expect(Object.keys(AWAY_NOTES).sort()).toEqual(['board', 'inbox', 'qa', 'reading'])
+    for (const note of Object.values(AWAY_NOTES)) expect(note.length).toBeLessThanOrEqual(34)
+    const limited = bubbleFor(
+      view({ ...testing('inferred'), pid: 1, breakerLevel: 'constrain' }),
+      'qa',
+    )
+    expect(limited).toMatchObject({ caution: 'limited', tone: 'wait', detail: 'at the QA bench' })
+  })
+
+  it('says nothing about a place for an agent nobody knows about', () => {
+    expect(bubbleFor(undefined, 'qa').detail).toBeNull()
   })
 })

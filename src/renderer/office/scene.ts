@@ -3,6 +3,7 @@ import 'pixi.js/unsafe-eval'
 import { Application, Container, Graphics, Polygon, Text, type TextOptions } from 'pixi.js'
 import type { AgentView } from '@shared/agents/view'
 import { bubbleFor, type BubbleModel } from './bubble'
+import { Director, type Assignment, type Subject } from './director'
 import {
   actionForKey,
   clampCamera,
@@ -34,6 +35,7 @@ import {
   personBoxes,
   plantBoxes,
   rug,
+  walkerBoxes,
 } from './furniture'
 import {
   boxFaces,
@@ -53,14 +55,30 @@ import {
   buildOffice,
   depthOf,
   groupWalls,
+  seatPoint,
   stationRect,
   type DeskSlot,
   type OfficeMap,
   type Place,
+  type PlaceKind,
   type Rect,
   type Room,
 } from './map'
+import { buildNavGrid, reachableFrom, seatExit, type NavGrid } from './nav'
 import { LED_COLORS, poseFor } from './pose'
+import {
+  advance,
+  depthOfWalker,
+  facingOf,
+  gaitPhase,
+  pathHome,
+  pathTo,
+  seatedAt,
+  standingAt,
+  startWalk,
+  type Home,
+  type Walker,
+} from './walker'
 
 export interface SceneEmployee {
   id: string
@@ -321,6 +339,12 @@ class Desk {
   private readonly fx = new Graphics()
   private view: AgentView | undefined
   private readonly shirt: number
+  /** Their person is not at the desk: walking, or standing at a shared place. */
+  private away = false
+  /** The kind of place they have gone to, if they are on their way to one or there. */
+  private awayAt: PlaceKind | null = null
+  /** Where their head is while they are away, so the bubble goes with them. */
+  private headAt: { x: number; y: number; z: number } | null = null
 
   constructor(
     readonly employee: SceneEmployee,
@@ -376,6 +400,17 @@ class Desk {
     this.view = view
   }
 
+  /** Say whether their person is away from the desk, and if so where they have gone. */
+  setTravel(travel: {
+    away: boolean
+    at: PlaceKind | null
+    head: { x: number; y: number; z: number } | null
+  }): void {
+    this.away = travel.away
+    this.awayAt = travel.at
+    this.headAt = travel.head
+  }
+
   /** Release everything this desk created, including the labels that live in the overlay. */
   dispose(): void {
     this.container.destroy({ children: true })
@@ -404,8 +439,11 @@ class Desk {
     const state = this.view?.state ?? 'offline'
     const pose = poseFor(state, time)
 
+    // Nobody is in the chair while they are away, and the monitor goes on showing the state.
     this.person.clear()
-    for (const box of personBoxes(pose, this.shirt)) drawBox(this.person, at(box, this.slot))
+    if (!this.away) {
+      for (const box of personBoxes(pose, this.shirt)) drawBox(this.person, at(box, this.slot))
+    }
 
     this.fx.clear()
     const led = at(LED_BOX, this.slot)
@@ -418,12 +456,13 @@ class Desk {
     }
     drawBox(this.fx, { ...led, color: ledColor })
 
-    const model = bubbleFor(this.view)
+    const model = bubbleFor(this.view, this.awayAt)
     this.bubble.update(model, LED_COLORS[poseFor(state, 0).led])
     this.bubble.tick(time)
   }
 
   headScreen(): { x: number; y: number } {
+    if (this.away && this.headAt) return project(this.headAt.x, this.headAt.y, this.headAt.z)
     return project(this.slot.x + HEAD_ANCHOR.x, this.slot.y + HEAD_ANCHOR.y, HEAD_ANCHOR.z)
   }
 
@@ -435,6 +474,59 @@ class Desk {
   nameScreen(): { x: number; y: number } {
     return project(this.slot.x + NAME_ANCHOR.x, this.slot.y + NAME_ANCHOR.y, NAME_ANCHOR.z)
   }
+}
+
+/**
+ * A person on their feet: walking, or standing at a shared place. Drawn only while they are away
+ * from their desk; while seated, the desk draws them.
+ */
+class WalkerView {
+  readonly g = new Graphics()
+
+  constructor(
+    id: string,
+    private readonly shirt: number,
+    onSelect: (id: string) => void,
+  ) {
+    this.g.visible = false
+    this.g.eventMode = 'static'
+    this.g.cursor = 'pointer'
+    this.g.on('pointertap', () => onSelect(id))
+  }
+
+  draw(walker: Walker): void {
+    const away = walker.mode !== 'seated'
+    this.g.visible = away
+    if (!away) return
+    this.g.zIndex = depthOfWalker(walker)
+    this.g.clear()
+    const feet = project(walker.x, walker.y, 0)
+    this.g.ellipse(feet.x, feet.y, 11, 5.5).fill({ color: 0x000000, alpha: 0.25 })
+    const boxes = walkerBoxes(
+      { x: walker.x, y: walker.y },
+      walker.facing,
+      gaitPhase(walker),
+      walker.mode === 'walking',
+      this.shirt,
+    )
+    for (const box of boxes) drawBox(this.g, box)
+  }
+
+  dispose(): void {
+    this.g.destroy()
+  }
+}
+
+/** Where one employee's person is, and what they were last told to do. */
+interface Traveller {
+  walker: Walker
+  home: Home
+  slot: DeskSlot
+  color: string
+  view: WalkerView
+  /** What they were last told: `desk`, or a place and spot. Only a change starts a new walk. */
+  commanded: string
+  target: Assignment | null
 }
 
 /**
@@ -456,6 +548,10 @@ export class OfficeScene {
   private statics: Container[] = []
   private placeLabels: PlaceLabel[] = []
   private map: OfficeMap = buildOffice(0)
+  private grid: NavGrid = buildNavGrid(this.map)
+  private mainFloor = new Set<number>()
+  private director = new Director(this.map.places)
+  private readonly travellers = new Map<string, Traveller>()
   private bounds: Bounds
   private camera: Camera
   /** Until the person moves the camera, it keeps the whole office in view as things change. */
@@ -520,6 +616,7 @@ export class OfficeScene {
     this.app.ticker.add((ticker) => {
       const dt = ticker.deltaMS / 1000
       if (!this.reducedMotion) this.time += dt
+      this.moveEveryone(dt)
       for (const desk of this.deskViews.values()) desk.tick(this.time)
       this.followSelected(dt)
       this.placeOverlay()
@@ -582,6 +679,7 @@ export class OfficeScene {
         this.overlay.addChild(view)
       }
     }
+    this.syncTravellers()
     this.placeOverlay()
   }
 
@@ -667,7 +765,11 @@ export class OfficeScene {
     if (!this.following || this.selected === null) return
     const desk = this.deskViews.get(this.selected)
     if (!desk) return
-    const next = followStep(this.camera, desk.centreScreen(), dt, this.reducedMotion, this.bounds)
+    // Follow the person, wherever they have walked to, or the desk if they are sitting at it.
+    const walker = this.travellers.get(this.selected)?.walker
+    const target =
+      walker && walker.mode !== 'seated' ? project(walker.x, walker.y, 0.8) : desk.centreScreen()
+    const next = followStep(this.camera, target, dt, this.reducedMotion, this.bounds)
     if (next.x !== this.camera.x || next.y !== this.camera.y || next.zoom !== this.camera.zoom) {
       this.camera = next
       this.applyCamera()
@@ -823,9 +925,138 @@ export class OfficeScene {
       this.overlay.addChild(label.view)
     }
 
+    // Where people can walk in this plan, and who is where in it.
+    this.grid = buildNavGrid(map)
+    const anchor = map.places[0]?.stand
+    this.mainFloor = anchor ? reachableFrom(this.grid, anchor) : new Set()
+    this.director.setPlaces(map.places)
+    this.syncTravellers(true)
+
     this.bounds = this.boundsOf(map)
     this.camera = this.autoFit ? fitCamera(this.bounds) : clampCamera(this.camera, this.bounds)
     this.applyCamera()
+  }
+
+  // ---------- people walking ----------
+
+  private homeFor(slot: DeskSlot): Home {
+    const seat = seatPoint(slot)
+    return { seat, exit: seatExit(this.grid, slot, this.mainFloor) ?? seat }
+  }
+
+  /** Make sure every desk has a person to move, and nobody without a desk does. */
+  private syncTravellers(planChanged = false): void {
+    for (const [id, traveller] of this.travellers) {
+      if (!this.deskViews.has(id)) {
+        traveller.view.dispose()
+        this.travellers.delete(id)
+      }
+    }
+    for (const [id, desk] of this.deskViews) {
+      const existing = this.travellers.get(id)
+      const home = this.homeFor(desk.slot)
+      const sameDesk =
+        existing &&
+        existing.slot.x === desk.slot.x &&
+        existing.slot.y === desk.slot.y &&
+        existing.color === desk.employee.color
+      if (existing && sameDesk) {
+        existing.home = home
+        // The floor plan changed under them: think again about the way to where they are going.
+        if (planChanged) this.command(existing, existing.target, true)
+        continue
+      }
+      existing?.view.dispose()
+      const view = new WalkerView(id, hexToNumber(desk.employee.color), (who) => this.select(who))
+      this.items.addChild(view.g)
+      this.travellers.set(id, {
+        walker: seatedAt(home.seat),
+        home,
+        slot: desk.slot,
+        color: desk.employee.color,
+        view,
+        commanded: 'desk',
+        target: null,
+      })
+    }
+  }
+
+  private spotOf(target: Assignment): { x: number; y: number } | undefined {
+    return this.map.places.find((p) => p.id === target.placeId)?.slots[target.slot]
+  }
+
+  /** Which way to face at a place: toward it. */
+  private facingAt(target: Assignment): 0 | 1 | 2 | 3 {
+    const place = this.map.places.find((p) => p.id === target.placeId)
+    const spot = place?.slots[target.slot]
+    if (!place || !spot) return 0
+    const f = place.footprint
+    return facingOf(f.x + f.w / 2 - spot.x, f.y + f.d / 2 - spot.y, 0)
+  }
+
+  /**
+   * Tell someone where to be. A change of orders starts a walk from wherever they are; `snap` puts
+   * them there at once, for someone seen for the first time or who has nobody to walk for.
+   */
+  private command(traveller: Traveller, target: Assignment | null, snap: boolean): void {
+    const spot = target ? this.spotOf(target) : undefined
+    const place = target && spot ? target : null
+    traveller.commanded = place ? `${place.placeId}:${place.slot}` : 'desk'
+    traveller.target = place
+
+    if (!snap) {
+      const path = spot
+        ? pathTo(this.grid, traveller.walker, traveller.home, spot)
+        : pathHome(this.grid, traveller.walker, traveller.home)
+      if (path) {
+        traveller.walker = startWalk(
+          traveller.walker,
+          path,
+          place ? { kind: 'stand', facing: this.facingAt(place) } : { kind: 'sit' },
+        )
+        return
+      }
+      // No way there (which the plan's tests rule out): appear there rather than be stuck.
+    }
+    traveller.walker =
+      place && spot ? standingAt(spot, this.facingAt(place)) : seatedAt(traveller.home.seat)
+  }
+
+  /** Ask the director who should be where, send people that way, and move them on. */
+  private moveEveryone(dt: number): void {
+    const now = Date.now()
+    const subjects: Subject[] = []
+    for (const id of this.deskViews.keys()) {
+      const view = this.views[id]
+      const since = view ? Date.parse(view.since) : NaN
+      subjects.push({
+        id,
+        state: view?.state ?? 'offline',
+        since: Number.isFinite(since) ? since : now,
+      })
+    }
+    const decisions = this.director.update(now, subjects, { reducedMotion: this.reducedMotion })
+
+    for (const [id, decision] of decisions) {
+      const traveller = this.travellers.get(id)
+      const desk = this.deskViews.get(id)
+      if (!traveller || !desk) continue
+      const key = decision.target ? `${decision.target.placeId}:${decision.target.slot}` : 'desk'
+      if (decision.first || decision.absent) {
+        this.command(traveller, decision.target, true)
+      } else if (key !== traveller.commanded) {
+        this.command(traveller, decision.target, false)
+      }
+      // Never more than a moment's worth, so coming back to a hidden window does not make anyone leap.
+      traveller.walker = advance(traveller.walker, Math.min(dt, 0.25))
+      traveller.view.draw(traveller.walker)
+      const away = traveller.walker.mode !== 'seated'
+      desk.setTravel({
+        away,
+        at: traveller.target?.kind ?? null,
+        head: away ? { x: traveller.walker.x, y: traveller.walker.y, z: 1.75 } : null,
+      })
+    }
   }
 
   /** A workstation with nobody at it: a reading desk, waiting. */

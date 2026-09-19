@@ -1,6 +1,7 @@
-import { shade, type Box } from './iso'
-import { PARTITION_HEIGHT, type Rect } from './map'
+import { shade, sortByDepth, type Box } from './iso'
+import { PARTITION_HEIGHT, type Point2, type Rect } from './map'
 import type { Pose } from './pose'
+import type { Facing } from './walker'
 
 /**
  * Voxel geometry for one employee's workstation, in grid units relative to the desk
@@ -201,4 +202,70 @@ export function plantBoxes(footprint: Rect): Box[] {
     box(x - 0.08, y - 0.08, 0.32, 0.56, 0.56, 0.3, 0x4f8a4a),
     box(x + 0.03, y + 0.03, 0.62, 0.34, 0.34, 0.3, 0x63a45d),
   ]
+}
+
+// ---------- a person on their feet ----------
+
+/** Turn a box about the origin by `turns` quarter turns, so a person can face any of the four ways. */
+function turnBox(b: Box, turns: number): Box {
+  const spin = (x: number, y: number): Point2 => {
+    switch (((turns % 4) + 4) % 4) {
+      case 1:
+        return { x: y, y: -x }
+      case 2:
+        return { x: -x, y: -y }
+      case 3:
+        return { x: -y, y: x }
+      default:
+        return { x, y }
+    }
+  }
+  const corners = [spin(b.x, b.y), spin(b.x + b.w, b.y + b.d)]
+  const x = Math.min(...corners.map((c) => c.x))
+  const y = Math.min(...corners.map((c) => c.y))
+  return {
+    ...b,
+    x,
+    y,
+    w: Math.max(...corners.map((c) => c.x)) - x,
+    d: Math.max(...corners.map((c) => c.y)) - y,
+  }
+}
+
+/**
+ * A person standing or walking, centred on `at` on the floor. `phase` is how far through a stride
+ * they are (0 to 1); legs and arms swing opposite to each other while `walking`, and hang still
+ * otherwise. Boxes come back in painter's order for the way they are facing.
+ */
+export function walkerBoxes(
+  at: Point2,
+  facing: Facing,
+  phase: number,
+  walking: boolean,
+  shirt: number,
+): Box[] {
+  const swing = walking ? Math.sin(phase * Math.PI * 2) : 0
+  const sleeve = shade(shirt, 0.85)
+  // Built facing +y, about the origin; turned and moved afterwards.
+  const local: Box[] = [
+    // legs, one stepping forward as the other goes back
+    box(-0.19, -0.07 + 0.15 * swing, 0, 0.14, 0.14, 0.58, PANTS),
+    box(0.05, -0.07 - 0.15 * swing, 0, 0.14, 0.14, 0.58, PANTS),
+    // arms hang from the shoulders and swing against the legs
+    box(-0.32, -0.055 - 0.1 * swing, 0.6, 0.11, 0.11, 0.46, sleeve),
+    box(0.21, -0.055 + 0.1 * swing, 0.6, 0.11, 0.11, 0.46, sleeve),
+    // torso
+    box(-0.2, -0.12, 0.58, 0.4, 0.24, 0.5, shirt),
+    // head, with hair over the top and back, and eyes on the face that looks the way they walk
+    box(-0.17, -0.16, 1.1, 0.34, 0.32, 0.32, SKIN),
+    box(-0.19, -0.18, 1.36, 0.38, 0.36, 0.12, HAIR),
+    box(-0.19, -0.18, 1.12, 0.38, 0.06, 0.24, HAIR),
+    box(-0.09, 0.16, 1.24, 0.06, 0.01, 0.06, HAIR),
+    box(0.05, 0.16, 1.24, 0.06, 0.01, 0.06, HAIR),
+  ]
+  const placed = local.map((b) => {
+    const t = turnBox(b, facing)
+    return { ...t, x: t.x + at.x, y: t.y + at.y }
+  })
+  return sortByDepth(placed)
 }

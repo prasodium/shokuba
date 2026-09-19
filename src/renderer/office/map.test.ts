@@ -12,6 +12,7 @@ import {
   deskRoomsFor,
   groupWalls,
   overlaps,
+  seatPoint,
   stationRect,
   type OfficeMap,
   type Point2,
@@ -325,5 +326,22 @@ describe('groupWalls', () => {
 
   it('gives nothing for nothing', () => {
     expect(groupWalls([])).toEqual([])
+  })
+})
+
+describe('where a person sits', () => {
+  it('is on the chair, behind the desk and inside the workstation, for every desk and reading desk', () => {
+    const map = buildOffice(12)
+    const slots = [...map.desks, ...map.places.flatMap((p) => (p.station ? [p.station] : []))]
+    expect(slots.length).toBe(14)
+    for (const slot of slots) {
+      const seat = seatPoint(slot)
+      // The chair is drawn at 0.55 to 1.17 across and 0.14 to 0.76 back; the desk starts at 0.86.
+      expect(seat.x).toBeGreaterThan(slot.x + 0.55)
+      expect(seat.x).toBeLessThan(slot.x + 1.17)
+      expect(seat.y).toBeGreaterThan(slot.y + 0.14)
+      expect(seat.y).toBeLessThan(slot.y + 0.76)
+      expect(seat.y).toBeLessThan(slot.y + 0.86)
+    }
   })
 })

@@ -84,8 +84,18 @@ export interface Place {
   footprint: Rect
   /** Where someone stands to use it (on the floor, clear of furniture). */
   stand: Point2
+  /**
+   * Every spot where someone can stand to use it at once (`stand` is the first). A place that only
+   * one person can use at a time has one.
+   */
+  slots: Point2[]
   /** A reading place is a workstation; this is where it goes. */
   station?: DeskSlot
+}
+
+/** Where a person sits at a workstation: on the chair, behind the desk. */
+export function seatPoint(slot: { x: number; y: number }): Point2 {
+  return { x: slot.x + 0.85, y: slot.y + 0.45 }
 }
 
 export interface Prop {
@@ -165,6 +175,33 @@ function door(axis: 'x' | 'y', at: number, from: number, to: number): Door {
   return { axis, at, from, to, middle: axis === 'x' ? { x: middle, y: at } : { x: at, y: middle } }
 }
 
+const place = (
+  id: string,
+  kind: PlaceKind,
+  label: string,
+  footprint: Rect,
+  slots: Point2[],
+): Place => ({ id, kind, label, footprint, stand: slots[0] as Point2, slots })
+
+/** Where the two reading desks go in the commons room, and how far back from the north wall. */
+const READING_X = [3.4, 6.2] as const
+const READING_Y = 3.9
+
+/** A reading desk: a workstation whose front (south) is where to stand if not sitting at it. */
+function readingDesk(
+  id: string,
+  x: number,
+  y: number,
+  station: (x: number, y: number) => DeskSlot,
+): Place {
+  // Far enough in front of the desk to be on open floor, and not into a wall behind it.
+  const stand = { x: x + 0.85, y: y + STATION_DEPTH + 0.6 }
+  return {
+    ...place(id, 'reading', 'Reading room', { x, y, w: STATION_WIDTH, d: STATION_DEPTH }, [stand]),
+    station: station(x, y),
+  }
+}
+
 /** The shared places, in the commons room whose low corner is `o`. */
 function commonsPlaces(o: Point2, station: (x: number, y: number) => DeskSlot): Place[] {
   const at = (x: number, y: number): Point2 => ({ x: o.x + x, y: o.y + y })
@@ -175,43 +212,18 @@ function commonsPlaces(o: Point2, station: (x: number, y: number) => DeskSlot): 
     d,
   })
   return [
-    {
-      id: 'board',
-      kind: 'board',
-      label: 'Mission board',
-      footprint: rect(0.9, 0, 3.0, 0.3),
-      stand: at(2.4, 1.3),
-    },
-    {
-      id: 'qa',
-      kind: 'qa',
-      label: 'QA bench',
-      footprint: rect(4.7, 0.25, 2.8, 0.8),
-      stand: at(6.1, 1.8),
-    },
-    {
-      id: 'inbox',
-      kind: 'inbox',
-      label: 'Your inbox',
-      footprint: rect(1.0, 5.0, 2.0, 1.5),
-      stand: at(2.0, 6.75),
-    },
-    {
-      id: 'reading-1',
-      kind: 'reading',
-      label: 'Reading room',
-      footprint: rect(4.4, 3.9, STATION_WIDTH, STATION_DEPTH),
-      stand: at(4.4 + 0.85, 3.9 + STATION_DEPTH + 0.35),
-      station: station(o.x + 4.4, o.y + 3.9),
-    },
-    {
-      id: 'reading-2',
-      kind: 'reading',
-      label: 'Reading room',
-      footprint: rect(6.2, 3.9, STATION_WIDTH, STATION_DEPTH),
-      stand: at(6.2 + 0.85, 3.9 + STATION_DEPTH + 0.35),
-      station: station(o.x + 6.2, o.y + 3.9),
-    },
+    place('board', 'board', 'Mission board', rect(0.9, 0, 3.0, 0.3), [at(2.4, 1.3)]),
+    // Three people can stand at the bench at once.
+    place('qa', 'qa', 'QA bench', rect(4.7, 0.25, 2.8, 0.8), [
+      at(5.3, 1.8),
+      at(6.1, 1.8),
+      at(6.9, 1.8),
+    ]),
+    // Up from the front edge so there is open floor to stand on in front of it, wall or no wall.
+    place('inbox', 'inbox', 'Your inbox', rect(1.0, 4.4, 2.0, 1.5), [at(2.0, 6.25)]),
+    // Two reading desks with an aisle between them, so each can be got in and out of.
+    readingDesk('reading-1', o.x + READING_X[0], o.y + READING_Y, station),
+    readingDesk('reading-2', o.x + READING_X[1], o.y + READING_Y, station),
   ]
 }
 
@@ -253,12 +265,10 @@ export function buildOffice(employees: number): OfficeMap {
       ...wallPieces('y', ROOM_WIDTH, ROOM_DEPTH, depth, gapsOn('y', ROOM_WIDTH)),
     )
   }
-  // The reading room is an alcove in the commons room: a wall behind the desks and one at the side.
+  // The reading room is an alcove in the commons room: a wall behind the two desks. Its other sides
+  // are open, so both desks can be got in and out of.
   const ox = ROOM_WIDTH
-  partitions.push(
-    ...wallPieces('x', 3.5, ox + 4.3, ox + ROOM_WIDTH, []),
-    ...wallPieces('y', ox + 4.3, 3.5, 5.6, []),
-  )
+  partitions.push(...wallPieces('x', 3.5, ox + READING_X[0] - 0.1, ox + ROOM_WIDTH, []))
 
   const desks: DeskSlot[] = rooms
     .filter((r) => r.kind === 'desks')

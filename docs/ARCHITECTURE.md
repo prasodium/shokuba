@@ -358,7 +358,17 @@ PixiJS 8 draws an original isometric-voxel office: each employee has a desk, a c
 
 **The shared places stand idle.** The board is bare, the bench's screens are dark and the trays are empty: nothing on them is shown until it is a picture of something recorded, so an idle office never looks busy. That is added on top of them in slice 5c.
 
-The office has up to twelve desks; more employees than that are counted but not drawn. Movement (5b) and handoffs (5c) are not built yet.
+The office has up to twelve desks; more employees than that are counted but not drawn.
+
+**Walking (slice 5b).** Three small pure modules, each tested on its own, and the scene only draws what they say.
+
+- `nav.ts` cuts the floor into half-tile cells and marks a cell free if a walker's body, standing at its centre, would be on the floor and clear of every desk (empty ones too, so paths do not change as people are hired), wall, plant and piece of furniture. A\* moves eight ways and never cuts a corner, and the result is straightened wherever the way is clear. A seat sits inside a blocked cell by design, so a person first steps out of it to the side (looking outward until it finds free floor, and never onto a pocket that leads nowhere). Tests prove, for every team size, that every place, door and seat is on one connected floor, which is what caught two reading desks that could not be reached, before anyone tried to walk to them.
+- `walker.ts` moves one person along a path on a clock that is passed in: speed, which way they face, the swing of their legs, standing up from and sitting down into a seat, and never carrying time past the end of a path.
+- `director.ts` decides who goes where from what agents are doing and what time it is. It is a table of rules (today one: a `testing` state goes to the QA bench, after three seconds, and back two and a half seconds after it ends), which is all a later slice needs to add to. It refuses to twitch (nothing happens for a state that has not lasted, and leaving lingers), gives each place a limited number of spots, and does nothing at all with reduced motion.
+
+**What walking claims, and does not.** A person at the QA bench means only that the agent ran a shell command that looks like a test run. That is a guess (a command can look like a test run and not be one), so the bubble says so: _at the QA bench_, marked `inferred` (or `demo` for the simulated agent), even when the state itself was reported. The bench's screens stay dark: nothing on the bench pretends to be running anything. Nobody walks for a guess that lasts less than three seconds, or when the operating system asks for reduced motion.
+
+Handoffs of work (5c) are not built yet.
 
 ## Planned
 

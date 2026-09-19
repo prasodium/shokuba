@@ -2,6 +2,7 @@ import type { AgentView } from '@shared/agents/view'
 import type { BreakerLevel } from '@shared/breaker'
 import type { EventSource } from '@shared/events/schema'
 import type { RuntimeState } from '@shared/types/agent'
+import type { PlaceKind } from './map'
 
 /** How urgent or lively a state looks. Drives colour, never meaning. */
 export type Tone = 'off' | 'idle' | 'busy' | 'wait' | 'error'
@@ -82,8 +83,22 @@ function clip(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text
 }
 
-/** What the status bubble above an employee says, from their current view. */
-export function bubbleFor(view: AgentView | undefined): BubbleModel {
+/** How the bubble says where someone is when they are away from their desk. */
+export const AWAY_NOTES: Record<PlaceKind, string> = {
+  qa: 'at the QA bench',
+  reading: 'in the reading room',
+  inbox: 'at your inbox',
+  board: 'at the mission board',
+}
+
+/**
+ * What the status bubble above an employee says, from their current view. `awayAt` is the kind of
+ * place they have gone to, if they are not at their desk.
+ */
+export function bubbleFor(
+  view: AgentView | undefined,
+  awayAt: PlaceKind | null = null,
+): BubbleModel {
   if (!view) {
     return {
       label: 'Offline',
@@ -112,12 +127,20 @@ export function bubbleFor(view: AgentView | undefined): BubbleModel {
         : null
   const tone = TONES[view.state]
 
+  // Going somewhere because of what an agent is doing is our reading of it, never something the agent
+  // said, so someone who is away is always marked as such (a demo stays a demo).
+  const provenanceNow: Provenance = awayAt
+    ? view.stateSource === 'simulated'
+      ? 'demo'
+      : 'inferred'
+    : provenance(view.stateSource)
+
   return {
     label: STATE_LABELS[view.state],
-    detail: detail ? clip(detail, MAX_DETAIL) : null,
+    detail: awayAt ? AWAY_NOTES[awayAt] : detail ? clip(detail, MAX_DETAIL) : null,
     // Amber, like anything else that needs a person's eye; a real error stays red.
     tone: caution && tone !== 'error' ? 'wait' : tone,
-    provenance: provenance(view.stateSource),
+    provenance: provenanceNow,
     caution,
     visible: true,
   }
