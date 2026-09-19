@@ -181,6 +181,24 @@ describe("the agent's introduction", () => {
     expect(text).toContain('Nobody reports to you yet; list_teammates shows who does')
   })
 
+  it('pre-approves the planning tools for a manager only, and says what a manager may do with them', () => {
+    const manager = adapter.buildLaunch({
+      ...input({ isManager: true }),
+      team: { manager: null, reports: [] },
+    })
+    const employee = adapter.buildLaunch(input())
+    const allowed = (args: string[]): string => args[args.indexOf('--allowedTools') + 1] ?? ''
+    expect(allowed(manager.args)).toContain('mcp__shokuba__draft_mission')
+    expect(allowed(manager.args)).toContain('mcp__shokuba__add_task')
+    expect(allowed(manager.args)).toContain('mcp__shokuba__send_message')
+    expect(allowed(employee.args)).not.toContain('draft_mission')
+    expect(allowed(employee.args)).toContain('mcp__shokuba__send_message')
+    const prompt = manager.args[manager.args.indexOf('--append-system-prompt') + 1] ?? ''
+    expect(prompt).toContain('draft_mission and add_task')
+    expect(prompt).toContain('You cannot run it or accept anyone')
+    expect(employee.args.join(' ')).not.toContain('draft_mission and add_task')
+  })
+
   it('is what a launched agent is given', () => {
     const launch = adapter.buildLaunch({
       ...input(),

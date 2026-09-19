@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { EventSource } from '@shared/events/schema'
 import { HUMAN, MESSAGE_KINDS } from '@shared/messages'
 import { MessageError, type MessageService } from '../messages/service'
+import { ManagerPlanning } from '../missions/planning'
 import { MissionError, type MissionService } from '../missions/service'
 import { defineTool, McpToolError, type McpTool } from './server'
 
@@ -15,6 +16,15 @@ export const AGENT_TOOL_NAMES = [
   'send_message',
 ] as const
 
+/** Tools only a manager is offered: drafting work for their team, and seeing how it is going. */
+export const MANAGER_TOOL_NAMES = [
+  'draft_mission',
+  'add_task',
+  'remove_task',
+  'get_draft',
+  'team_status',
+] as const
+
 /**
  * The tools an agent may always use, even paused: they are how it hands work back to a person.
  * Everything else can be denied by the circuit breaker.
@@ -25,6 +35,11 @@ export const HAND_BACK_TOOLS: ReadonlySet<string> = new Set(
 
 /** Full names, as Claude Code's permission rules refer to them. */
 export const AGENT_TOOL_PERMISSIONS = AGENT_TOOL_NAMES.map(
+  (name) => `mcp__${SHOKUBA_MCP_SERVER}__${name}`,
+)
+
+/** A manager's tools too, pre-approved so drafting a plan never stops at a permission prompt. */
+export const MANAGER_TOOL_PERMISSIONS = MANAGER_TOOL_NAMES.map(
   (name) => `mcp__${SHOKUBA_MCP_SERVER}__${name}`,
 )
 
@@ -95,6 +110,8 @@ export function createAgentTools(
   messages: MessageService,
   team: Team,
 ): McpTool<AgentToolContext>[] {
+  const planning = new ManagerPlanning(missions, team)
+  const managerOnly = (ctx: AgentToolContext): boolean => planning.isManager(ctx.employeeId)
   return [
     defineTool<AgentToolContext, z.ZodObject<Record<string, never>>>({
       name: 'get_current_task',
@@ -254,6 +271,98 @@ export function createAgentTools(
             ? 'Sent to the person you work for. Do not wait for a reply; carry on.'
             : 'Sent. They will see it when their current turn ends. Do not wait for a reply; carry on.'
         }),
+    }),
+
+    // ---------- a manager's tools ----------
+
+    defineTool({
+      name: 'draft_mission',
+      description:
+        'Start a draft mission for your team. A draft does nothing by itself: the person reviews it and presses Run mission, and only then are its tasks handed out. ' +
+        'After this, use add_task for each piece of work, then tell the person (send_message to "human") that the draft is ready for them.',
+      input: z.object({
+        title: z.string().min(1).max(120).describe('A short single-line title.'),
+        description: z.string().max(4000).optional().describe('What the mission is for.'),
+        priority: z.enum(['low', 'normal', 'high']).optional(),
+      }),
+      visibleTo: managerOnly,
+      handler: (args, ctx) =>
+        explain(() => {
+          const mission = planning.draftMission(ctx.employeeId, args, ctx.source)
+          return `Drafted "${mission.title}" (id ${mission.id}). It is only a draft: nothing is sent until the person runs it. Add its tasks with add_task.`
+        }),
+    }),
+
+    defineTool({
+      name: 'add_task',
+      description:
+        'Add a task to one of your drafts. Assign it to yourself or to someone who reports to you. ' +
+        'dependsOn lists tasks in this draft that must finish first, by id or exact title. You can only add to a draft you wrote that the person has not yet run.',
+      input: z.object({
+        missionId: z
+          .string()
+          .min(1)
+          .max(200)
+          .describe('The draft, from draft_mission or get_draft.'),
+        title: z.string().min(1).max(160).describe('A short single-line title.'),
+        description: z
+          .string()
+          .max(8000)
+          .optional()
+          .describe('What to do and how to know it is done. The assignee reads this.'),
+        assignee: z
+          .string()
+          .max(200)
+          .optional()
+          .describe('A name or id of someone on your team, or yourself.'),
+        dependsOn: z.array(z.string().min(1).max(200)).max(50).optional(),
+        priority: z.enum(['low', 'normal', 'high']).optional(),
+      }),
+      visibleTo: managerOnly,
+      handler: (args, ctx) =>
+        explain(() => {
+          const { task, assigneeName, waitsFor } = planning.addTask(
+            ctx.employeeId,
+            args,
+            ctx.source,
+          )
+          return (
+            `Added "${task.title}" (id ${task.id})` +
+            (assigneeName ? `, assigned to ${assigneeName}` : ', not assigned to anyone yet') +
+            (waitsFor.length > 0 ? `, after ${waitsFor.map((t) => `"${t}"`).join(' and ')}` : '') +
+            '.'
+          )
+        }),
+    }),
+
+    defineTool({
+      name: 'remove_task',
+      description: 'Remove a task from one of your drafts, for example one you added by mistake.',
+      input: z.object({ taskId: z.string().min(1).max(200) }),
+      visibleTo: managerOnly,
+      handler: (args, ctx) =>
+        explain(() => {
+          const task = planning.removeTask(ctx.employeeId, args.taskId, ctx.source)
+          return `Removed "${task.title}" from the draft.`
+        }),
+    }),
+
+    defineTool({
+      name: 'get_draft',
+      description:
+        'Shows one of your drafts with its tasks, who each is assigned to and what each waits for. Without a missionId, lists your open drafts. Use it to check your plan before telling the person.',
+      input: z.object({ missionId: z.string().min(1).max(200).optional() }),
+      visibleTo: managerOnly,
+      handler: (args, ctx) => explain(() => planning.describeDraft(ctx.employeeId, args.missionId)),
+    }),
+
+    defineTool<AgentToolContext, z.ZodObject<Record<string, never>>>({
+      name: 'team_status',
+      description:
+        'Shows the people who report to you: whether each is running and what task they are on.',
+      input: z.object({}),
+      visibleTo: managerOnly,
+      handler: (_args, ctx) => explain(() => planning.teamStatus(ctx.employeeId)),
     }),
   ]
 }

@@ -152,3 +152,38 @@ describe('McpEndpoint', () => {
     expect((await call('ping', undefined, 7))?.id).toBe(7)
   })
 })
+
+describe('tools only some callers may use', () => {
+  const secret = defineTool<Ctx, z.ZodObject<Record<string, never>>>({
+    name: 'secret',
+    description: 'Only for the boss',
+    input: z.object({}),
+    visibleTo: (who) => who.who === 'boss',
+    handler: (_args, who) => `hello ${who.who}`,
+  })
+  const gated = new McpEndpoint<Ctx>({ name: 'shokuba', version: '1' }, [echo, secret])
+  const as = (who: string, method: string, params?: unknown) =>
+    gated.handle({ jsonrpc: '2.0', id: 1, method, params }, { who })
+  const names = async (who: string): Promise<string[]> =>
+    ((await as(who, 'tools/list'))?.result as { tools: Array<{ name: string }> }).tools.map(
+      (t) => t.name,
+    )
+
+  it('are listed for those who may use them, and left out for everyone else', async () => {
+    expect(await names('boss')).toEqual(['echo', 'secret'])
+    expect(await names('mika')).toEqual(['echo'])
+  })
+
+  it('work for those who may use them', async () => {
+    const reply = await as('boss', 'tools/call', { name: 'secret', arguments: {} })
+    expect(reply?.result).toEqual({ content: [{ type: 'text', text: 'hello boss' }] })
+  })
+
+  it('answer as if they did not exist for everyone else, so nothing is revealed', async () => {
+    const hidden = await as('mika', 'tools/call', { name: 'secret', arguments: {} })
+    const missing = await as('mika', 'tools/call', { name: 'no-such-tool', arguments: {} })
+    expect(hidden?.error?.message).toBe('Unknown tool "secret"')
+    expect(hidden?.error?.code).toBe(missing?.error?.code)
+    expect(hidden?.result).toBeUndefined()
+  })
+})

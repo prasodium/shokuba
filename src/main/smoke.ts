@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as pty from 'node-pty'
+import type { Employee } from '@shared/employees'
 import { MAX_HOPS } from '@shared/messages'
 import { createAgentServices } from './agents'
 import { createServices } from './bootstrap'
@@ -80,6 +81,8 @@ export async function runSmokeTest(): Promise<SmokeReport> {
     await run('message-pipeline', () => messagePipeline(platform, dir, logger))
 
     await run('breaker-pipeline', () => breakerPipeline(platform, dir, logger))
+
+    await run('team-pipeline', () => teamPipeline(platform, dir, logger))
 
     await run('locate-git', async () => {
       const found = await findExecutable('git', { platform, env: process.env, home: homedir() })
@@ -572,6 +575,120 @@ async function breakerPipeline(
     throw new Error(`${message} [breaker: ${JSON.stringify(level)}; terminal: ${tail}]`, {
       cause: error,
     })
+  } finally {
+    await agents.close()
+    services.close()
+  }
+}
+
+/**
+ * A team on real processes: a demo manager drafts a mission for the person who reports to them
+ * (over the real MCP connection), nothing is sent until the person runs it, the employee then
+ * receives and submits the task, and that employee is refused when they try to message the
+ * person directly. Only the "AI" is scripted.
+ */
+async function teamPipeline(
+  platform: ReturnType<typeof toPlatformId>,
+  dir: string,
+  logger: ReturnType<typeof createLogger>,
+): Promise<string> {
+  const services = createServices({
+    dataDir: join(dir, 'team-pipeline'),
+    version: 'smoke',
+    platform,
+    logger,
+  })
+  const agents = await createAgentServices(services, {
+    platform,
+    env: process.env,
+    home: homedir(),
+    providers: new ProviderRegistry([createMockAdapter({ stepMs: 30 })]),
+    gracefulStopMs: 2_000,
+  })
+
+  const workdir = join(dir, 'team-work')
+  mkdirSync(workdir)
+  const ids: string[] = []
+
+  try {
+    const create = (name: string, role: string, extra: object): Promise<Employee> =>
+      agents.employees.create({
+        name,
+        role,
+        providerId: 'mock',
+        workingDirectory: workdir,
+        ...extra,
+      })
+    const manager = await create('Mira', 'Manager', { isManager: true })
+    const employee = await create('Ren', 'Engineer', { reportsTo: manager.id })
+    for (const person of [manager, employee]) {
+      ids.push(person.id)
+      await agents.runtime.start(person)
+    }
+    await waitFor(
+      () => ids.every((id) => agents.runtime.deliveryBlocker(id) === null),
+      'both demo agents to report in',
+      20_000,
+    )
+
+    // 1. The manager drafts a plan, through the real MCP connection.
+    agents.runtime.write(manager.id, 'plan\r')
+    const drafted = (): ReturnType<typeof agents.missions.listMissions>[number] | undefined =>
+      agents.missions.listMissions().find((detail) => detail.mission.createdBy === manager.id)
+    await waitFor(
+      () => (drafted()?.tasks.length ?? 0) === 2,
+      'the manager to draft two tasks',
+      20_000,
+    )
+    if (drafted()?.mission.status !== 'draft') throw new Error("the manager's plan was not a draft")
+
+    // 2. A draft sends nothing: the employee's task waits, untouched.
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    const build = drafted()?.tasks.find((task) => task.title === 'Build the login form')
+    if (build?.assigneeId !== employee.id)
+      throw new Error('the task was not assigned to the employee')
+    if (build.status !== 'ready') throw new Error(`a draft was acted on (task is ${build.status})`)
+
+    // 3. The person runs it; the employee receives the task and submits it.
+    const missionId = drafted()?.mission.id ?? ''
+    agents.missions.missionAction(missionId, 'run')
+    await waitFor(
+      () => agents.missions.getTask(build.id)?.status === 'submitted',
+      'the employee to receive the task and submit it',
+      30_000,
+    )
+
+    // 4. The employee cannot go straight to the person.
+    let refused = ''
+    try {
+      agents.messages.sendFromAgent(
+        employee.id,
+        { to: 'human', subject: 'Hello', body: 'Can I ask you something?' },
+        { source: 'reported', employeeId: employee.id },
+      )
+    } catch (error) {
+      refused = error instanceof Error ? error.message : String(error)
+    }
+    if (!refused.includes('You report to Mira')) {
+      throw new Error(`the employee was not stopped from messaging the person: "${refused}"`)
+    }
+
+    return 'the manager drafted a 2-task mission in its own name; nothing was sent until it was run; the employee then received and submitted it; a direct message to the person was refused'
+  } catch (error) {
+    const missions = agents.missions
+      .listMissions()
+      .map(
+        (d) =>
+          `${d.mission.status}/${d.mission.createdBy ? 'agent' : 'person'}:${d.tasks.map((t) => t.status).join(',')}`,
+      )
+    const tails = ids.map((id) => JSON.stringify(agents.runtime.replay(id).data.slice(-250)))
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(
+      `${message} [missions: ${missions.join(' | ') || 'none'}; terminals: ${tails.join(' | ')}]`,
+      {
+        cause: error,
+      },
+    )
   } finally {
     await agents.close()
     services.close()

@@ -115,6 +115,8 @@ export interface Mission {
   description: string
   status: MissionStatus
   priority: Priority
+  /** The manager whose agent drafted this mission, or null if a person created it. */
+  createdBy: string | null
   createdAt: string
   updatedAt: string
 }

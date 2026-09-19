@@ -190,9 +190,9 @@ const launchOf = (agent: Agent): LaunchInput => {
   return found
 }
 
-/** Mira leads; Sora and Ren report to her; Kai has no manager. */
+/** Mira leads; Sora and Ren report to Mira; Kai has no manager. */
 async function team() {
-  // The manager starts last, so what her agent is told at launch includes her whole team.
+  // The manager starts last, so what the manager's agent is told at launch includes the whole team.
   const manager = await create('Mira', 'Manager', {
     isManager: true,
     instructions: 'Lead the team.',
@@ -356,5 +356,90 @@ describe('a team with a manager, end to end', () => {
     expect(asManager.text).toContain('Sora (QA) — reports to you')
     expect(asManager.text).toContain('Ren (Engineer) — reports to you')
     expect(asManager.text).toContain('Kai (Engineer)')
+  })
+})
+
+describe('a manager plans work, end to end', () => {
+  /** Ask the agent's own MCP connection which tools it is offered. */
+  async function offered(agent: Agent): Promise<string[]> {
+    const response = await fetch(agent.launch.report.mcpUrl, {
+      method: 'POST',
+      headers: auth(agent),
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    })
+    const body = (await response.json()) as { result: { tools: Array<{ name: string }> } }
+    return body.result.tools.map((t) => t.name)
+  }
+
+  it('offers the planning tools to the manager and not to the people who report to them', async () => {
+    const { mira, sora } = await team()
+    expect(await offered(mira)).toEqual(expect.arrayContaining(['draft_mission', 'add_task']))
+    expect(await offered(sora)).not.toContain('draft_mission')
+    expect(await offered(sora)).toContain('send_message')
+  })
+
+  it('has a draft go nowhere until the person runs it, then hands the work to the team', async () => {
+    const { mira, sora } = await team()
+    await hook(mira, { hook_event_name: 'UserPromptSubmit' })
+
+    const drafted = await tool(mira, 'draft_mission', { title: 'Ship login' })
+    const missionId = /id (\S+)\)/.exec(drafted.text)?.[1] ?? ''
+    const added = await tool(mira, 'add_task', {
+      missionId,
+      title: 'Test the login',
+      description: 'Try a wrong password and an expired session.',
+      assignee: 'Sora',
+    })
+    expect(added.isError).toBe(false)
+
+    // The plan exists, in Mira's name, and Sora has been told nothing.
+    const [detail] = agents.missions.listMissions()
+    expect(detail?.mission).toMatchObject({
+      title: 'Ship login',
+      status: 'draft',
+      createdBy: mira.employee.id,
+    })
+    await new Promise((resolve) => setTimeout(resolve, 60))
+    expect(sora.pty.written).toEqual([])
+
+    // The person reads it and runs it. Only now does Sora receive the task.
+    agents.missions.missionAction(missionId, 'run')
+    await vi.waitFor(() => expect(typed(sora)).toContain('Test the login'))
+    expect(typed(sora)).toContain('Try a wrong password and an expired session.')
+
+    // Out of the manager's hands from here on.
+    const late = await tool(mira, 'add_task', { missionId, title: 'Sneak in more' })
+    expect(late.isError).toBe(true)
+    expect(late.text).toContain('out of your hands')
+  })
+
+  it('tells the person, through the manager, that a draft is ready', async () => {
+    const { mira } = await team()
+    await hook(mira, { hook_event_name: 'UserPromptSubmit' })
+    await tool(mira, 'draft_mission', { title: 'Ship login' })
+    const told = await tool(mira, 'send_message', {
+      to: 'human',
+      subject: 'A plan for your review',
+      body: 'I drafted "Ship login". Review it in Missions and run it when you are happy.',
+    })
+    expect(told.isError).toBe(false)
+    expect(
+      agents.messages
+        .listConversations()
+        .flatMap((c) => c.messages)
+        .filter((m) => m.toId === 'human')
+        .map((m) => m.fromId),
+    ).toEqual([mira.employee.id])
+  })
+
+  it('does not let a manager assign work to someone on another team', async () => {
+    const { mira, kai } = await team()
+    const drafted = await tool(mira, 'draft_mission', { title: 'Plan' })
+    const missionId = /id (\S+)\)/.exec(drafted.text)?.[1] ?? ''
+    const refused = await tool(mira, 'add_task', { missionId, title: 'X', assignee: 'Kai' })
+    expect(refused.isError).toBe(true)
+    expect(refused.text).toContain('is not on your team')
+    expect(agents.missions.listMissions()[0]?.tasks).toEqual([])
+    expect(kai.pty.written).toEqual([])
   })
 })

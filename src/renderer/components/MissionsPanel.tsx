@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { Mission, Task } from '@shared/missions'
+import { authorNote } from '../missions/hints'
 import { MISSION_STATUS_LABELS } from '../missions/labels'
 import { selectedMission, useMissions } from '../store/missions'
 import { useOffice } from '../store/office'
@@ -57,6 +58,7 @@ export function MissionsPanel() {
             {missions.map(({ mission: m }) => (
               <option key={m.id} value={m.id}>
                 {m.title} — {MISSION_STATUS_LABELS[m.status]}
+                {m.createdBy ? ` · by ${names[m.createdBy] ?? 'a manager'}` : ''}
               </option>
             ))}
           </select>
@@ -147,6 +149,11 @@ export function MissionsPanel() {
             </div>
           </div>
 
+          {authorNote(mission, names) && (
+            <p className="mission-author" role="note">
+              {authorNote(mission, names)}
+            </p>
+          )}
           {mission.description && (
             <p className="muted mission-description">{mission.description}</p>
           )}

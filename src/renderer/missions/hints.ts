@@ -34,3 +34,18 @@ export function dispatchHint(
   }
   return `Sending to ${name}…`
 }
+
+/**
+ * Who wrote a plan, when an agent did. A person should know a plan came from a manager, and
+ * above all that nothing in it has been sent yet, at the moment they decide whether to run it.
+ */
+export function authorNote(
+  mission: Pick<Mission, 'status' | 'createdBy'>,
+  names: Record<string, string>,
+): string | null {
+  if (mission.createdBy === null) return null
+  const who = names[mission.createdBy] ?? 'a manager'
+  return mission.status === 'draft'
+    ? `Drafted by ${who}. Read the tasks first: nothing is sent to anyone until you press Run mission.`
+    : `Drafted by ${who}.`
+}

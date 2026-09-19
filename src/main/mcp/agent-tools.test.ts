@@ -5,6 +5,8 @@ import { createMissionFixture, type MissionFixture } from '../missions/fixtures'
 import {
   AGENT_TOOL_NAMES,
   AGENT_TOOL_PERMISSIONS,
+  MANAGER_TOOL_NAMES,
+  MANAGER_TOOL_PERMISSIONS,
   createAgentTools,
   type AgentToolContext,
 } from './agent-tools'
@@ -63,7 +65,7 @@ const handOut = (title: string, assigneeId: string) => {
 }
 
 describe('agent tools', () => {
-  it('are the three the adapter pre-approves, under the shokuba server name', () => {
+  it("are the five every agent has, plus a manager's, under the shokuba server name", () => {
     expect([...AGENT_TOOL_NAMES]).toEqual([
       'get_current_task',
       'submit_task',
@@ -78,8 +80,16 @@ describe('agent tools', () => {
       'mcp__shokuba__list_teammates',
       'mcp__shokuba__send_message',
     ])
+    expect(MANAGER_TOOL_PERMISSIONS).toEqual(MANAGER_TOOL_NAMES.map((n) => `mcp__shokuba__${n}`))
     const names = tools().map((tool) => tool.name)
-    expect(names).toEqual([...AGENT_TOOL_NAMES])
+    expect(names).toEqual([...AGENT_TOOL_NAMES, ...MANAGER_TOOL_NAMES])
+  })
+
+  it("offer a manager's tools to managers only: every one of them is gated, and no other is", () => {
+    for (const tool of tools()) {
+      const isManagerTool = (MANAGER_TOOL_NAMES as readonly string[]).includes(tool.name)
+      expect(typeof tool.visibleTo === 'function', tool.name).toBe(isManagerTool)
+    }
   })
 
   it('describe themselves for the model', () => {
@@ -491,5 +501,104 @@ describe('agent tools on a team with a manager', () => {
       expect(text).toBe('Marked "T" as blocked. A person will decide what happens next.')
       expect(fx.missions.getTask(task.id)?.status).toBe('blocked')
     })
+  })
+})
+
+describe("a manager's planning tools", () => {
+  const squad = {
+    list: () => [
+      { id: 'mira', name: 'Mira', role: 'Manager', isManager: true, reportsTo: null },
+      { id: 'sora', name: 'Sora', role: 'QA', isManager: false, reportsTo: 'mira' },
+      { id: 'kai', name: 'Kai', role: 'Engineer', isManager: false, reportsTo: null },
+    ],
+    isRunning: () => true,
+  }
+
+  beforeEach(() => {
+    fx.addEmployee('mira', 'Mira', 'Manager', { isManager: true })
+    fx.addEmployee('sora', 'Sora', 'QA', { reportsTo: 'mira' })
+    fx.addEmployee('kai', 'Kai', 'Engineer')
+    messages = new MessageService({
+      db: fx.services.db,
+      events: fx.services.events,
+      directory: squad,
+      taskMissionId: (id) => fx.missions.getTask(id)?.missionId,
+    })
+    mcp = new McpEndpoint(
+      { name: 'shokuba', version: 't' },
+      createAgentTools(fx.missions, messages, squad),
+    )
+  })
+
+  const toolsFor = async (employeeId: string): Promise<string[]> => {
+    const reply = await mcp.handle(
+      { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+      { employeeId, source: 'reported' },
+    )
+    return (reply?.result as { tools: Array<{ name: string }> }).tools.map((t) => t.name)
+  }
+
+  it('are offered to a manager and to no one else', async () => {
+    expect(await toolsFor('mira')).toEqual([...AGENT_TOOL_NAMES, ...MANAGER_TOOL_NAMES])
+    expect(await toolsFor('sora')).toEqual([...AGENT_TOOL_NAMES])
+    expect(await toolsFor('kai')).toEqual([...AGENT_TOOL_NAMES])
+  })
+
+  it('cannot be called by someone who is not offered them, even by name', async () => {
+    for (const name of MANAGER_TOOL_NAMES) {
+      const reply = await mcp.handle(
+        { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: {} } },
+        { employeeId: 'sora', source: 'reported' },
+      )
+      expect(reply?.error?.message, name).toBe(`Unknown tool "${name}"`)
+    }
+    expect(fx.missions.listMissions().filter((d) => d.mission.title !== 'M')).toEqual([])
+  })
+
+  it('let a manager draft a plan, check it, and fix a mistake', async () => {
+    const drafted = await callTool('mira', 'draft_mission', { title: 'Ship login' })
+    expect(drafted.isError).toBe(false)
+    expect(drafted.text).toContain('only a draft: nothing is sent until the person runs it')
+    const missionId = /id (\S+)\)/.exec(drafted.text)?.[1] ?? ''
+
+    const design = await callTool('mira', 'add_task', {
+      missionId,
+      title: 'Design the API',
+      assignee: 'Sora',
+    })
+    expect(design.text).toMatch(/^Added "Design the API" \(id \S+\), assigned to Sora\.$/)
+    const designId = /id (\S+)\)/.exec(design.text)?.[1] ?? ''
+    const build = await callTool('mira', 'add_task', {
+      missionId,
+      title: 'Build it',
+      dependsOn: ['Design the API'],
+    })
+    expect(build.text).toContain('not assigned to anyone yet, after "Design the API"')
+
+    const shown = await callTool('mira', 'get_draft', { missionId })
+    expect(shown.text).toContain('"Design the API"')
+    expect(shown.text).toContain('after: Design the API')
+
+    const removed = await callTool('mira', 'remove_task', { taskId: designId })
+    expect(removed.isError).toBe(true) // "Build it" depends on it
+    expect(removed.text).toContain('Other tasks depend on this one')
+  })
+
+  it('tell the model why a request is refused, in words it can act on', async () => {
+    const { text } = await callTool('mira', 'draft_mission', { title: 'Plan' })
+    const missionId = /id (\S+)\)/.exec(text)?.[1] ?? ''
+    const outside = await callTool('mira', 'add_task', { missionId, title: 'X', assignee: 'Kai' })
+    expect(outside.isError).toBe(true)
+    expect(outside.text).toContain('"Kai" is not on your team. You can assign work to: Mira, Sora.')
+
+    fx.missions.missionAction(missionId, 'run') // the person runs it
+    const late = await callTool('mira', 'add_task', { missionId, title: 'Y' })
+    expect(late.isError).toBe(true)
+    expect(late.text).toContain('out of your hands')
+  })
+
+  it('show a manager how the team is doing', async () => {
+    const { text } = await callTool('mira', 'team_status')
+    expect(text).toBe('Your team:\n- Sora (QA) — running — no task in progress')
   })
 })

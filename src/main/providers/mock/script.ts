@@ -13,7 +13,8 @@
  * With SHOKUBA_MOCK_CHATTY=1 it answers every message it receives, which lets a test start a
  * runaway exchange between two agents. Typing "loop" makes it repeat one call until Shokuba's
  * circuit breaker refuses it (and then stop, as a sensible agent would); "stubborn" keeps
- * trying regardless, until it is interrupted. When Shokuba refuses a call it does not make it,
+ * trying regardless, until it is interrupted. "plan" makes a demo manager draft a small mission
+ * for the first person who reports to them, using the manager's planning tools. When Shokuba refuses a call it does not make it,
  * and reports nothing more about it, exactly as Claude Code does. Plain CommonJS so it runs
  * under Node and Electron-as-Node alike.
  */
@@ -158,6 +159,25 @@ async function runLoop(stubborn) {
   }
 }
 
+// A manager's planning: draft a mission and two tasks, the first for someone on the team. A draft
+// does nothing until the person runs it.
+async function runPlan() {
+  say('[demo] drafting a plan...')
+  const status = await useShokubaTool('team_status', {})
+  const first = /^- (.+?) \(/m.exec(status)
+  const drafted = await useShokubaTool('draft_mission', { title: 'Ship the login page' })
+  const made = /id (\S+)\)/.exec(drafted)
+  if (!made) {
+    say('[demo] ' + drafted)
+    return
+  }
+  const build = { missionId: made[1], title: 'Build the login form' }
+  if (first) build.assignee = first[1]
+  say('[demo] ' + (await useShokubaTool('add_task', build)))
+  say('[demo] ' + (await useShokubaTool('add_task', { missionId: made[1], title: 'Review the login form', dependsOn: ['Build the login form'] })))
+  say('[demo] the draft is ready for the person to review')
+}
+
 async function runTurn(input) {
   busy = true
   aborted = false
@@ -167,6 +187,8 @@ async function runTurn(input) {
     await handleMessage(input)
   } else if (typed === 'loop' || typed === 'stubborn') {
     await runLoop(typed === 'stubborn')
+  } else if (typed === 'plan') {
+    await runPlan()
   } else {
     say('[demo] on it...')
     await sleep(stepMs)

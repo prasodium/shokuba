@@ -188,7 +188,7 @@ describe('a mission, end to end', () => {
 
     agents.missions.missionAction(mission.id, 'run')
 
-    // Mika is idle and (reported) so the design task is pasted into her terminal, then Enter.
+    // Mika is idle and (reported) so the design task is pasted into their terminal, then Enter.
     await vi.waitFor(() => expect(statusOf(mission, 'Design the API')).toBe('in_progress'))
     await vi.waitFor(() => expect(mika.pty.written.at(-1)).toBe('\r'))
     expect(typed(mika)).toContain(`${ESC}[200~[Shokuba task]`)
@@ -244,7 +244,7 @@ describe('a mission, end to end', () => {
 
   it('does not paste into an agent that is busy, and sends the task when it finishes', async () => {
     const mika = await startAgent(await hire('Mika'))
-    await hook(mika, { hook_event_name: 'UserPromptSubmit' }) // a person gave her something to do
+    await hook(mika, { hook_event_name: 'UserPromptSubmit' }) // a person gave them something to do
 
     const mission = agents.missions.createMission({ title: 'M' })
     agents.missions.createTask({

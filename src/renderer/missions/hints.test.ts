@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { initialView, type AgentView } from '@shared/agents/view'
-import { dispatchHint } from './hints'
+import { authorNote, dispatchHint } from './hints'
 
 const view = (patch: Partial<AgentView>): AgentView => ({
   ...initialView('e', 't'),
@@ -101,5 +101,29 @@ describe('dispatchHint', () => {
         view({ state: 'thinking' }),
       ),
     ).toMatch(/busy/)
+  })
+})
+
+describe('authorNote', () => {
+  const names = { mira: 'Mira' }
+
+  it('says nothing about a mission a person made', () => {
+    expect(authorNote({ status: 'draft', createdBy: null }, names)).toBeNull()
+  })
+
+  it("warns that a manager's draft has sent nothing yet, at the moment it can be run", () => {
+    expect(authorNote({ status: 'draft', createdBy: 'mira' }, names)).toBe(
+      'Drafted by Mira. Read the tasks first: nothing is sent to anyone until you press Run mission.',
+    )
+  })
+
+  it('just says who drafted it once it is under way', () => {
+    expect(authorNote({ status: 'running', createdBy: 'mira' }, names)).toBe('Drafted by Mira.')
+  })
+
+  it('copes with an author who has since been removed', () => {
+    expect(authorNote({ status: 'draft', createdBy: 'gone' }, names)).toContain(
+      'Drafted by a manager.',
+    )
   })
 })

@@ -1,5 +1,9 @@
 import { PERMISSION_MODES, type Employee } from '@shared/employees'
-import { AGENT_TOOL_PERMISSIONS, SHOKUBA_MCP_SERVER } from '../../mcp/agent-tools'
+import {
+  AGENT_TOOL_PERMISSIONS,
+  MANAGER_TOOL_PERMISSIONS,
+  SHOKUBA_MCP_SERVER,
+} from '../../mcp/agent-tools'
 import { getEnv, pathApi, type Env, type PlatformId } from '../../platform'
 import type { LaunchInput, LaunchSpec, ProviderAdapter, TeamContext } from '../types'
 import { detectClaudeCode, type DetectDeps } from './detect'
@@ -26,7 +30,9 @@ export function agentSystemPrompt(
       ? 'You lead a team, and you are the one who talks to the person you work for (send_message with to: "human"). ' +
         (team.reports.length > 0
           ? `${named(team.reports)} report to you and bring their questions to you rather than to the person, so answer what you can and take only what needs the person to them. `
-          : 'Nobody reports to you yet; list_teammates shows who does as the team grows. ')
+          : 'Nobody reports to you yet; list_teammates shows who does as the team grows. ') +
+        "You also plan your team's work: draft_mission and add_task build a plan, with tasks assigned to yourself or to the people who report to you, that the person reviews and runs. " +
+        "You cannot run it or accept anyone's work, and only a draft can be changed. When a draft is ready, tell the person with send_message; team_status shows how your team is getting on. "
       : ''
   return (
     `You are ${employee.name}, ${employee.role}, on a team coordinated by Shokuba. ` +
@@ -151,7 +157,10 @@ export function createClaudeCodeAdapter(deps: DetectDeps = {}): ProviderAdapter 
         '--mcp-config',
         paths.join(runDir, MCP_CONFIG_FILE),
         '--allowedTools',
-        AGENT_TOOL_PERMISSIONS.join(','),
+        (employee.isManager
+          ? [...AGENT_TOOL_PERMISSIONS, ...MANAGER_TOOL_PERMISSIONS]
+          : AGENT_TOOL_PERMISSIONS
+        ).join(','),
         '--append-system-prompt',
         agentSystemPrompt(employee, input.team),
         '--name',

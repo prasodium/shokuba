@@ -26,6 +26,12 @@ export interface McpTool<Ctx> {
   description: string
   /** JSON Schema for the arguments, generated from the tool's Zod schema. */
   inputSchema: Record<string, unknown>
+  /**
+   * Whether this caller may see and use the tool. A tool a caller may not use is left out of
+   * `tools/list` and answers as if it did not exist, so an agent is never offered (or able to
+   * call) something its role does not allow.
+   */
+  visibleTo?(ctx: Ctx): boolean
   call(args: unknown, ctx: Ctx): Promise<string>
 }
 
@@ -33,6 +39,7 @@ export function defineTool<Ctx, S extends z.ZodType>(definition: {
   name: string
   description: string
   input: S
+  visibleTo?: (ctx: Ctx) => boolean
   handler: (args: z.output<S>, ctx: Ctx) => string | Promise<string>
 }): McpTool<Ctx> {
   // The `$schema` marker is noise to an MCP client; leave it out.
@@ -42,6 +49,7 @@ export function defineTool<Ctx, S extends z.ZodType>(definition: {
     name: definition.name,
     description: definition.description,
     inputSchema,
+    ...(definition.visibleTo && { visibleTo: definition.visibleTo }),
     async call(args, ctx) {
       const parsed = definition.input.safeParse(args ?? {})
       if (!parsed.success) {
@@ -123,11 +131,13 @@ export class McpEndpoint<Ctx> {
         return success(id, {})
       case 'tools/list':
         return success(id, {
-          tools: [...this.tools.values()].map((tool) => ({
-            name: tool.name,
-            description: tool.description,
-            inputSchema: tool.inputSchema,
-          })),
+          tools: [...this.tools.values()]
+            .filter((tool) => tool.visibleTo?.(ctx) !== false)
+            .map((tool) => ({
+              name: tool.name,
+              description: tool.description,
+              inputSchema: tool.inputSchema,
+            })),
         })
       case 'tools/call': {
         const call = z
@@ -135,7 +145,9 @@ export class McpEndpoint<Ctx> {
           .safeParse(params)
         if (!call.success) return failure(id, ERROR.invalidParams, 'tools/call needs a tool name')
         const tool = this.tools.get(call.data.name)
-        if (!tool) return failure(id, ERROR.invalidParams, `Unknown tool "${call.data.name}"`)
+        if (!tool || tool.visibleTo?.(ctx) === false) {
+          return failure(id, ERROR.invalidParams, `Unknown tool "${call.data.name}"`)
+        }
         try {
           const text = await tool.call(call.data.arguments, ctx)
           return success(id, { content: [{ type: 'text', text }] })

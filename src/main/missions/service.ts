@@ -42,6 +42,7 @@ interface MissionRow {
   description: string
   status: string
   priority: string
+  created_by: string | null
   created_at: string
   updated_at: string
 }
@@ -141,7 +142,8 @@ export class MissionService {
 
   // ---------- missions ----------
 
-  createMission(raw: MissionInput): Mission {
+  /** A person creates a mission; a manager's agent may too (as a draft), and the record says so. */
+  createMission(raw: MissionInput, actor: Actor = USER): Mission {
     const parsed = MissionInputSchema.safeParse(raw)
     if (!parsed.success) throw new MissionError('invalid', firstIssue(parsed.error))
     const input = parsed.data
@@ -151,19 +153,21 @@ export class MissionService {
       const ts = this.stamp()
       this.deps.db
         .prepare(
-          `INSERT INTO missions (id, title, description, status, priority, created_at, updated_at)
-           VALUES (@id, @title, @description, 'draft', @priority, @ts, @ts)`,
+          `INSERT INTO missions (id, title, description, status, priority, created_by, created_at, updated_at)
+           VALUES (@id, @title, @description, 'draft', @priority, @createdBy, @ts, @ts)`,
         )
         .run({
           id,
           title: input.title,
           description: input.description,
           priority: input.priority,
+          createdBy: actor.employeeId ?? null,
           ts,
         })
       out.push({
         type: 'mission.created',
-        source: 'user',
+        source: actor.source,
+        ...(actor.employeeId && { actorId: actor.employeeId }),
         missionId: id,
         payload: { missionId: id, title: input.title },
       })
@@ -247,7 +251,7 @@ export class MissionService {
 
   // ---------- tasks (people) ----------
 
-  createTask(raw: TaskInput): Task {
+  createTask(raw: TaskInput, actor: Actor = USER): Task {
     const parsed = TaskInputSchema.safeParse(raw)
     if (!parsed.success) throw new MissionError('invalid', firstIssue(parsed.error))
     const input = parsed.data
@@ -286,13 +290,14 @@ export class MissionService {
       this.writeDependencies(id, input.dependsOn)
       out.push({
         type: 'task.created',
-        source: 'user',
+        source: actor.source,
+        ...(actor.employeeId && { actorId: actor.employeeId }),
         missionId: mission.id,
         taskId: id,
         payload: { taskId: id, missionId: mission.id, title: input.title },
       })
       if (input.assigneeId) {
-        out.push(assignedEvent(id, mission.id, input.assigneeId, USER))
+        out.push(assignedEvent(id, mission.id, input.assigneeId, actor))
       }
       return this.mustTask(id)
     })
@@ -383,7 +388,7 @@ export class MissionService {
   }
 
   /** Delete a task that was never started and that nothing depends on. */
-  removeTask(id: string): void {
+  removeTask(id: string, actor: Actor = USER): void {
     const task = this.mustTask(id)
     const siblings = this.loadTasks(task.missionId)
     if (task.attempts > 0 || !(NOT_STARTED.has(task.status) || task.status === 'cancelled')) {
@@ -399,7 +404,8 @@ export class MissionService {
       this.deps.db.prepare('DELETE FROM tasks WHERE id = ?').run(id)
       out.push({
         type: 'task.updated',
-        source: 'user',
+        source: actor.source,
+        ...(actor.employeeId && { actorId: actor.employeeId }),
         missionId: task.missionId,
         taskId: id,
         payload: { taskId: id, missionId: task.missionId, fields: ['removed'] },
@@ -806,6 +812,7 @@ function assignedEvent(
   return {
     type: 'task.assigned',
     source: actor.source,
+    ...(actor.employeeId && { actorId: actor.employeeId }),
     missionId,
     taskId,
     payload: { taskId, missionId, employeeId },
@@ -838,6 +845,7 @@ function toMission(row: MissionRow): Mission {
     description: row.description,
     status: row.status as MissionStatus,
     priority: row.priority as Priority,
+    createdBy: row.created_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
