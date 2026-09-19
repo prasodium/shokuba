@@ -1,36 +1,33 @@
 import { useEffect, useState } from 'react'
-import type { AppInfo } from '@shared/ipc/api'
-import { useEvents } from './store/events'
+import type { Employee } from '@shared/employees'
+import { EmployeeDialog } from './components/EmployeeDialog'
+import { EventDock } from './components/EventDock'
+import { OfficeView } from './components/OfficeView'
+import { Roster } from './components/Roster'
+import { TerminalSection } from './components/TerminalSection'
+import { useOffice } from './store/office'
 
-const PLATFORM_NAMES: Record<AppInfo['platform'], string> = {
-  darwin: 'macOS',
-  win32: 'Windows',
-  linux: 'Linux',
-}
+const PLATFORM_NAMES = { darwin: 'macOS', win32: 'Windows', linux: 'Linux' } as const
 
 export function App() {
-  const [info, setInfo] = useState<AppInfo | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const events = useEvents((state) => state.events)
-  const ingest = useEvents((state) => state.ingest)
+  const connect = useOffice((s) => s.connect)
+  const info = useOffice((s) => s.info)
+  const notice = useOffice((s) => s.notice)
+  const dismissNotice = useOffice((s) => s.dismissNotice)
 
-  useEffect(() => {
-    // Subscribe first, then load history: nothing published in between can be missed,
-    // and the store drops the duplicates this can produce.
-    const unsubscribe = window.shokuba.events.subscribe((event) => ingest([event]))
-    window.shokuba.events
-      .list({ limit: 200 })
-      .then(ingest)
-      .catch((cause: unknown) => setError(String(cause)))
-    window.shokuba.app
-      .info()
-      .then(setInfo)
-      .catch((cause: unknown) => setError(String(cause)))
-    return unsubscribe
-  }, [ingest])
+  const [dialog, setDialog] = useState<{ open: boolean; editing: Employee | null }>({
+    open: false,
+    editing: null,
+  })
+
+  useEffect(() => connect(), [connect])
+
+  const openNew = (): void => setDialog({ open: true, editing: null })
+  const openEdit = (employee: Employee): void => setDialog({ open: true, editing: employee })
+  const closeDialog = (): void => setDialog((current) => ({ ...current, open: false }))
 
   return (
-    <div className="shell">
+    <div className="app">
       <header className="masthead">
         <div className="logo" aria-hidden="true">
           <span />
@@ -44,69 +41,33 @@ export function App() {
           </h1>
           <p className="tagline">A Multi-Agent Harness</p>
         </div>
-        <span className="phase">Phase 0 · Foundation</span>
+        <span className="phase">
+          Phase 1 · First agent
+          {info && ` · v${info.version} · ${PLATFORM_NAMES[info.platform]}`}
+        </span>
       </header>
 
-      {error && (
-        <p role="alert" className="alert">
-          Could not reach the main process: {error}
-        </p>
+      {notice && (
+        <div role="alert" className="notice">
+          <span>{notice}</span>
+          <button type="button" className="btn btn-ghost" onClick={dismissNotice}>
+            Dismiss
+          </button>
+        </div>
       )}
 
-      <section aria-label="System status" className="cards">
-        <Card label="Version" value={info?.version ?? '…'} />
-        <Card label="Platform" value={info ? PLATFORM_NAMES[info.platform] : '…'} />
-        <Card
-          label="Runtime"
-          value={info ? `Electron ${info.electronVersion}` : '…'}
-          hint={info ? `Node ${info.nodeVersion}` : undefined}
-        />
-        <Card
-          label="Database"
-          value={info ? `Schema v${info.schemaVersion}` : '…'}
-          hint={
-            info
-              ? `${info.eventCount} ${info.eventCount === 1 ? 'event' : 'events'} recorded`
-              : undefined
-          }
-        />
-      </section>
-
-      <section aria-label="Event log" className="panel">
-        <div className="panel-head">
-          <h2>Event log</h2>
-          <span className="muted">Live · every event is persisted before it is shown</span>
+      <main className="workspace">
+        <div className="left">
+          <section className="panel office-panel" aria-label="Office">
+            <OfficeView onNew={openNew} />
+          </section>
+          <Roster onNew={openNew} onEdit={openEdit} />
         </div>
-        {events.length === 0 ? (
-          <p className="muted">No events yet.</p>
-        ) : (
-          <ol className="events">
-            {[...events].reverse().map((event) => (
-              <li key={event.seq}>
-                <span className="seq">#{event.seq}</span>
-                <time dateTime={event.ts}>{new Date(event.ts).toLocaleTimeString()}</time>
-                <span className="type">{event.type}</span>
-                <span className={`badge badge-${event.source}`}>{event.source}</span>
-              </li>
-            ))}
-          </ol>
-        )}
-      </section>
+        <TerminalSection />
+      </main>
 
-      <footer className="note">
-        The living office, agents and terminals arrive in the next phases. Everything on this screen
-        is real state from the running app.
-      </footer>
-    </div>
-  )
-}
-
-function Card({ label, value, hint }: { label: string; value: string; hint?: string | undefined }) {
-  return (
-    <div className="card">
-      <span className="card-label">{label}</span>
-      <span className="card-value">{value}</span>
-      {hint && <span className="card-hint">{hint}</span>}
+      <EventDock />
+      <EmployeeDialog open={dialog.open} editing={dialog.editing} onClose={closeDialog} />
     </div>
   )
 }

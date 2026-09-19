@@ -19,6 +19,7 @@ export interface ServicesOptions {
 }
 
 export interface Services {
+  dataDir: string
   db: Db
   events: EventStore
   audit: AuditLog
@@ -71,6 +72,7 @@ export function createServices(options: ServicesOptions): Services {
 
   let closed = false
   return {
+    dataDir: options.dataDir,
     db,
     events,
     audit,

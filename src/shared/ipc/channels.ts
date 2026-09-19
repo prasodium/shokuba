@@ -4,4 +4,24 @@ export const IPC = {
   eventsList: 'shokuba:events:list',
   /** main -> renderer push */
   eventsPublished: 'shokuba:events:published',
+
+  providersList: 'shokuba:providers:list',
+
+  employeesList: 'shokuba:employees:list',
+  employeesCreate: 'shokuba:employees:create',
+  employeesUpdate: 'shokuba:employees:update',
+  employeesArchive: 'shokuba:employees:archive',
+
+  agentsSnapshot: 'shokuba:agents:snapshot',
+  agentsStart: 'shokuba:agents:start',
+  agentsStop: 'shokuba:agents:stop',
+  agentsInterrupt: 'shokuba:agents:interrupt',
+
+  terminalWrite: 'shokuba:terminal:write',
+  terminalResize: 'shokuba:terminal:resize',
+  terminalReplay: 'shokuba:terminal:replay',
+  /** main -> renderer push */
+  terminalData: 'shokuba:terminal:data',
+
+  systemPickDirectory: 'shokuba:system:pick-directory',
 } as const

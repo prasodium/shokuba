@@ -65,6 +65,45 @@ export const EventInputSchema = z.discriminatedUnion('type', [
     'agent.error',
     z.strictObject({ employeeId: id, code: z.string().max(100), message: z.string().max(2000) }),
   ),
+
+  // A turn is one prompt-to-answer cycle of the agent. Prompt and answer text are
+  // deliberately not recorded: the office only needs to know *that* work is happening.
+  event('agent.turn.started', z.strictObject({ employeeId: id })),
+  event('agent.turn.finished', z.strictObject({ employeeId: id })),
+  event(
+    'agent.tool.started',
+    z.strictObject({
+      employeeId: id,
+      toolName: z.string().min(1).max(100),
+      /** Short human-readable description, e.g. "Edit src/app.ts". Redacted before storage. */
+      summary: z.string().max(300),
+      toolUseId: z.string().max(200).optional(),
+    }),
+  ),
+  event(
+    'agent.tool.finished',
+    z.strictObject({
+      employeeId: id,
+      toolName: z.string().min(1).max(100),
+      ok: z.boolean(),
+      durationMs: z.number().int().min(0).optional(),
+      toolUseId: z.string().max(200).optional(),
+    }),
+  ),
+  /** The agent is blocked on a human (a permission prompt, a question). */
+  event(
+    'agent.attention',
+    z.strictObject({
+      employeeId: id,
+      reason: z.enum(['permission', 'input', 'other']),
+      message: z.string().max(300),
+    }),
+  ),
+
+  event(
+    'employee.updated',
+    z.strictObject({ employeeId: id, fields: z.array(z.string().max(50)) }),
+  ),
 ])
 
 /** An event as a publisher supplies it. */

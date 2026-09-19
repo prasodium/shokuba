@@ -1,10 +1,27 @@
-import { app, BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron'
+import { homedir } from 'node:os'
+import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron'
 import { z } from 'zod'
+import {
+  EmployeeCreateRequestSchema,
+  EmployeeIdRequestSchema,
+  EmployeeUpdateRequestSchema,
+  EventsListRequestSchema,
+  TerminalResizeRequestSchema,
+  TerminalWriteRequestSchema,
+  type AppInfo,
+  type ProviderInfo,
+  type TerminalChunk,
+} from '@shared/ipc/api'
 import { IPC } from '@shared/ipc/channels'
-import { EventsListRequestSchema, type AppInfo } from '@shared/ipc/api'
 import type { Services } from '../bootstrap'
+import type { AgentServices } from '../agents'
 import type { PlatformId } from '../platform'
 import { isTrustedSenderUrl, type TrustedOrigins } from './trust'
+
+/** How long terminal output is gathered before being sent, so a chatty agent cannot flood IPC. */
+const TERMINAL_FLUSH_MS = 16
+
+const registered: string[] = []
 
 /**
  * Register a validated, sender-checked IPC handler. Nothing crosses from renderer to
@@ -16,8 +33,9 @@ function handle<S extends z.ZodType, R>(
   channel: string,
   schema: S,
   trusted: TrustedOrigins,
-  fn: (input: z.output<S>) => R,
+  fn: (input: z.output<S>, event: IpcMainInvokeEvent) => R,
 ): void {
+  registered.push(channel)
   ipcMain.handle(channel, (event: IpcMainInvokeEvent, raw: unknown) => {
     const senderUrl = event.senderFrame?.url ?? ''
     if (!isTrustedSenderUrl(senderUrl, trusted)) {
@@ -25,12 +43,19 @@ function handle<S extends z.ZodType, R>(
     }
     const parsed = schema.safeParse(raw)
     if (!parsed.success) throw new Error(`Invalid request for "${channel}"`)
-    return fn(parsed.data)
+    return fn(parsed.data, event)
   })
+}
+
+function broadcast(channel: string, payload: unknown): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send(channel, payload)
+  }
 }
 
 export function registerIpc(
   services: Services,
+  agents: AgentServices,
   platform: PlatformId,
   trusted: TrustedOrigins,
 ): () => void {
@@ -42,6 +67,7 @@ export function registerIpc(
     nodeVersion: process.versions.node,
     schemaVersion: services.schemaVersion,
     eventCount: services.events.log.count(),
+    homeDirectory: homedir(),
   }))
 
   handle(
@@ -51,16 +77,92 @@ export function registerIpc(
     (request) => services.events.log.list(request),
   )
 
-  // Push every newly published event to open windows.
-  const unsubscribe = services.events.bus.onAny((event) => {
-    for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed()) window.webContents.send(IPC.eventsPublished, event)
+  handle(IPC.providersList, z.undefined(), trusted, async (): Promise<ProviderInfo[]> => {
+    const context = { platform, env: process.env, home: homedir() }
+    return Promise.all(
+      agents.providers.list().map(async (adapter) => ({
+        id: adapter.id,
+        displayName: adapter.displayName,
+        simulated: adapter.capabilities.simulated,
+        supportsModelSelection: adapter.capabilities.supportsModelSelection,
+        permissionModes: [...adapter.capabilities.permissionModes],
+        installation: await adapter.detect(context),
+      })),
+    )
+  })
+
+  handle(IPC.employeesList, z.undefined(), trusted, () => agents.employees.list())
+  handle(IPC.employeesCreate, EmployeeCreateRequestSchema, trusted, (input) =>
+    agents.employees.create(input),
+  )
+  handle(IPC.employeesUpdate, EmployeeUpdateRequestSchema, trusted, ({ employeeId, patch }) =>
+    agents.employees.update(employeeId, patch),
+  )
+  handle(IPC.employeesArchive, EmployeeIdRequestSchema, trusted, ({ employeeId }) => {
+    agents.employees.archive(employeeId)
+  })
+
+  handle(IPC.agentsSnapshot, z.undefined(), trusted, () =>
+    agents.views.snapshot(agents.employees.list().map((employee) => employee.id)),
+  )
+  handle(IPC.agentsStart, EmployeeIdRequestSchema, trusted, async ({ employeeId }) => {
+    const employee = agents.employees.get(employeeId)
+    if (!employee) throw new Error('No such employee')
+    await agents.runtime.start(employee)
+  })
+  handle(IPC.agentsStop, EmployeeIdRequestSchema, trusted, ({ employeeId }) =>
+    agents.runtime.stop(employeeId),
+  )
+  handle(IPC.agentsInterrupt, EmployeeIdRequestSchema, trusted, ({ employeeId }) => {
+    agents.runtime.interrupt(employeeId)
+  })
+
+  handle(IPC.terminalWrite, TerminalWriteRequestSchema, trusted, ({ employeeId, data }) => {
+    agents.runtime.write(employeeId, data)
+  })
+  handle(IPC.terminalResize, TerminalResizeRequestSchema, trusted, ({ employeeId, cols, rows }) => {
+    agents.runtime.resize(employeeId, cols, rows)
+  })
+  handle(IPC.terminalReplay, EmployeeIdRequestSchema, trusted, ({ employeeId }) =>
+    agents.runtime.replay(employeeId),
+  )
+
+  handle(IPC.systemPickDirectory, z.undefined(), trusted, async (_input, event) => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    const options = {
+      properties: ['openDirectory', 'createDirectory'] as Array<
+        'openDirectory' | 'createDirectory'
+      >,
     }
+    const result = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options)
+    return result.canceled ? null : (result.filePaths[0] ?? null)
+  })
+
+  // Push every newly published event to open windows.
+  const unsubscribeEvents = services.events.bus.onAny((event) =>
+    broadcast(IPC.eventsPublished, event),
+  )
+
+  // Terminal output is batched per agent and flushed on a short timer.
+  const pending = new Map<string, TerminalChunk>()
+  let timer: NodeJS.Timeout | undefined
+  const flush = (): void => {
+    timer = undefined
+    for (const chunk of pending.values()) broadcast(IPC.terminalData, chunk)
+    pending.clear()
+  }
+  const unsubscribeTerminal = agents.runtime.onTerminalData((employeeId, data, offset) => {
+    const queued = pending.get(employeeId)
+    pending.set(employeeId, { employeeId, data: (queued?.data ?? '') + data, offset })
+    timer ??= setTimeout(flush, TERMINAL_FLUSH_MS)
   })
 
   return () => {
-    unsubscribe()
-    ipcMain.removeHandler(IPC.appInfo)
-    ipcMain.removeHandler(IPC.eventsList)
+    unsubscribeEvents()
+    unsubscribeTerminal()
+    if (timer) clearTimeout(timer)
+    for (const channel of registered.splice(0)) ipcMain.removeHandler(channel)
   }
 }

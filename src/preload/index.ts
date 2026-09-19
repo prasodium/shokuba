@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import type { ShokubaEvent } from '@shared/events/schema'
-import type { ShokubaApi } from '@shared/ipc/api'
+import type { ShokubaApi, TerminalChunk } from '@shared/ipc/api'
 import { IPC } from '@shared/ipc/channels'
 
 /**
@@ -8,20 +8,46 @@ import { IPC } from '@shared/ipc/channels'
  * explicit API — never `ipcRenderer` itself — and hands listeners the payload only, not
  * the IpcRendererEvent (which would expose the sender).
  */
+function subscribe<T>(channel: string, listener: (payload: T) => void): () => void {
+  const handler = (_event: IpcRendererEvent, payload: T): void => listener(payload)
+  ipcRenderer.on(channel, handler)
+  return () => {
+    ipcRenderer.removeListener(channel, handler)
+  }
+}
+
 const api: ShokubaApi = {
   app: {
     info: () => ipcRenderer.invoke(IPC.appInfo),
   },
   events: {
     list: (request) => ipcRenderer.invoke(IPC.eventsList, request),
-    subscribe: (listener) => {
-      const handler = (_event: IpcRendererEvent, published: ShokubaEvent): void =>
-        listener(published)
-      ipcRenderer.on(IPC.eventsPublished, handler)
-      return () => {
-        ipcRenderer.removeListener(IPC.eventsPublished, handler)
-      }
-    },
+    subscribe: (listener) => subscribe<ShokubaEvent>(IPC.eventsPublished, listener),
+  },
+  providers: {
+    list: () => ipcRenderer.invoke(IPC.providersList),
+  },
+  employees: {
+    list: () => ipcRenderer.invoke(IPC.employeesList),
+    create: (input) => ipcRenderer.invoke(IPC.employeesCreate, input),
+    update: (employeeId, patch) => ipcRenderer.invoke(IPC.employeesUpdate, { employeeId, patch }),
+    archive: (employeeId) => ipcRenderer.invoke(IPC.employeesArchive, { employeeId }),
+  },
+  agents: {
+    snapshot: () => ipcRenderer.invoke(IPC.agentsSnapshot),
+    start: (employeeId) => ipcRenderer.invoke(IPC.agentsStart, { employeeId }),
+    stop: (employeeId) => ipcRenderer.invoke(IPC.agentsStop, { employeeId }),
+    interrupt: (employeeId) => ipcRenderer.invoke(IPC.agentsInterrupt, { employeeId }),
+  },
+  terminal: {
+    write: (employeeId, data) => ipcRenderer.invoke(IPC.terminalWrite, { employeeId, data }),
+    resize: (employeeId, cols, rows) =>
+      ipcRenderer.invoke(IPC.terminalResize, { employeeId, cols, rows }),
+    replay: (employeeId) => ipcRenderer.invoke(IPC.terminalReplay, { employeeId }),
+    subscribe: (listener) => subscribe<TerminalChunk>(IPC.terminalData, listener),
+  },
+  system: {
+    pickDirectory: () => ipcRenderer.invoke(IPC.systemPickDirectory),
   },
 }
 

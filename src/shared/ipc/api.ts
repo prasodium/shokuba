@@ -1,4 +1,13 @@
 import { z } from 'zod'
+import type { AgentView } from '../agents/view'
+import {
+  EmployeeInputSchema,
+  EmployeeUpdateSchema,
+  type Employee,
+  type EmployeeInput,
+  type EmployeeUpdate,
+  type PermissionMode,
+} from '../employees'
 import type { ShokubaEvent } from '../events/schema'
 
 export const EventsListRequestSchema = z.strictObject({
@@ -6,6 +15,25 @@ export const EventsListRequestSchema = z.strictObject({
   limit: z.number().int().min(1).max(500).default(100),
 })
 export type EventsListRequest = z.input<typeof EventsListRequestSchema>
+
+const employeeId = z.string().min(1).max(200)
+
+export const EmployeeIdRequestSchema = z.strictObject({ employeeId })
+export const EmployeeCreateRequestSchema = EmployeeInputSchema
+export const EmployeeUpdateRequestSchema = z.strictObject({
+  employeeId,
+  patch: EmployeeUpdateSchema,
+})
+export const TerminalWriteRequestSchema = z.strictObject({
+  employeeId,
+  // Keystrokes and pastes; a paste larger than this is chunked by the caller.
+  data: z.string().max(64 * 1024),
+})
+export const TerminalResizeRequestSchema = z.strictObject({
+  employeeId,
+  cols: z.number().int().min(1).max(1000),
+  rows: z.number().int().min(1).max(500),
+})
 
 export interface AppInfo {
   name: string
@@ -15,6 +43,44 @@ export interface AppInfo {
   nodeVersion: string
   schemaVersion: number
   eventCount: number
+  /** The user's home folder, offered as a starting point when choosing where an employee works. */
+  homeDirectory: string
+}
+
+/** What Shokuba found out about a provider's CLI on this machine. */
+export interface ProviderInfo {
+  id: string
+  displayName: string
+  /** Everything this provider tells us is demo data, not a real agent. */
+  simulated: boolean
+  supportsModelSelection: boolean
+  permissionModes: PermissionMode[]
+  installation: {
+    found: boolean
+    path: string | null
+    version: string | null
+    /** Why the provider cannot be launched, when `found` is false or launch is unsupported. */
+    problem: string | null
+  }
+}
+
+export interface AgentSnapshot {
+  views: AgentView[]
+  /** Events with a higher seq than this are newer than the snapshot. */
+  lastSeq: number
+}
+
+export interface TerminalChunk {
+  employeeId: string
+  data: string
+  /** Stream position after `data`. The chunk starts at `offset - data.length`. */
+  offset: number
+}
+
+export interface TerminalReplay {
+  data: string
+  /** Stream position at the end of `data`; skip live chunks that end at or before it. */
+  offset: number
 }
 
 /** The complete surface the preload script exposes to the renderer as `window.shokuba`. */
@@ -26,5 +92,31 @@ export interface ShokubaApi {
     list(request?: EventsListRequest): Promise<ShokubaEvent[]>
     /** Subscribe to newly published events. Returns an unsubscribe function. */
     subscribe(listener: (event: ShokubaEvent) => void): () => void
+  }
+  providers: {
+    list(): Promise<ProviderInfo[]>
+  }
+  employees: {
+    list(): Promise<Employee[]>
+    create(input: EmployeeInput): Promise<Employee>
+    update(employeeId: string, patch: EmployeeUpdate): Promise<Employee>
+    archive(employeeId: string): Promise<void>
+  }
+  agents: {
+    snapshot(): Promise<AgentSnapshot>
+    start(employeeId: string): Promise<void>
+    stop(employeeId: string): Promise<void>
+    interrupt(employeeId: string): Promise<void>
+  }
+  terminal: {
+    write(employeeId: string, data: string): Promise<void>
+    resize(employeeId: string, cols: number, rows: number): Promise<void>
+    /** Everything the terminal printed so far (bounded), for re-attaching. */
+    replay(employeeId: string): Promise<TerminalReplay>
+    subscribe(listener: (chunk: TerminalChunk) => void): () => void
+  }
+  system: {
+    /** Native folder picker. Resolves to null if the user cancels. */
+    pickDirectory(): Promise<string | null>
   }
 }

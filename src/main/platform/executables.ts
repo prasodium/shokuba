@@ -72,6 +72,16 @@ export function commonBinDirs(platform: PlatformId, home: string, env: Env): str
   }
 }
 
+/**
+ * Can a PTY start this file directly? On Windows `.cmd`/`.bat` files are shell scripts
+ * that need cmd.exe to interpret them; launching one directly fails, and wrapping it means
+ * quoting arguments for cmd.exe, which is an injection risk we would rather not take.
+ * Callers should ask the user for the native `.exe` build instead.
+ */
+export function isDirectlyLaunchable(platform: PlatformId, file: string): boolean {
+  return platform !== 'win32' || !/\.(cmd|bat)$/i.test(file)
+}
+
 export type ExecutableCheck = (file: string) => Promise<boolean>
 
 /** Default check: a regular file, and on POSIX with an execute bit set. */

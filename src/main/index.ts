@@ -1,8 +1,11 @@
 import { writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { app, BrowserWindow, session, shell } from 'electron'
+import { createAgentServices, type AgentServices } from './agents'
 import { createServices, type Services } from './bootstrap'
+import { readCapturePlan, runCapturePlan, type CapturePlan } from './devtools/capture'
 import { registerIpc } from './ipc/handlers'
 import { isTrustedSenderUrl, type TrustedOrigins } from './ipc/trust'
 import { createLogger, describeError } from './logging/logger'
@@ -24,6 +27,9 @@ const platform = toPlatformId()
 
 const SMOKE_FLAG = '--shokuba-smoke-test'
 const SCREENSHOT_PREFIX = '--shokuba-screenshot='
+const CAPTURE_PREFIX = '--shokuba-capture='
+/** Time for the renderer to load data over IPC and paint before a screenshot is taken. */
+const SCREENSHOT_DELAY_MS = Number(process.env['SHOKUBA_SCREENSHOT_DELAY_MS'] ?? 2500)
 
 const rendererEntry = join(__dirname, '../renderer/index.html')
 const trusted: TrustedOrigins = {
@@ -33,9 +39,17 @@ const trusted: TrustedOrigins = {
 }
 
 let services: Services | undefined
+let agents: AgentServices | undefined
 let disposeIpc: (() => void) | undefined
+let shuttingDown = false
 
-function createWindow(screenshotPath?: string): BrowserWindow {
+/** Development-only ways of running the app unattended, for verification and screenshots. */
+interface DevRun {
+  screenshotPath?: string
+  capturePlan?: CapturePlan
+}
+
+function createWindow(dev?: DevRun): BrowserWindow {
   const window = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -50,11 +64,13 @@ function createWindow(screenshotPath?: string): BrowserWindow {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      // An unattended run never shows its window; without this Chromium would pause animation.
+      backgroundThrottling: dev === undefined,
     },
   })
 
   window.once('ready-to-show', () => {
-    if (!screenshotPath) window.show()
+    if (!dev) window.show()
   })
 
   // Never let the app window navigate away or spawn new windows.
@@ -67,15 +83,30 @@ function createWindow(screenshotPath?: string): BrowserWindow {
     if (!isTrustedSenderUrl(url, trusted)) event.preventDefault()
   })
 
-  if (screenshotPath) {
+  if (dev) {
+    // Renderer problems (a CSP violation, a failed WebGL context) would otherwise be invisible here.
+    window.webContents.on('console-message', (event) => {
+      if (event.level === 'warning' || event.level === 'error') {
+        logger.warn('renderer.console', { level: event.level, message: event.message })
+      }
+    })
     window.webContents.once('did-finish-load', () => {
-      // Give the renderer a moment to fetch data over IPC and paint.
-      setTimeout(() => {
-        void window.webContents.capturePage().then((image) => {
-          writeFileSync(screenshotPath, image.toPNG())
-          app.quit()
-        })
-      }, 1500)
+      const { screenshotPath, capturePlan } = dev
+      if (capturePlan) {
+        void runCapturePlan(window, capturePlan, (line) =>
+          process.stdout.write(`SHOKUBA_CAPTURE ${line}\n`),
+        )
+          .catch((error: unknown) => logger.error('capture.failed', describeError(error)))
+          .finally(() => app.quit())
+      } else if (screenshotPath) {
+        // Give the renderer a moment to fetch data over IPC and paint.
+        setTimeout(() => {
+          void window.webContents.capturePage().then((image) => {
+            writeFileSync(screenshotPath, image.toPNG())
+            app.quit()
+          })
+        }, SCREENSHOT_DELAY_MS)
+      }
     })
   }
 
@@ -84,7 +115,7 @@ function createWindow(screenshotPath?: string): BrowserWindow {
   return window
 }
 
-function start(screenshotPath?: string): void {
+function start(dev?: DevRun): void {
   if (!app.requestSingleInstanceLock()) {
     app.quit()
     return
@@ -97,7 +128,7 @@ function start(screenshotPath?: string): void {
     }
   })
 
-  void app.whenReady().then(() => {
+  void app.whenReady().then(async () => {
     if (platform === 'win32') app.setAppUserModelId('com.shokuba.app')
 
     // No renderer feature needs device or notification permissions.
@@ -112,14 +143,19 @@ function start(screenshotPath?: string): void {
         platform,
         logger,
       })
+      agents = await createAgentServices(services, {
+        platform,
+        env: process.env,
+        home: homedir(),
+      })
     } catch (error) {
       logger.error('startup.failed', describeError(error))
       app.exit(1)
       return
     }
 
-    disposeIpc = registerIpc(services, platform, trusted)
-    createWindow(screenshotPath)
+    disposeIpc = registerIpc(services, agents, platform, trusted)
+    createWindow(dev)
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -130,10 +166,25 @@ function start(screenshotPath?: string): void {
     if (platform !== 'darwin') app.quit()
   })
 
-  app.on('will-quit', () => {
-    disposeIpc?.()
-    services?.close()
-    services = undefined
+  // Running agents are child processes; stop them (gracefully, then forcefully) before the
+  // app goes away, instead of orphaning them.
+  app.on('will-quit', (event) => {
+    if (!shuttingDown) {
+      shuttingDown = true
+      event.preventDefault()
+      void (async () => {
+        try {
+          await agents?.close()
+        } catch (error) {
+          logger.error('shutdown.agents.failed', describeError(error))
+        }
+        disposeIpc?.()
+        services?.close()
+        services = undefined
+        agents = undefined
+        app.quit()
+      })()
+    }
   })
 }
 
@@ -145,5 +196,12 @@ if (process.argv.includes(SMOKE_FLAG)) {
   })
 } else {
   const screenshotArg = process.argv.find((arg) => arg.startsWith(SCREENSHOT_PREFIX))
-  start(screenshotArg?.slice(SCREENSHOT_PREFIX.length))
+  const captureArg = process.argv.find((arg) => arg.startsWith(CAPTURE_PREFIX))
+  const dev: DevRun = {}
+  if (screenshotArg) dev.screenshotPath = screenshotArg.slice(SCREENSHOT_PREFIX.length)
+  // A capture plan can run arbitrary script in the renderer, so a shipped app never honours it.
+  if (captureArg && !app.isPackaged) {
+    dev.capturePlan = readCapturePlan(captureArg.slice(CAPTURE_PREFIX.length))
+  }
+  start(Object.keys(dev).length > 0 ? dev : undefined)
 }

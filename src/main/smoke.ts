@@ -1,11 +1,14 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as pty from 'node-pty'
+import { createAgentServices } from './agents'
 import { createServices } from './bootstrap'
 import { MIGRATIONS } from './database/migrations'
 import { createLogger, describeError } from './logging/logger'
 import { findExecutable, safeChildEnv, shellCommand, toPlatformId } from './platform'
+import { createMockAdapter } from './providers/mock/adapter'
+import { ProviderRegistry } from './providers/registry'
 
 export interface SmokeCheck {
   ok: boolean
@@ -69,6 +72,8 @@ export async function runSmokeTest(): Promise<SmokeReport> {
 
     await run('pty-spawn', () => spawnAndRead(platform, dir))
 
+    await run('agent-pipeline', () => agentPipeline(platform, dir, logger))
+
     await run('locate-git', async () => {
       const found = await findExecutable('git', { platform, env: process.env, home: homedir() })
       if (!found) throw new Error('git not found on PATH or in common install locations')
@@ -128,4 +133,96 @@ function spawnAndRead(platform: ReturnType<typeof toPlatformId>, cwd: string): P
       else reject(new Error(`exit ${exitCode} via [${via}], output "${output.trim()}"`))
     })
   })
+}
+
+async function waitFor(predicate: () => boolean, what: string, ms: number): Promise<void> {
+  const deadline = Date.now() + ms
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error(`timed out after ${ms}ms waiting for ${what}`)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+}
+
+/**
+ * The whole agent pipeline on the real runtime: a demo agent runs in a real PTY, reports
+ * what it is doing over the loopback hook server, and those reports become events, states
+ * and a clean shutdown. Only the "AI" is scripted; everything Shokuba does is real.
+ */
+async function agentPipeline(
+  platform: ReturnType<typeof toPlatformId>,
+  dir: string,
+  logger: ReturnType<typeof createLogger>,
+): Promise<string> {
+  const services = createServices({
+    dataDir: join(dir, 'pipeline'),
+    version: 'smoke',
+    platform,
+    logger,
+  })
+  const agents = await createAgentServices(services, {
+    platform,
+    env: process.env,
+    home: homedir(),
+    providers: new ProviderRegistry([createMockAdapter({ stepMs: 40 })]),
+    gracefulStopMs: 2_000,
+  })
+
+  try {
+    const workdir = join(dir, 'pipeline-work')
+    mkdirSync(workdir)
+    const employee = await agents.employees.create({
+      name: 'Smoke',
+      role: 'Tester',
+      providerId: 'mock',
+      workingDirectory: workdir,
+    })
+    const stateOf = (): string => agents.views.snapshot([employee.id]).views[0]?.state ?? 'unknown'
+    const seen = (type: string): number => services.events.log.list({ type: type as never }).length
+
+    await agents.runtime.start(employee)
+    await waitFor(() => stateOf() === 'idle', 'the demo agent to report in', 20_000)
+
+    agents.runtime.write(employee.id, 'go\r')
+    await waitFor(() => seen('agent.turn.finished') > 0, 'the scripted turn to finish', 20_000)
+
+    const tools = services.events.log.list({ type: 'agent.tool.started' })
+    if (tools.length !== 4) throw new Error(`expected 4 tool events, saw ${tools.length}`)
+    if (!tools.every((event) => event.source === 'simulated')) {
+      throw new Error('demo activity must be labelled simulated')
+    }
+    const changes = services.events.log
+      .list({ type: 'agent.state.changed', limit: 200 })
+      .map((event) => (event.type === 'agent.state.changed' ? event.payload.to : ''))
+    for (const wanted of ['starting', 'idle', 'thinking', 'researching', 'coding', 'testing']) {
+      if (!changes.includes(wanted as never))
+        throw new Error(`never reached "${wanted}": ${changes.join(',')}`)
+    }
+    if (!agents.runtime.replay(employee.id).data.includes('[demo] done.')) {
+      throw new Error('terminal output was not captured')
+    }
+
+    // Interrupting a turn (Claude Code reports nothing for this) must show idle and keep the agent alive.
+    agents.runtime.write(employee.id, 'again\r')
+    await waitFor(() => stateOf() !== 'idle', 'a second turn to start', 20_000)
+    agents.runtime.interrupt(employee.id)
+    if (stateOf() !== 'idle') throw new Error(`interrupt should show idle, state is ${stateOf()}`)
+    await waitFor(
+      () => agents.runtime.replay(employee.id).data.includes('[demo] interrupted.'),
+      'the turn to abort',
+      20_000,
+    )
+    if (!agents.runtime.isRunning(employee.id))
+      throw new Error('an interrupt must not stop the agent')
+
+    await agents.runtime.stop(employee.id)
+    if (agents.runtime.isRunning(employee.id)) throw new Error('still running after stop')
+    if (stateOf() !== 'stopped') throw new Error(`expected stopped, state is ${stateOf()}`)
+    if (seen('agent.error') !== 0)
+      throw new Error('a requested stop must not be recorded as an error')
+
+    return `${changes.length} state changes (${[...new Set(changes)].join('>')}), 4 tool events, clean stop`
+  } finally {
+    await agents.close()
+    services.close()
+  }
 }
