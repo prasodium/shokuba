@@ -39,12 +39,20 @@ export async function runSmokeTest(): Promise<SmokeReport> {
   const dir = mkdtempSync(join(tmpdir(), 'shokuba-smoke-'))
   const logger = createLogger(() => {})
 
+  // Each check announces itself as it starts and finishes, so if the run is cut short (a slow
+  // machine, a hang) the harness can say which check it was in and how long the others took.
+  const say = (line: string): void => void process.stdout.write(`${line}\n`)
   const run = async (name: string, fn: () => Promise<string> | string): Promise<void> => {
+    say(`SHOKUBA_SMOKE_START ${name}`)
+    const started = Date.now()
     try {
       checks[name] = { ok: true, detail: await fn() }
     } catch (error) {
       checks[name] = { ok: false, detail: describeError(error).message }
     }
+    say(
+      `SHOKUBA_SMOKE_DONE ${name} ${checks[name]?.ok ? 'ok' : 'FAILED'} ${Date.now() - started}ms`,
+    )
   }
 
   try {
