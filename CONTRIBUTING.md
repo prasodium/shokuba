@@ -23,6 +23,8 @@ npm run dev
 
 **Trying it without an AI account:** create an employee with the **Demo agent (simulated)** provider, start it, click into its terminal, type anything and press Enter. Its activity is labelled `simulated` throughout.
 
+**Demo-agent knobs (development):** `SHOKUBA_MOCK_STEP_MS=200` makes it work faster; `SHOKUBA_MOCK_CHATTY=1` makes every demo agent answer each message it gets, which starts a runaway exchange so you can watch the loop protection stop it.
+
 **Testing against the real Claude Code** (spends a few cents; opt-in): `SHOKUBA_LIVE_CLAUDE=1 npm test -- live-claude`. Claude Code's first-run setup must have been completed once on the machine.
 
 **Screenshots and unattended runs (development only):** `electron . --shokuba-capture=plan.json` runs a scripted timeline — `wait`, `eval` (JavaScript in the page), `type`, `press` and `shot` steps — against the real app. See `src/main/devtools/capture.ts`.

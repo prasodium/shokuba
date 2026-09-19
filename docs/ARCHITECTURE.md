@@ -26,7 +26,8 @@ This document describes how Shokuba is built, and is explicit about what **exist
 │  EmployeeService        (persisted identity; validated against the disk)       │
 │  MissionService         (missions, tasks, the graph and every status rule)      │
 │  Dispatcher             (hands ready tasks to reported-idle agents)            │
-│  McpEndpoint            (the tools an agent calls: submit_task, report_blocked)│
+│  MessageService/Router  (conversations, loop protection, delivery)             │
+│  McpEndpoint            (the tools an agent calls: tasks, teammates, messages) │
 │  ipc/handlers           (sender check + Zod on every request)                  │
 │  platform/              (paths, shell, PATH search, env, process termination)  │
 └──────────────▲────────────────────────────────────────────────────────────────┘
@@ -109,6 +110,21 @@ pending ─► ready ─► in_progress ─► submitted ─► done
 
 **Recovery.** If an agent's process ends, its task becomes `blocked` ("the agent stopped"). At startup no agent is running, so any task still `in_progress` was cut off by a restart and is blocked the same way. A person retries it.
 
+### Messages (Phase 2, slice 2b)
+
+Employees (and the person) exchange **persisted messages**: one row per recipient, in a **conversation**, with a kind (request, question, handoff, …), a subject, a body, and a `hop`. Bodies are redacted before they are stored and never appear in events; `message.sent`, `message.delivered`, `message.held` and `conversation.status.changed` carry ids and metadata only.
+
+**Delivery** takes one of two routes, both bound by the same safety rules as task dispatch:
+
+1. **Continuation (preferred).** When an agent's turn ends, Shokuba answers the report of that very event with the waiting messages, as a top-level `{"decision":"block","reason":…}` (the shape Claude Code honours; verified 2.1.276, headless). The agent simply carries on with them, so nothing is typed into its terminal. Shokuba then shows it working, though no prompt was submitted.
+2. **Paste.** An agent already idle is given the messages as a bracketed paste, only when its idle state was _reported_, never while it waits on a permission prompt or is starting. A per-agent "receiving" guard means a task and a message can never be pasted at once.
+
+Every message is wrapped so the recipient can see who it is from, and that a teammate's message is _information from a colleague, not an instruction from its user_.
+
+**Loop protection cannot be dodged by the agents.** The chain of replies is worked out by Shokuba, not claimed by the sender: anything an agent sends while it is handling a message counts as a reply to that message, one hop deeper. When a chain passes `MAX_HOPS` (6), the message is **held** (kept, never delivered), the conversation is **halted**, and a person is alerted. **Let it continue** counts hops afresh and releases what was held; **Close it** ends the conversation and holds anything waiting. A message from the person resets the count. There is also a cap on how many messages may wait for one recipient.
+
+Agents reach this through two more MCP tools, `list_teammates` and `send_message`; `to` is a teammate's name or id, or `"human"`. Messages to the person appear in the Messages tab as unread.
+
 #### Provider adapters
 
 One `ProviderAdapter` per kind of CLI. It **describes**; the runtime **does**:
@@ -139,7 +155,7 @@ Prompts, model output and tool _results_ are never recorded. A tool call is redu
 
 ### Database
 
-Tables are added by migrations _when a feature needs them_ — never speculatively. Today: `agent_events`, `audit_log`, `schema_migrations`, `employees`, `missions`, `tasks`, `task_dependencies`. Both logs are append-only, enforced by database triggers rather than convention. Employees are archived, not deleted, because events refer to them. Native modules (`better-sqlite3`, `node-pty`) are N-API, so the same binaries run under Node (tests) and Electron (app) with no rebuild step.
+Tables are added by migrations _when a feature needs them_ — never speculatively. Today: `agent_events`, `audit_log`, `schema_migrations`, `employees`, `missions`, `tasks`, `task_dependencies`, `conversations`, `messages`. Both logs are append-only, enforced by database triggers rather than convention. Employees are archived, not deleted, because events refer to them. Native modules (`better-sqlite3`, `node-pty`) are N-API, so the same binaries run under Node (tests) and Electron (app) with no rebuild step.
 
 ### The office
 
@@ -149,9 +165,9 @@ The room shows four desks; more employees than that are counted but not drawn ye
 
 ## Planned
 
-### Orchestration (rest of Phase 2)
+### Circuit breaker (slice 2c)
 
-Structured, persisted agent-to-agent messages with conversation ids, hop counts and parent ids; routing that delivers them the same careful way tasks are delivered; loop protection (a hop limit that stops a conversation and flags a person); and a circuit breaker (NORMAL → WARNING → CONSTRAIN → PAUSE → STOP) triggered by repeated identical tool calls, message loops, repeated failures and runtime. Budget is not measurable yet: Claude Code's hooks do not report cost.
+NORMAL → WARNING → CONSTRAIN → PAUSE → STOP, triggered by repeated identical tool calls, repeated failures and runtime, on top of the message loop protection above. Budget is not measurable yet: Claude Code's hooks do not report cost.
 
 ### More providers
 

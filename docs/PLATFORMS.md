@@ -10,6 +10,7 @@ Shokuba is developed **macOS first**. Windows and Linux are designed for from th
 | CI: in-Electron smoke test (SQLite, restart persistence, real PTY, Git)   | ✅    | ✅                                | ✅ (headless, `--no-sandbox`)     |
 | Agent pipeline: demo agent in a real PTY → hook server → events → stop    | ✅    | ✅                                | ✅                                |
 | Two-agent mission: task pasted into a real terminal → MCP submit → accept | ✅    | ✅                                | ✅                                |
+| Runaway two-agent conversation stopped at the hop limit                   | ✅    | ⏳ first CI run pending           | ⏳ first CI run pending           |
 | App window rendered and inspected                                         | ✅    | 🔜 not yet seen on a real desktop | 🔜 not yet seen on a real desktop |
 | Platform-layer branches unit-tested                                       | ✅    | ✅ (also simulated on any host)   | ✅ (also simulated on any host)   |
 | Packaging / installers                                                    | 🔜    | 🔜                                | 🔜                                |

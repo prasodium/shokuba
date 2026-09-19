@@ -50,6 +50,11 @@ Shokuba is being built in the open, in small, tested increments. Here is exactly
 </p>
 <p align="center"><sub>A mission: <i>Design the API</i> was accepted, so <i>Build the API</i> and <i>Write the docs</i> were handed to two agents at once; <i>Review everything</i> waits for both. (Demo agents.)</sub></p>
 
+<p align="center">
+  <img src="docs/assets/messages-demo.png" alt="The Messages tab: two demo agents answered each other until Shokuba stopped the conversation at six hops, holding the last message and asking the person whether to let it continue or close it" width="100%">
+</p>
+<p align="center"><sub>Two agents that answered each other endlessly. Shokuba counted the chain itself, held the seventh reply, and asked what to do. (Demo agents.)</sub></p>
+
 The office currently shows four desks and a single room. See the [roadmap](docs/ROADMAP.md) for the full plan.
 
 ## Why it's different
@@ -90,11 +95,11 @@ npm install
 npm run dev          # launch the app
 ```
 
-**Without an AI account:** click **Hire your first employee**, choose the **Demo agent (simulated)** provider, pick a folder, create them and press **Start**. Click into their terminal, type anything and press Enter — the demo agent "works" (reading, editing, running tests) and the office follows. Or open the **Missions** tab: create a mission, add tasks (say which must finish before others start), assign them, and press **Run mission**. Ready tasks are sent to their employee as soon as they report idle; when an agent says a task is finished you review its claim and accept it or send it back. Press Ctrl+C mid-task to interrupt it. Everything it does is labelled `simulated`. (On Windows the demo agent needs Node.js on your `PATH`.)
+**Without an AI account:** click **Hire your first employee**, choose the **Demo agent (simulated)** provider, pick a folder, create them and press **Start**. Click into their terminal, type anything and press Enter — the demo agent "works" (reading, editing, running tests) and the office follows. Or open the **Missions** tab: create a mission, add tasks (say which must finish before others start), assign them, and press **Run mission**. Ready tasks are sent to their employee as soon as they report idle; when an agent says a task is finished you review its claim and accept it or send it back. The **Messages** tab shows what employees say to each other and to you, and lets you write to them. Press Ctrl+C mid-task to interrupt it. Everything it does is labelled `simulated`. (On Windows the demo agent needs Node.js on your `PATH`.)
 
 **With Claude Code:** if `claude` is installed (on your `PATH`, or bundled in the VS Code / Cursor extension), it appears as a provider. Choose a working folder and start the employee. The first time, Claude Code may show its own one-time setup (theme, login) in the terminal panel — finish it there. Shokuba launches Claude Code with permission checks **on** and never offers a way to turn them off.
 
-Verify your setup end to end — this builds the app and runs it inside real Electron, checking SQLite, a restart, a real pseudo-terminal, the whole agent pipeline (a demo agent reporting through the hook server into events, an interrupt, a clean stop), a two-agent mission (a task pasted into a real terminal, submitted over MCP, accepted by a person, releasing the dependent task) and Git detection:
+Verify your setup end to end — this builds the app and runs it inside real Electron, checking SQLite, a restart, a real pseudo-terminal, the whole agent pipeline (a demo agent reporting through the hook server into events, an interrupt, a clean stop), a two-agent mission (a task pasted into a real terminal, submitted over MCP, accepted by a person, releasing the dependent task), and a runaway two-agent conversation stopped at the hop limit and Git detection:
 
 ```bash
 npm run smoke
@@ -107,6 +112,7 @@ Electron 44.4.3 / Node 24.21.0 (ABI 149) on darwin-arm64
   PASS  pty-spawn
   PASS  agent-pipeline
   PASS  mission-pipeline
+  PASS  message-pipeline
   PASS  locate-git
 ```
 

@@ -28,7 +28,7 @@ Shokuba is built in small, tested increments. Each phase ends with something tha
 Built in slices, each checked before the next.
 
 - [x] **2a: Missions and the task graph.** Missions with tasks that depend on each other (cycles are refused); assign tasks to employees; while a mission is Running, a ready task is handed to its assignee once that agent has _reported_ itself idle; agents report back through Shokuba's own MCP tools; `submitted` is a claim, and only a person accepting it makes a task `done`. Verified with the demo agent on macOS, Linux and Windows. **Not yet verified:** a real, interactive Claude Code receiving a pasted briefing and calling the tools (the MCP handshake itself is verified against Claude Code 2.1.276 in headless mode)
-- [ ] 2b: Structured messages between agents, routing, and loop protection (hop limits)
+- [x] **2b: Messages between agents, routing and loop protection.** Agents (and you) send persisted, structured messages; a message reaches an agent as a continuation when its turn ends, or is pasted if it is already idle; Shokuba counts the chain of replies itself and, at 6 hops, holds the message and halts the conversation for you to resume or close. Verified with demo agents on macOS, Linux and Windows, including a runaway exchange being stopped. Continuation is verified against Claude Code 2.1.276 in headless mode; **not yet verified** with an interactive session
 - [ ] 2c: Circuit breaker (repeated identical tool calls, message loops, repeated failures, runtime)
 - [ ] Roles as editable templates. Today a role is a label, plus one line in the agent's system prompt
 - [x] Several employees running at once, each with their own terminal and desk
