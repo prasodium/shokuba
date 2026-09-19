@@ -27,7 +27,15 @@ npm run dev
 
 **Testing against the real Claude Code** (spends a few cents; opt-in): `SHOKUBA_LIVE_CLAUDE=1 npm test -- live-claude`. Claude Code's first-run setup must have been completed once on the machine.
 
-**Screenshots and unattended runs (development only):** `electron . --shokuba-capture=plan.json` runs a scripted timeline — `wait`, `eval` (JavaScript in the page), `type`, `press` and `shot` steps — against the real app. See `src/main/devtools/capture.ts`.
+**Screenshots and unattended runs (development only):** `electron . --shokuba-capture=plan.json` runs a scripted timeline — `wait`, `eval` (JavaScript in the page), `type`, `press` and `shot` steps — against the real app. See `src/main/devtools/capture.ts`. A `frames` step takes a run of screenshots at a steady pace, which `ffmpeg` can turn into an animation; the README's is made like this:
+
+```bash
+ffmpeg -framerate 7.7 -i frames/frame-%04d.png \
+  -vf "scale=1000:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=160:stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" \
+  -loop 0 out.gif
+```
+
+The `frames` step reports how long the run really took, so set `-framerate` to frames divided by seconds. Typing `test` into a demo agent's terminal makes it run one long test command, which sends its employee to the QA bench.
 
 > **Tip:** if the app exits immediately saying it is "running as plain Node", your shell has `ELECTRON_RUN_AS_NODE` set (some other Electron app's terminal leaks it). The npm scripts clear it for you; if you run `electron` by hand, unset it first.
 

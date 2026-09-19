@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { BrowserWindow } from 'electron'
 import { z } from 'zod'
 
@@ -13,6 +14,25 @@ const StepSchema = z.union([
   z.strictObject({ wait: z.number().int().min(0).max(120_000) }),
   z.strictObject({ eval: z.string().min(1) }),
   z.strictObject({ shot: z.string().min(1) }),
+  /**
+   * Take a run of screenshots at a steady pace into a folder (`frame-0001.png`, …), to make an
+   * animation from. `crop` is a region of the page in CSS pixels.
+   */
+  z.strictObject({
+    frames: z.strictObject({
+      dir: z.string().min(1),
+      count: z.number().int().min(1).max(600),
+      everyMs: z.number().int().min(30).max(5_000),
+      crop: z
+        .strictObject({
+          x: z.number().int().min(0),
+          y: z.number().int().min(0),
+          width: z.number().int().min(1),
+          height: z.number().int().min(1),
+        })
+        .optional(),
+    }),
+  }),
   /** Type text into the focused element, as the keyboard would. */
   z.strictObject({ type: z.string().min(1).max(500) }),
   /** Press a key (e.g. "Enter") or chord (e.g. "Ctrl+C"). */
@@ -39,6 +59,19 @@ export async function runCapturePlan(
     } else if ('press' in step) {
       pressKey(window, step.press)
       report(`pressed ${step.press}`)
+    } else if ('frames' in step) {
+      const { dir, count, everyMs, crop } = step.frames
+      mkdirSync(dir, { recursive: true })
+      const started = Date.now()
+      for (let i = 0; i < count; i += 1) {
+        // Keep to the schedule, so a slow frame does not push every later one back.
+        const wait = started + i * everyMs - Date.now()
+        if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait))
+        const image = await window.webContents.capturePage(crop)
+        writeFileSync(join(dir, `frame-${String(i + 1).padStart(4, '0')}.png`), image.toPNG())
+      }
+      // The real time taken is reported, so the animation can be played at the pace it happened.
+      report(`frames ${count} in ${Date.now() - started}ms`)
     } else if ('eval' in step) {
       try {
         const result: unknown = await window.webContents.executeJavaScript(step.eval)
