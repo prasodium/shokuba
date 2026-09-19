@@ -23,7 +23,7 @@ npm run dev
 
 **Trying it without an AI account:** create an employee with the **Demo agent (simulated)** provider, start it, click into its terminal, type anything and press Enter. Its activity is labelled `simulated` throughout.
 
-**Demo-agent knobs (development):** `SHOKUBA_MOCK_STEP_MS=200` makes it work faster; `SHOKUBA_MOCK_CHATTY=1` makes every demo agent answer each message it gets, which starts a runaway exchange so you can watch the loop protection stop it.
+**Demo-agent knobs (development):** `SHOKUBA_MOCK_STEP_MS=200` makes it work faster; `SHOKUBA_MOCK_CHATTY=1` makes every demo agent answer each message it gets, which starts a runaway exchange so you can watch the loop protection stop it. Typing `loop` into a demo agent's terminal makes it repeat one call until the circuit breaker refuses it; `stubborn` keeps trying after being refused, until the breaker pauses and interrupts it.
 
 **Testing against the real Claude Code** (spends a few cents; opt-in): `SHOKUBA_LIVE_CLAUDE=1 npm test -- live-claude`. Claude Code's first-run setup must have been completed once on the machine.
 

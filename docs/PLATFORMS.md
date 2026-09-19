@@ -11,6 +11,7 @@ Shokuba is developed **macOS first**. Windows and Linux are designed for from th
 | Agent pipeline: demo agent in a real PTY → hook server → events → stop    | ✅    | ✅                                | ✅                                |
 | Two-agent mission: task pasted into a real terminal → MCP submit → accept | ✅    | ✅                                | ✅                                |
 | Runaway two-agent conversation stopped at the hop limit                   | ✅    | ✅                                | ✅                                |
+| Runaway agent refused, held back from tasks, then paused and interrupted  | ✅    | 🔜 pending CI                     | 🔜 pending CI                     |
 | App window rendered and inspected                                         | ✅    | 🔜 not yet seen on a real desktop | 🔜 not yet seen on a real desktop |
 | Platform-layer branches unit-tested                                       | ✅    | ✅ (also simulated on any host)   | ✅ (also simulated on any host)   |
 | Packaging / installers                                                    | 🔜    | 🔜                                | 🔜                                |

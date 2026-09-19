@@ -27,6 +27,7 @@ This document describes how Shokuba is built, and is explicit about what **exist
 │  MissionService         (missions, tasks, the graph and every status rule)      │
 │  Dispatcher             (hands ready tasks to reported-idle agents)            │
 │  MessageService/Router  (conversations, loop protection, delivery)             │
+│  CircuitBreaker         (watches events; limits, pauses and refuses calls)     │
 │  McpEndpoint            (the tools an agent calls: tasks, teammates, messages) │
 │  ipc/handlers           (sender check + Zod on every request)                  │
 │  platform/              (paths, shell, PATH search, env, process termination)  │
@@ -89,6 +90,34 @@ Main and renderer fold events through the **same reducer** (`src/shared/agents/v
 | Terminal            | `src/renderer/components/TerminalPanel` | xterm.js; replay + live stream joined by offsets, so re-attaching loses and repeats nothing               |
 | Office              | `src/renderer/office/`                  | PixiJS isometric voxel room; pure geometry, poses and bubble text are unit-tested                         |
 
+#### Provider adapters
+
+One `ProviderAdapter` per kind of CLI. It **describes**; the runtime **does**:
+
+- `detect()` — is the CLI installed, where, which version?
+- `buildLaunch()` — pure: executable, arguments, extra environment, and files to write. No I/O.
+- `observation` — turns the CLI's own reports into `AgentSignal`s (`turn-started`, `tool-started`, `attention`, …). Unknown or malformed input yields nothing, never an exception. It may also say how to answer a report: `continuation` (make the agent carry on with some text) and `deny` (refuse the tool call it was about to make).
+
+The runtime starts every agent in a PTY the same way, so terminals, interrupts, resizing and shutdown behave identically for all providers. (This differs from the original sketch, where each adapter spawned its own process; that would have duplicated the hard parts once per provider.)
+
+#### How Claude Code is observed
+
+Shokuba launches `claude --settings <generated file>`. The file adds [HTTP hooks](https://code.claude.com/docs/en/hooks) that POST each event to the loopback listener, authenticating with a header taken from an environment variable — the token never touches the disk or the command line. Claude Code merges these with the user's own hooks; it does not replace them.
+
+Why HTTP rather than a Unix socket: Claude Code's hooks speak HTTP or run a command. A socket would need a helper binary launched on every hook, per platform. Loopback HTTP works identically on macOS, Windows and Linux, and the listener is locked down (token per agent, `Host` check, JSON only, size cap).
+
+Prompts, model output and tool _results_ are never recorded. A tool call is reduced to a short summary ("Edit src/app.ts", "Run npm test") which is redacted before it is stored.
+
+#### Runtime states and how we know
+
+`RuntimeState` is what an agent _process_ is doing: `offline`, `starting`, `idle`, `thinking`, `coding`, `testing`, `researching`, `reviewing`, `waiting`, `blocked`, `paused`, `error`, `stopped`. Some rules worth knowing:
+
+- Editing and reading tools say what they do (`reported`). A **shell command could be anything**, so "coding" or "testing" derived from one is our guess and is labelled `inferred`.
+- Several tools can run at once; the agent stays busy until the last finishes.
+- Claude Code reports nothing when a turn is interrupted. If you press Ctrl+C or Esc in the terminal (or use Interrupt), Shokuba shows the agent idle, labelled `inferred`; the next real report corrects it if the guess was wrong.
+- Nothing decides an agent is finished by silence — only a `turn-finished` report or the process exiting.
+- Everything from the demo provider is labelled `simulated`, never `reported`.
+
 ### Missions (Phase 2, slice 2a)
 
 A **mission** is a goal; its **tasks** form a graph (`task_dependencies`), not a flat list. A task is `pending` until every dependency is `done`, then `ready`. Dependency cycles are refused when they would be created.
@@ -125,33 +154,40 @@ Every message is wrapped so the recipient can see who it is from, and that a tea
 
 Agents reach this through two more MCP tools, `list_teammates` and `send_message`; `to` is a teammate's name or id, or `"human"`. Messages to the person appear in the Messages tab as unread.
 
-#### Provider adapters
+### Circuit breaker (Phase 2, slice 2c)
 
-One `ProviderAdapter` per kind of CLI. It **describes**; the runtime **does**:
+The `CircuitBreaker` reads the same event stream as everything else and restrains an agent that looks like a runaway. Every change of level is an event (`breaker.state.changed`, with the rule that tripped and a sentence saying why) and an audit entry, and every refused call is a `breaker.denied` event, so what it did is on the record and a window opened later sees the same thing.
 
-- `detect()` — is the CLI installed, where, which version?
-- `buildLaunch()` — pure: executable, arguments, extra environment, and files to write. No I/O.
-- `observation` — turns the CLI's own reports into `AgentSignal`s (`turn-started`, `tool-started`, `attention`, …). Unknown or malformed input yields nothing, never an exception.
+| Level                 | What it does                                                                                                                                                                                                                                      |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Normal                | Nothing.                                                                                                                                                                                                                                          |
+| Warning               | Only a flag, so you can look.                                                                                                                                                                                                                     |
+| Limited (`constrain`) | No new tasks, and no messages from other agents (you can still reach it, and it can still message you or say it is blocked). The call it keeps repeating, or further edits if too many files have changed, is refused, and the agent is told why. |
+| Paused                | The running turn is interrupted (Ctrl+C), every tool call is refused except `get_current_task`, `submit_task` and `report_blocked` (so it can still hand back what it has), and nothing is delivered to it.                                       |
+| Stopped               | The process is ended. **Only a person does this**; the breaker never stops an agent by itself.                                                                                                                                                    |
 
-The runtime starts every agent in a PTY the same way, so terminals, interrupts, resizing and shutdown behave identically for all providers. (This differs from the original sketch, where each adapter spawned its own process; that would have duplicated the hard parts once per provider.)
+What trips it (each rule has a warning, a limited and a paused threshold; the busiest wins):
 
-#### How Claude Code is observed
+| Rule                                             | Warning | Limited | Paused               |
+| ------------------------------------------------ | ------- | ------- | -------------------- |
+| The same call, one after another                 | 5       | 8       | 12                   |
+| Tool calls that failed, one after another        | 6       | 10      | 15                   |
+| Turns that ended in an error, within 10 minutes  | 2       | 3       | 5                    |
+| Different files edited in one task               | 40      | 80      | 150                  |
+| One turn that has been running                   | 30 min  | 90 min  | never, by time alone |
+| Conversations halted as loops, within 30 minutes | 1       | 2       | never, by that alone |
 
-Shokuba launches `claude --settings <generated file>`. The file adds [HTTP hooks](https://code.claude.com/docs/en/hooks) that POST each event to the loopback listener, authenticating with a header taken from an environment variable — the token never touches the disk or the command line. Claude Code merges these with the user's own hooks; it does not replace them.
+It escalates by itself up to **Paused** and never lowers a level by itself, except that a warning fades after ten quiet minutes. **Reset** (a person) returns an agent to normal and forgets what tripped it; **Pause** lets a person pause an agent by hand; starting an agent again gives it a clean slate. The thresholds are defaults in `src/main/breaker/rules.ts`, not settings yet.
 
-Why HTTP rather than a Unix socket: Claude Code's hooks speak HTTP or run a command. A socket would need a helper binary launched on every hook, per platform. Loopback HTTP works identically on macOS, Windows and Linux, and the listener is locked down (token per agent, `Host` check, JSON only, size cap).
+**How a refusal works.** A tool call is reported to Shokuba just before it runs (Claude Code's `PreToolUse` hook), and Shokuba's answer to that very report can refuse it. Claude Code then does not run the tool and tells the model the reason (verified against 2.1.276, headless). Because a refused call never finishes, Shokuba reports it as finished-and-not-ok itself, so the agent does not look stuck in the middle of it, and the breaker does not count its own refusals as the agent's failures. An agent that ignores a refusal and keeps retrying is caught by the repeat rule and paused. Lifting a restriction is itself an event the dispatcher and router react to, so a held task or message is sent without waiting for anything else.
 
-Prompts, model output and tool _results_ are never recorded. A tool call is reduced to a short summary ("Edit src/app.ts", "Run npm test") which is redacted before it is stored.
+**What it cannot see.** Be honest about these:
 
-#### Runtime states and how we know
-
-`RuntimeState` is what an agent _process_ is doing: `offline`, `starting`, `idle`, `thinking`, `coding`, `testing`, `researching`, `reviewing`, `waiting`, `blocked`, `paused`, `error`, `stopped`. Some rules worth knowing:
-
-- Editing and reading tools say what they do (`reported`). A **shell command could be anything**, so "coding" or "testing" derived from one is our guess and is labelled `inferred`.
-- Several tools can run at once; the agent stays busy until the last finishes.
-- Claude Code reports nothing when a turn is interrupted. If you press Ctrl+C or Esc in the terminal (or use Interrupt), Shokuba shows the agent idle, labelled `inferred`; the next real report corrects it if the guess was wrong.
-- Nothing decides an agent is finished by silence — only a `turn-finished` report or the process exiting.
-- Everything from the demo provider is labelled `simulated`, never `reported`.
+- "The same call" means the same tool with the same short summary (for example `Run npm test`), not byte-identical arguments.
+- Hooks see tool calls, not what happens inside one: a loop inside a single shell command is invisible, and files changed through the shell are not counted as edits.
+- A refusal only works if the CLI honours it. That is verified for Claude Code in headless mode; an interactive session is not yet verified. Pausing also writes Ctrl+C to the terminal as a backstop, and **Stop** always works.
+- **There is no spend limit.** Claude Code's hooks report no cost or token counts, so budget cannot be measured. Time and repetition are.
+- Levels are held in memory. Agents do not survive Shokuba quitting, so nothing is lost by that; the events remain as history.
 
 ### Database
 
@@ -164,10 +200,6 @@ PixiJS 8 draws an original isometric-voxel room: each employee has a desk, a cha
 The room shows four desks; more employees than that are counted but not drawn yet. The full world (rooms, pathfinding, walking, handoffs, camera) is Phase 5.
 
 ## Planned
-
-### Circuit breaker (slice 2c)
-
-NORMAL → WARNING → CONSTRAIN → PAUSE → STOP, triggered by repeated identical tool calls, repeated failures and runtime, on top of the message loop protection above. Budget is not measurable yet: Claude Code's hooks do not report cost.
 
 ### More providers
 

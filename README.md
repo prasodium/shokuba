@@ -38,12 +38,12 @@ Shokuba is being built in the open, in small, tested increments. Here is exactly
 </p>
 <p align="center"><sub>Three <b>demo (simulated)</b> agents. Each bubble says what the event stream reports — and is marked <code>demo</code> here, because nothing in this screenshot is a real AI.</sub></p>
 
-|                         |                                                                                                                                                                                                                                                                                                                                         |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ✅ **Working today**    | Employees you can create, edit and start · a real terminal for each (xterm.js + PTY) · **Claude Code** launched in it · an isometric voxel office whose bubbles follow the event stream · a simulated demo agent (no AI account needed) · event log, redaction, hardened IPC · CI on macOS, Linux and Windows                           |
-| 🔬 **Not yet verified** | Claude Code, _interactively_, reporting through its hooks and calling the mission tools. Both hook delivery and the MCP handshake are verified against the real Claude Code 2.1.276 in headless mode, and the real interface runs in the terminal, but the interactive end-to-end check is pending (see the [roadmap](docs/ROADMAP.md)) |
-| 🚧 **Building next**    | Multiple employees working together · missions and a task graph · message routing with loop protection                                                                                                                                                                                                                                  |
-| 🗺️ **Planned**          | Git worktree isolation · independent verification & evidence packs · Codex / Gemini CLI / custom providers · GitHub issue → verified PR · the full office (rooms, walking, handoffs) · replay                                                                                                                                           |
+|                         |                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ✅ **Working today**    | Employees you can create, edit and start · a real terminal for each (xterm.js + PTY) · **Claude Code** launched in it · an isometric voxel office whose bubbles follow the event stream · a simulated demo agent (no AI account needed) · **missions with a task graph** · **messages between agents with loop protection** · **a circuit breaker for runaway agents** · event log, redaction, hardened IPC · CI on macOS, Linux and Windows |
+| 🔬 **Not yet verified** | Claude Code, _interactively_, reporting through its hooks and calling the mission tools. Both hook delivery and the MCP handshake are verified against the real Claude Code 2.1.276 in headless mode, and the real interface runs in the terminal, but the interactive end-to-end check is pending (see the [roadmap](docs/ROADMAP.md))                                                                                                      |
+| 🚧 **Building next**    | Roles as editable templates                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 🗺️ **Planned**          | Git worktree isolation · independent verification & evidence packs · Codex / Gemini CLI / custom providers · GitHub issue → verified PR · the full office (rooms, walking, handoffs) · replay                                                                                                                                                                                                                                                |
 
 <p align="center">
   <img src="docs/assets/missions-demo.png" alt="The Missions tab: a task graph where the first task is done and the two tasks that depended on it are now in progress with two employees, the third waiting on both" width="100%">
@@ -55,6 +55,11 @@ Shokuba is being built in the open, in small, tested increments. Here is exactly
 </p>
 <p align="center"><sub>Two agents that answered each other endlessly. Shokuba counted the chain itself, held the seventh reply, and asked what to do. (Demo agents.)</sub></p>
 
+<p align="center">
+  <img src="docs/assets/breaker-demo.png" alt="A demo agent that repeated the same call eight times was refused by the circuit breaker: its bubble says limited, the roster and terminal show why, and the terminal shows the reason the agent was given" width="100%">
+</p>
+<p align="center"><sub>An agent that repeated one call eight times in a row. The circuit breaker refused the ninth, told the agent why, and now holds back its new tasks until you press <b>Reset</b>. (Demo agent.)</sub></p>
+
 The office currently shows four desks and a single room. See the [roadmap](docs/ROADMAP.md) for the full plan.
 
 ## Why it's different
@@ -65,7 +70,7 @@ The office currently shows four desks and a single room. See the [roadmap](docs/
 | **Independent verification**             | The coder is never the only judge of its own work. A separate reviewer gets the diff and requirements — not the coder's story. |
 | **A living office that tells the truth** | Avatars animate from real events, and every state records whether it was _reported_, _inferred_ or _simulated_.                |
 | **Fully editable employees**             | Roles, skills, personalities, avatars, desks, departments — all yours to change.                                               |
-| **Human stays in control**               | Configurable approval policies from strict to fully autonomous, plus a circuit breaker against runaway loops and spend.        |
+| **Human stays in control**               | Configurable approval policies from strict to fully autonomous, plus a circuit breaker that limits and pauses runaway agents.  |
 
 ## How it works
 
@@ -95,11 +100,11 @@ npm install
 npm run dev          # launch the app
 ```
 
-**Without an AI account:** click **Hire your first employee**, choose the **Demo agent (simulated)** provider, pick a folder, create them and press **Start**. Click into their terminal, type anything and press Enter — the demo agent "works" (reading, editing, running tests) and the office follows. Or open the **Missions** tab: create a mission, add tasks (say which must finish before others start), assign them, and press **Run mission**. Ready tasks are sent to their employee as soon as they report idle; when an agent says a task is finished you review its claim and accept it or send it back. The **Messages** tab shows what employees say to each other and to you, and lets you write to them. Press Ctrl+C mid-task to interrupt it. Everything it does is labelled `simulated`. (On Windows the demo agent needs Node.js on your `PATH`.)
+**Without an AI account:** click **Hire your first employee**, choose the **Demo agent (simulated)** provider, pick a folder, create them and press **Start**. Click into their terminal, type anything and press Enter — the demo agent "works" (reading, editing, running tests) and the office follows. Or open the **Missions** tab: create a mission, add tasks (say which must finish before others start), assign them, and press **Run mission**. Ready tasks are sent to their employee as soon as they report idle; when an agent says a task is finished you review its claim and accept it or send it back. The **Messages** tab shows what employees say to each other and to you, and lets you write to them. Press Ctrl+C mid-task to interrupt it. To see the circuit breaker, type `loop` into a demo agent's terminal: it repeats one call until it is refused, and the office, roster and terminal show it as limited until you press **Reset**. Everything it does is labelled `simulated`. (On Windows the demo agent needs Node.js on your `PATH`.)
 
 **With Claude Code:** if `claude` is installed (on your `PATH`, or bundled in the VS Code / Cursor extension), it appears as a provider. Choose a working folder and start the employee. The first time, Claude Code may show its own one-time setup (theme, login) in the terminal panel — finish it there. Shokuba launches Claude Code with permission checks **on** and never offers a way to turn them off.
 
-Verify your setup end to end — this builds the app and runs it inside real Electron, checking SQLite, a restart, a real pseudo-terminal, the whole agent pipeline (a demo agent reporting through the hook server into events, an interrupt, a clean stop), a two-agent mission (a task pasted into a real terminal, submitted over MCP, accepted by a person, releasing the dependent task), and a runaway two-agent conversation stopped at the hop limit and Git detection:
+Verify your setup end to end — this builds the app and runs it inside real Electron, checking SQLite, a restart, a real pseudo-terminal, the whole agent pipeline (a demo agent reporting through the hook server into events, an interrupt, a clean stop), a two-agent mission (a task pasted into a real terminal, submitted over MCP, accepted by a person, releasing the dependent task), a runaway two-agent conversation stopped at the hop limit, a looping agent refused and then paused by the circuit breaker, and Git detection:
 
 ```bash
 npm run smoke
@@ -113,6 +118,7 @@ Electron 44.4.3 / Node 24.21.0 (ABI 149) on darwin-arm64
   PASS  agent-pipeline
   PASS  mission-pipeline
   PASS  message-pipeline
+  PASS  breaker-pipeline
   PASS  locate-git
 ```
 
