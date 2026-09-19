@@ -5,7 +5,7 @@ import * as pty from 'node-pty'
 import { createServices } from './bootstrap'
 import { MIGRATIONS } from './database/migrations'
 import { createLogger, describeError } from './logging/logger'
-import { findExecutable, safeChildEnv, toPlatformId } from './platform'
+import { findExecutable, safeChildEnv, shellCommand, toPlatformId } from './platform'
 
 export interface SmokeCheck {
   ok: boolean
@@ -91,21 +91,21 @@ export async function runSmokeTest(): Promise<SmokeReport> {
   }
 }
 
-/** Spawn this very executable in a PTY as a plain Node, and read back what it prints. */
+/**
+ * Run a command through the platform's default shell in a real PTY and read back what it
+ * prints. A shell is a genuine console program, like the agent CLIs this will host, and
+ * this also exercises `shellCommand()` on whatever OS the test runs on.
+ */
 function spawnAndRead(platform: ReturnType<typeof toPlatformId>, cwd: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const env = safeChildEnv(platform, process.env, { ELECTRON_RUN_AS_NODE: '1' })
-    // The child lingers briefly after writing: Windows ConPTY can lose the output of a
-    // process that exits instantly. It also reports its Node version so a failure shows
-    // which runtime actually ran.
-    const script =
-      "process.stdout.write('pty-ok node=' + process.versions.node); setTimeout(() => {}, 500)"
-    const child = pty.spawn(process.execPath, ['-e', script], {
+    const shell = shellCommand(platform, process.env, 'echo pty-ok')
+    const via = `${shell.file} ${shell.args.join(' ')}`
+    const child = pty.spawn(shell.file, [...shell.args], {
       name: 'xterm-256color',
       cols: 80,
       rows: 24,
       cwd,
-      env,
+      env: safeChildEnv(platform, process.env),
     })
 
     let output = ''
@@ -113,7 +113,7 @@ function spawnAndRead(platform: ReturnType<typeof toPlatformId>, cwd: string): P
       child.kill()
       reject(
         new Error(
-          `PTY did not exit within ${PTY_TIMEOUT_MS}ms (output so far: "${output.trim()}")`,
+          `PTY did not exit within ${PTY_TIMEOUT_MS}ms via [${via}] (output so far: "${output.trim()}")`,
         ),
       )
     }, PTY_TIMEOUT_MS)
@@ -124,8 +124,8 @@ function spawnAndRead(platform: ReturnType<typeof toPlatformId>, cwd: string): P
     child.onExit(({ exitCode }) => {
       clearTimeout(timer)
       if (exitCode === 0 && output.includes('pty-ok'))
-        resolve(`pid ${child.pid} exited 0, output "${output.trim()}"`)
-      else reject(new Error(`exit ${exitCode}, output "${output.trim()}"`))
+        resolve(`pid ${child.pid} exited 0 via ${shell.file}, output "${output.trim()}"`)
+      else reject(new Error(`exit ${exitCode} via [${via}], output "${output.trim()}"`))
     })
   })
 }

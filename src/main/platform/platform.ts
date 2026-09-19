@@ -51,6 +51,17 @@ export function defaultShell(platform: PlatformId, env: Env): ShellSpec {
   return { file: usable ?? fallback, args: ['-l'] }
 }
 
+/** Run a single command line through the platform's default shell, non-interactively. */
+export function shellCommand(platform: PlatformId, env: Env, command: string): ShellSpec {
+  if (platform === 'win32') {
+    return {
+      file: 'powershell.exe',
+      args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command],
+    }
+  }
+  return { file: defaultShell(platform, env).file, args: ['-c', command] }
+}
+
 /** sun_path is 104 bytes on macOS/BSD and 108 on Linux, including the trailing NUL. */
 const MAX_UNIX_SOCKET_PATH = 103
 

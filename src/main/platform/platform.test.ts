@@ -6,6 +6,7 @@ import {
   ipcEndpoint,
   pathApi,
   planTerminate,
+  shellCommand,
   toPlatformId,
   UnsupportedPlatformError,
 } from './index'
@@ -55,6 +56,30 @@ describe('defaultShell', () => {
 
   it('uses PowerShell on Windows and ignores $SHELL', () => {
     expect(defaultShell('win32', { SHELL: '/bin/bash' }).file).toBe('powershell.exe')
+  })
+})
+
+describe('shellCommand', () => {
+  it('runs the command with -c through the user shell on POSIX', () => {
+    expect(shellCommand('darwin', { SHELL: '/bin/zsh' }, 'echo hi')).toEqual({
+      file: '/bin/zsh',
+      args: ['-c', 'echo hi'],
+    })
+    expect(shellCommand('linux', {}, 'echo hi')).toEqual({
+      file: '/bin/bash',
+      args: ['-c', 'echo hi'],
+    })
+  })
+
+  it('uses a non-interactive PowerShell on Windows', () => {
+    expect(shellCommand('win32', {}, 'echo hi')).toEqual({
+      file: 'powershell.exe',
+      args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'echo hi'],
+    })
+  })
+
+  it('does not pass a login flag, unlike an interactive shell', () => {
+    expect(shellCommand('darwin', {}, 'x').args).not.toContain('-l')
   })
 })
 
