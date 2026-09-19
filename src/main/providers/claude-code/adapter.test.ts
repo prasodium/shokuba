@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import type { TeamContext } from '../types'
 import {
+  agentSystemPrompt,
   claudeInheritedEnv,
   createClaudeCodeAdapter,
   MCP_CONFIG_FILE,
@@ -22,11 +24,14 @@ const input = (overrides: Partial<Parameters<typeof adapter.buildLaunch>[0]['emp
     id: 'e1',
     name: 'Mika',
     role: 'Engineer',
+    isManager: false,
+    instructions: null,
     workingDirectory: '/work/app',
     model: null,
     permissionMode: 'default' as const,
     ...overrides,
   },
+  team: { manager: null, reports: [] } as TeamContext,
 })
 
 describe('claude-code adapter', () => {
@@ -127,6 +132,62 @@ describe('continuing an agent', () => {
     const reply = adapter.observation.continuation?.('do the next thing')
     expect(reply).toEqual({ decision: 'block', reason: 'do the next thing' })
     expect(JSON.stringify(reply)).not.toContain('hookSpecificOutput')
+  })
+})
+
+describe("the agent's introduction", () => {
+  const base = { name: 'Ren', role: 'Engineer', isManager: false, instructions: null }
+  const nobody: TeamContext = { manager: null, reports: [] }
+
+  it('says nothing about a team for someone who is not on one', () => {
+    const text = agentSystemPrompt(base, nobody)
+    expect(text).toContain('You are Ren, Engineer')
+    expect(text).not.toContain('report to')
+    expect(text).not.toContain('lead a team')
+  })
+
+  it('includes what the role is for', () => {
+    const text = agentSystemPrompt({ ...base, instructions: 'You write the API.' }, nobody)
+    expect(text).toContain('What your role is for: You write the API.')
+  })
+
+  it('tells an employee who their manager is, and to go through them rather than to the person', () => {
+    const text = agentSystemPrompt(base, {
+      manager: { name: 'Mira', role: 'Manager' },
+      reports: [],
+    })
+    expect(text).toContain('You report to Mira (Manager)')
+    expect(text).toContain('do not message the person you work for directly')
+    expect(text).toContain('send it to Mira with send_message')
+  })
+
+  it('tells a manager they are the one who talks to the person, and who reports to them', () => {
+    const text = agentSystemPrompt(
+      { ...base, name: 'Mira', role: 'Manager', isManager: true },
+      {
+        manager: null,
+        reports: [
+          { name: 'Ren', role: 'Engineer' },
+          { name: 'Sora', role: 'QA' },
+        ],
+      },
+    )
+    expect(text).toContain('you are the one who talks to the person you work for')
+    expect(text).toContain('Ren (Engineer), Sora (QA) report to you')
+  })
+
+  it('handles a manager with no team yet', () => {
+    const text = agentSystemPrompt({ ...base, isManager: true }, nobody)
+    expect(text).toContain('Nobody reports to you yet; list_teammates shows who does')
+  })
+
+  it('is what a launched agent is given', () => {
+    const launch = adapter.buildLaunch({
+      ...input(),
+      team: { manager: { name: 'Mira', role: 'Manager' }, reports: [] },
+    })
+    const at = launch.args.indexOf('--append-system-prompt')
+    expect(launch.args[at + 1]).toContain('You report to Mira')
   })
 })
 

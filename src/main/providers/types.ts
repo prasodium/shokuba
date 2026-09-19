@@ -40,11 +40,30 @@ export interface ProviderInstallation {
   problem: string | null
 }
 
+/** Where an employee sits in their team, as their agent is told when it starts. */
+export interface TeamContext {
+  /** Who they report to, or null if they lead the team or are not on one. */
+  manager: { name: string; role: string } | null
+  /** Who reports to them, if they are a manager. */
+  reports: Array<{ name: string; role: string }>
+}
+
 export interface LaunchInput {
   platform: PlatformId
   /** Shokuba's own environment, read-only: for deciding which of its variables to inherit. */
   env: Env
-  employee: Pick<Employee, 'id' | 'name' | 'role' | 'workingDirectory' | 'model' | 'permissionMode'>
+  employee: Pick<
+    Employee,
+    | 'id'
+    | 'name'
+    | 'role'
+    | 'isManager'
+    | 'instructions'
+    | 'workingDirectory'
+    | 'model'
+    | 'permissionMode'
+  >
+  team: TeamContext
   /** Absolute path to the executable, from `detect`. */
   executable: string
   /** Where the agent reports what it is doing. The token itself is only ever in the env. */

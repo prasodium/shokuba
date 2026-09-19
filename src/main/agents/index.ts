@@ -56,6 +56,9 @@ export interface AgentServices {
   close(): Promise<void>
 }
 
+const pick = (employee: { name: string; role: string } | undefined) =>
+  employee ? { name: employee.name, role: employee.role } : null
+
 /**
  * Everything about running agents, layered on the core services. Separate from
  * `createServices` because it starts a listener and (later) processes, which the database
@@ -77,8 +80,16 @@ export async function createAgentServices(
     events: services.events,
     employeeExists: (id: string): boolean => employees.get(id) !== undefined,
   })
-  const team = (): Array<{ id: string; name: string; role: string }> =>
-    employees.list().map(({ id, name, role }) => ({ id, name, role }))
+  const team = (): Array<{
+    id: string
+    name: string
+    role: string
+    isManager: boolean
+    reportsTo: string | null
+  }> =>
+    employees
+      .list()
+      .map(({ id, name, role, isManager, reportsTo }) => ({ id, name, role, isManager, reportsTo }))
   const messages: MessageService = new MessageService({
     db: services.db,
     events: services.events,
@@ -106,6 +117,7 @@ export async function createAgentServices(
       stop: (id: string) => runtime.stop(id),
     },
     participants: (conversationId: string) => messages.participantsOf(conversationId),
+    contactFor: (id: string) => employees.managerOf(id)?.name ?? 'human',
   })
   const mcp = new McpEndpoint(
     {
@@ -128,6 +140,10 @@ export async function createAgentServices(
     mcp,
     onTurnFinished: (employeeId: string, canContinue: boolean) =>
       router.turnEnded(employeeId, canContinue),
+    teamOf: (id: string) => ({
+      manager: pick(employees.managerOf(id)),
+      reports: employees.reportsOf(id).map(({ name, role }) => ({ name, role })),
+    }),
     decideTool: (employeeId: string, toolName: string, summary: string, toolUseId?: string) =>
       breaker.decide(employeeId, toolName, summary, toolUseId),
     logger: services.logger,

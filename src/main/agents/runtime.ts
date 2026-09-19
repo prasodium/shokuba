@@ -18,7 +18,7 @@ import {
   type TerminationMode,
   type TerminationPlan,
 } from '../platform'
-import type { ProviderAdapter } from '../providers/types'
+import type { ProviderAdapter, TeamContext } from '../providers/types'
 import type { ProviderRegistry } from '../providers/registry'
 import type { AgentToolContext } from '../mcp/agent-tools'
 import type { McpEndpoint } from '../mcp/server'
@@ -82,6 +82,8 @@ export interface AgentRuntimeDeps {
    * A tool call is about to run. Returns a reason to refuse it (the circuit breaker), or
    * null to let it run.
    */
+  /** Where an employee sits in their team, for the introduction their agent is given. */
+  teamOf?: (employeeId: string) => TeamContext
   decideTool?: (
     employeeId: string,
     toolName: string,
@@ -205,6 +207,7 @@ export class AgentRuntime {
         platform,
         env,
         employee,
+        team: this.deps.teamOf?.(employee.id) ?? { manager: null, reports: [] },
         executable: installation.path,
         report: {
           url: registration.url,

@@ -1,4 +1,5 @@
 import type { Employee } from '@shared/employees'
+import { orderTeam } from '../lib/team'
 import { useMissions } from '../store/missions'
 import { useOffice } from '../store/office'
 import { BreakerButtons, BreakerChip } from './BreakerChip'
@@ -47,14 +48,14 @@ export function Roster({ onNew, onEdit }: Props) {
         </div>
       ) : (
         <ul className="cards">
-          {employees.map((employee) => {
+          {orderTeam(employees).map(({ employee, manager }) => {
             const view = views[employee.id]
             const running = view?.pid != null
             const provider = providers.find((p) => p.id === employee.providerId)
             return (
               <li
                 key={employee.id}
-                className={`card ${employee.id === selectedId ? 'is-selected' : ''}`}
+                className={`card ${employee.id === selectedId ? 'is-selected' : ''} ${manager ? 'is-report' : ''}`}
                 aria-current={employee.id === selectedId}
               >
                 <button
@@ -71,11 +72,20 @@ export function Roster({ onNew, onEdit }: Props) {
                   <span className="card-text">
                     <span className="card-title">
                       {employee.name} <span className="muted">· {employee.role}</span>
+                      {employee.isManager && <span className="tag-manager">Manager</span>}
                     </span>
                     <span className="card-sub" title={employee.workingDirectory}>
                       {provider?.displayName ?? employee.providerId} ·{' '}
                       {folderName(employee.workingDirectory)}
                     </span>
+                    {manager && (
+                      <span
+                        className="card-sub"
+                        title="Asks their manager rather than messaging you"
+                      >
+                        reports to {manager.name}
+                      </span>
+                    )}
                     {(() => {
                       const working = allTasks.find(
                         (t) => t.assigneeId === employee.id && t.status === 'in_progress',

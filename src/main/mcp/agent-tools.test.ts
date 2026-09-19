@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { MAX_QUEUED_PER_RECIPIENT } from '@shared/messages'
 import type { Mission } from '@shared/missions'
 import { createMissionFixture, type MissionFixture } from '../missions/fixtures'
 import {
@@ -307,6 +308,188 @@ describe('agent tools', () => {
         fromId: 'ren',
       })
       expect(messages.queuedFor('ren')[0]?.fromId).toBe('mika')
+    })
+  })
+})
+
+describe('agent tools on a team with a manager', () => {
+  const squad = {
+    list: () => [
+      { id: 'mira', name: 'Mira', role: 'Manager', isManager: true, reportsTo: null },
+      { id: 'sora', name: 'Sora', role: 'QA', isManager: false, reportsTo: 'mira' },
+      { id: 'mika', name: 'Mika', role: 'Engineer', isManager: false, reportsTo: null },
+    ],
+    isRunning: () => true,
+  }
+  let limited: Set<string>
+
+  beforeEach(() => {
+    fx.addEmployee('mira', 'Mira', 'Manager')
+    fx.addEmployee('sora', 'Sora', 'QA')
+    limited = new Set()
+    messages = new MessageService({
+      db: fx.services.db,
+      events: fx.services.events,
+      directory: squad,
+      taskMissionId: (id) => fx.missions.getTask(id)?.missionId,
+    })
+    mcp = new McpEndpoint(
+      { name: 'shokuba', version: 't' },
+      createAgentTools(fx.missions, messages, {
+        ...squad,
+        messageBlocker: (id) => (limited.has(id) ? 'Shokuba has limited you' : null),
+      }),
+    )
+  })
+
+  describe('list_teammates', () => {
+    it('shows an employee who their manager is, and that they go through them', async () => {
+      const { text } = await callTool('sora', 'list_teammates')
+      expect(text).toContain('Mira (Manager) — your manager')
+      expect(text).toContain('You report to Mira')
+      expect(text).toContain('ask Mira')
+      expect(text).not.toContain('to: "human"')
+    })
+
+    it('shows a manager who reports to them, and that they are the one who talks to the person', async () => {
+      const { text } = await callTool('mira', 'list_teammates')
+      expect(text).toContain('Sora (QA) — reports to you')
+      expect(text).toContain('to: "human"')
+      expect(text).toContain('you are the one who talks to them for your team')
+    })
+
+    it('leaves someone with no manager with the person as their contact', async () => {
+      const { text } = await callTool('mika', 'list_teammates')
+      expect(text).toContain('Mira (Manager) — a manager')
+      expect(text).toContain('to: "human"')
+    })
+  })
+
+  describe('send_message', () => {
+    it('refuses an employee who reports to a manager when they write to the person, and says what to do', async () => {
+      const { text, isError } = await callTool('sora', 'send_message', {
+        to: 'human',
+        subject: 'Decision',
+        body: 'A or B?',
+      })
+      expect(isError).toBe(true)
+      expect(text).toContain('You report to Mira')
+      expect(text).toContain('to: "Mira"')
+    })
+
+    it('carries an employee’s question to their manager, and the manager onward to the person', async () => {
+      const up = await callTool('sora', 'send_message', {
+        to: 'Mira',
+        subject: 'For the person',
+        body: 'A or B?',
+        kind: 'question',
+      })
+      expect(up.isError).toBe(false)
+      expect(messages.queuedFor('mira')[0]).toMatchObject({ fromId: 'sora', body: 'A or B?' })
+
+      const onward = await callTool('mira', 'send_message', {
+        to: 'human',
+        subject: 'The team asks',
+        body: 'A or B?',
+      })
+      expect(onward.isError).toBe(false)
+      expect(onward.text).toContain('person you work for')
+    })
+
+    it('lets a limited employee still reach their manager, but not a teammate or the person', async () => {
+      limited.add('sora')
+      const toManager = await callTool('sora', 'send_message', {
+        to: 'Mira',
+        subject: 's',
+        body: 'help',
+      })
+      expect(toManager.isError).toBe(false)
+      const toById = await callTool('sora', 'send_message', {
+        to: 'mira',
+        subject: 's',
+        body: 'help',
+      })
+      expect(toById.isError).toBe(false)
+      const toTeammate = await callTool('sora', 'send_message', {
+        to: 'Mika',
+        subject: 's',
+        body: 'x',
+      })
+      expect(toTeammate).toMatchObject({ isError: true })
+      expect(toTeammate.text).toContain('limited you')
+      // The person is not reachable directly for someone with a manager, limited or not.
+      const toPerson = await callTool('sora', 'send_message', {
+        to: 'human',
+        subject: 's',
+        body: 'x',
+      })
+      expect(toPerson.text).toContain('limited you')
+    })
+
+    it('lets a limited employee with no manager still reach the person', async () => {
+      limited.add('mika')
+      expect(
+        (await callTool('mika', 'send_message', { to: 'human', subject: 's', body: 'help' }))
+          .isError,
+      ).toBe(false)
+      expect(
+        (await callTool('mika', 'send_message', { to: 'Sora', subject: 's', body: 'x' })).isError,
+      ).toBe(true)
+    })
+  })
+
+  describe('report_blocked', () => {
+    it('also tells the employee’s manager, and says so', async () => {
+      const task = fx.missions.createTask({
+        missionId: mission.id,
+        title: 'Test login',
+        assigneeId: 'sora',
+      })
+      fx.missions.markDispatched(task.id)
+      const { text, isError } = await callTool('sora', 'report_blocked', {
+        reason: 'No test database',
+      })
+      expect(isError).toBe(false)
+      expect(text).toContain('Mira, your manager, has been told')
+      const told = messages.queuedFor('mira')
+      expect(told).toHaveLength(1)
+      expect(told[0]).toMatchObject({
+        fromId: 'sora',
+        kind: 'warning',
+        subject: 'Blocked: Test login',
+        body: 'No test database',
+        taskId: task.id,
+      })
+    })
+
+    it('says nothing about a manager for someone who has none', async () => {
+      const task = fx.missions.createTask({ missionId: mission.id, title: 'T', assigneeId: 'mika' })
+      fx.missions.markDispatched(task.id)
+      const { text } = await callTool('mika', 'report_blocked', { reason: 'stuck' })
+      expect(text).toBe('Marked "T" as blocked. A person will decide what happens next.')
+      expect(messages.queuedFor('mira')).toEqual([])
+    })
+
+    it('still blocks the task if the manager cannot be told', async () => {
+      const task = fx.missions.createTask({ missionId: mission.id, title: 'T', assigneeId: 'sora' })
+      fx.missions.markDispatched(task.id)
+      // Fill the manager's inbox so the notification is refused.
+      for (let i = 0; i < 60; i++) {
+        try {
+          messages.sendFromAgent(
+            'mika',
+            { to: 'Mira', subject: `s${i}`, body: 'b' },
+            { source: 'reported', employeeId: 'mika' },
+          )
+        } catch {
+          break
+        }
+      }
+      const { text, isError } = await callTool('sora', 'report_blocked', { reason: 'stuck' })
+      expect(isError).toBe(false)
+      expect(messages.queuedFor('mira', 200)).toHaveLength(MAX_QUEUED_PER_RECIPIENT)
+      expect(text).toBe('Marked "T" as blocked. A person will decide what happens next.')
+      expect(fx.missions.getTask(task.id)?.status).toBe('blocked')
     })
   })
 })

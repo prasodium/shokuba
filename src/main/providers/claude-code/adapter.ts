@@ -1,17 +1,37 @@
-import { PERMISSION_MODES } from '@shared/employees'
+import { PERMISSION_MODES, type Employee } from '@shared/employees'
 import { AGENT_TOOL_PERMISSIONS, SHOKUBA_MCP_SERVER } from '../../mcp/agent-tools'
 import { getEnv, pathApi, type Env, type PlatformId } from '../../platform'
-import type { LaunchInput, LaunchSpec, ProviderAdapter } from '../types'
+import type { LaunchInput, LaunchSpec, ProviderAdapter, TeamContext } from '../types'
 import { detectClaudeCode, type DetectDeps } from './detect'
 import { buildHookSettings, parseClaudeHook } from './hooks'
 
 export const SETTINGS_FILE = 'claude-settings.json'
 export const MCP_CONFIG_FILE = 'claude-mcp.json'
 
-/** Who the agent is, and how to work with Shokuba. Appended to Claude Code's own prompt. */
-export function agentSystemPrompt(name: string, role: string): string {
+/**
+ * Who the agent is, where it sits in the team, and how to work with Shokuba. Appended to Claude
+ * Code's own prompt. What it says about who may message whom is only guidance: Shokuba itself
+ * refuses a message that breaks the rule, whatever the agent was told.
+ */
+export function agentSystemPrompt(
+  employee: Pick<Employee, 'name' | 'role' | 'isManager' | 'instructions'>,
+  team: TeamContext,
+): string {
+  const named = (people: TeamContext['reports']): string =>
+    people.map((person) => `${person.name} (${person.role})`).join(', ')
+  const position = team.manager
+    ? `You report to ${team.manager.name} (${team.manager.role}). You do not message the person you work for directly: ` +
+      `if you need a decision, an answer or access from them, send it to ${team.manager.name} with send_message, and they will take it to the person if it needs to go further. `
+    : employee.isManager
+      ? 'You lead a team, and you are the one who talks to the person you work for (send_message with to: "human"). ' +
+        (team.reports.length > 0
+          ? `${named(team.reports)} report to you and bring their questions to you rather than to the person, so answer what you can and take only what needs the person to them. `
+          : 'Nobody reports to you yet; list_teammates shows who does as the team grows. ')
+      : ''
   return (
-    `You are ${name}, ${role}, on a team coordinated by Shokuba. ` +
+    `You are ${employee.name}, ${employee.role}, on a team coordinated by Shokuba. ` +
+    (employee.instructions ? `What your role is for: ${employee.instructions} ` : '') +
+    position +
     'A message that begins with "[Shokuba task]" is a task assigned to you: do the work, then call the shokuba MCP tool ' +
     'submit_task with a short, honest summary of what you did and how you checked it (or report_blocked if you cannot continue). ' +
     'Use get_current_task to see the details again. ' +
@@ -133,7 +153,7 @@ export function createClaudeCodeAdapter(deps: DetectDeps = {}): ProviderAdapter 
         '--allowedTools',
         AGENT_TOOL_PERMISSIONS.join(','),
         '--append-system-prompt',
-        agentSystemPrompt(employee.name, employee.role),
+        agentSystemPrompt(employee, input.team),
         '--name',
         employee.name,
       ]

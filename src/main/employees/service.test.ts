@@ -222,3 +222,120 @@ describe('EmployeeService.archive', () => {
     expect(() => service.archive('missing')).toThrow(EmployeeError)
   })
 })
+
+describe('teams', () => {
+  const manager = (name = 'Mira') =>
+    service.create({ ...valid(), name, role: 'Manager', isManager: true })
+  const reportTo = (boss: { id: string }, name: string) =>
+    service.create({ ...valid(), name, reportsTo: boss.id })
+
+  it('starts everyone as a peer with no instructions', async () => {
+    expect(await service.create(valid())).toMatchObject({
+      isManager: false,
+      reportsTo: null,
+      instructions: null,
+    })
+  })
+
+  it('creates a manager, and people who report to them', async () => {
+    const mira = await manager()
+    const ren = await reportTo(mira, 'Ren')
+    expect(mira).toMatchObject({ isManager: true, reportsTo: null })
+    expect(ren).toMatchObject({ isManager: false, reportsTo: mira.id })
+    expect(service.managerOf(ren.id)?.id).toBe(mira.id)
+    expect(service.managerOf(mira.id)).toBeUndefined()
+    expect(service.reportsOf(mira.id).map((e) => e.name)).toEqual(['Ren'])
+  })
+
+  it('keeps the instructions, and trims them', async () => {
+    const employee = await service.create({
+      ...valid(),
+      instructions: '  Write the API.\nKeep it small.  ',
+    })
+    expect(employee.instructions).toBe('Write the API.\nKeep it small.')
+  })
+
+  it('refuses instructions with control characters, but allows line breaks', async () => {
+    const bad = await rejection(
+      service.create({ ...valid(), instructions: 'do this' + String.fromCharCode(27) + '[2J' }),
+    )
+    expect(bad.code).toBe('invalid')
+    await expect(service.create({ ...valid(), instructions: 'one\ntwo' })).resolves.toBeDefined()
+  })
+
+  it('refuses to report to someone who is not a manager, does not exist, or is oneself', async () => {
+    const peer = await service.create(valid())
+    expect((await rejection(reportTo(peer, 'Ren'))).message).toMatch(/is not a manager/)
+    expect((await rejection(reportTo({ id: 'nobody' }, 'Ren'))).message).toMatch(/does not exist/)
+    const mira = await manager()
+    expect((await rejection(service.update(mira.id, { reportsTo: mira.id }))).message).toMatch(
+      /themselves|reports to the person/,
+    )
+  })
+
+  it('refuses a manager who reports to another manager', async () => {
+    const mira = await manager()
+    const error = await rejection(
+      service.create({ ...valid(), name: 'Kai', isManager: true, reportsTo: mira.id }),
+    )
+    expect(error.message).toMatch(/reports to the person/)
+  })
+
+  it('moves someone to another manager, or off the team, and records the change', async () => {
+    const mira = await manager()
+    const kai = await manager('Kai')
+    const ren = await reportTo(mira, 'Ren')
+    expect((await service.update(ren.id, { reportsTo: kai.id })).reportsTo).toBe(kai.id)
+    expect((await service.update(ren.id, { reportsTo: null })).reportsTo).toBeNull()
+    const events = services.events.log.list({ type: 'employee.updated' })
+    expect(events.at(-1)?.payload).toMatchObject({ employeeId: ren.id, fields: ['reportsTo'] })
+  })
+
+  it("promoting someone to manager takes them off their old manager's team", async () => {
+    const mira = await manager()
+    const ren = await reportTo(mira, 'Ren')
+    const promoted = await service.update(ren.id, { isManager: true })
+    expect(promoted).toMatchObject({ isManager: true, reportsTo: null })
+    expect(service.reportsOf(mira.id)).toEqual([])
+  })
+
+  it('does not let a manager stop being one while people report to them', async () => {
+    const mira = await manager()
+    await reportTo(mira, 'Ren')
+    await reportTo(mira, 'Sora')
+    const error = await rejection(service.update(mira.id, { isManager: false }))
+    expect(error.code).toBe('has-reports')
+    expect(error.message).toBe('Ren and Sora report to Mira. Move them first')
+  })
+
+  it('does not let a manager be removed while people report to them, and allows it once they are moved', async () => {
+    const mira = await manager()
+    const ren = await reportTo(mira, 'Ren')
+    expect(() => service.archive(mira.id)).toThrow(/Ren reports to Mira/)
+    await service.update(ren.id, { reportsTo: null })
+    service.archive(mira.id)
+    expect(service.get(mira.id)).toBeUndefined()
+  })
+
+  it('leaves the team alone when an unrelated field is edited', async () => {
+    const mira = await manager()
+    const ren = await reportTo(mira, 'Ren')
+    const renamed = await service.update(ren.id, { role: 'Senior engineer' })
+    expect(renamed).toMatchObject({ reportsTo: mira.id, isManager: false })
+  })
+
+  it('clears instructions with null, and leaves them alone when not mentioned', async () => {
+    const employee = await service.create({ ...valid(), instructions: 'Be careful.' })
+    expect((await service.update(employee.id, { role: 'QA' })).instructions).toBe('Be careful.')
+    expect((await service.update(employee.id, { instructions: null })).instructions).toBeNull()
+  })
+
+  it('lets team details change while the agent is running, since they are not launch settings', async () => {
+    const mira = await manager()
+    const ren = await service.create(valid())
+    running.add(ren.id)
+    await expect(service.update(ren.id, { reportsTo: mira.id })).resolves.toMatchObject({
+      reportsTo: mira.id,
+    })
+  })
+})

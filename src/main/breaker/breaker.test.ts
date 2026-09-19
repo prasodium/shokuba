@@ -351,6 +351,24 @@ describe('what the rest of Shokuba is told', () => {
     expect(breaker.allowsDelivery('mika', true)).toBe(false)
   })
 
+  it('points a limited agent at its manager for help, not at the person, when it has one', () => {
+    const reports = new CircuitBreaker({
+      events: fx.services.events,
+      audit: fx.services.audit,
+      logger: createLogger(() => {}),
+      port: { isRunning: () => false, interrupt: () => {}, stop: async () => {} },
+      participants: () => [],
+      contactFor: (id) => (id === 'ren' ? 'Mira' : 'human'),
+      now: () => clock,
+    })
+    reports.start()
+    for (let i = 0; i < 8; i++) call('ren', 'Bash', 'Run npm test')
+    const reason = reports.messageBlocker('ren') ?? ''
+    expect(reason).toContain('message your manager (to: "Mira")')
+    expect(reason).not.toContain('to: "human"')
+    reports.stop()
+  })
+
   it('stops a constrained agent messaging its teammates, with a reason that says how to get help', () => {
     expect(breaker.messageBlocker('mika')).toBeNull()
     repeat('mika', 8)

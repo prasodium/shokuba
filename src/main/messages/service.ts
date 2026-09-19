@@ -21,7 +21,15 @@ import type { EventStore } from '../events/store'
 import { redactString } from '../security/redact'
 
 export type MessageErrorCode =
-  'invalid' | 'not-found' | 'unknown-recipient' | 'ambiguous' | 'self' | 'closed' | 'full' | 'state'
+  | 'invalid'
+  | 'not-found'
+  | 'unknown-recipient'
+  | 'ambiguous'
+  | 'self'
+  | 'closed'
+  | 'full'
+  | 'state'
+  | 'via-manager'
 
 export class MessageError extends Error {
   constructor(
@@ -83,7 +91,14 @@ const AgentMessageSchema = z.object({
 export type AgentMessageArgs = z.input<typeof AgentMessageSchema>
 
 export interface Directory {
-  list(): Array<{ id: string; name: string; role: string }>
+  list(): Array<{
+    id: string
+    name: string
+    role: string
+    isManager?: boolean
+    /** The manager this employee reports to. Someone who reports to a manager goes through them. */
+    reportsTo?: string | null
+  }>
 }
 
 export interface MessageServiceDeps {
@@ -137,6 +152,7 @@ export class MessageService {
     if (!parsed.success) throw new MessageError('invalid', firstIssue(parsed.error))
     const args = parsed.data
     const recipient = this.resolveRecipient(args.to, fromId)
+    if (recipient === HUMAN) this.requireToGoThroughManager(fromId)
 
     let missionId: string | null = null
     if (args.taskId !== undefined) {
@@ -413,6 +429,24 @@ export class MessageService {
   }
 
   // ---------- internals ----------
+
+  /**
+   * An employee who reports to a manager does not message the person directly: the manager is
+   * the one who talks to them. Enforced here rather than trusted to the agent's instructions.
+   * Someone with no manager (or a manager themselves) may still reach the person.
+   */
+  private requireToGoThroughManager(fromId: string): void {
+    const employees = this.deps.directory.list()
+    const me = employees.find((employee) => employee.id === fromId)
+    const manager = me?.reportsTo ? employees.find((e) => e.id === me.reportsTo) : undefined
+    if (!manager) return
+    throw new MessageError(
+      'via-manager',
+      `You report to ${manager.name}, so you do not message the person directly. ` +
+        `If you need something from them, send it to ${manager.name} (send_message with to: "${manager.name}") ` +
+        'and they will take it to the person if it needs to go further.',
+    )
+  }
 
   /** An id, a unique name, or "human" -> who the message is for. Never the sender. */
   private resolveRecipient(to: string, fromId: string): string {

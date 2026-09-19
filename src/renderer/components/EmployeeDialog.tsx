@@ -1,10 +1,16 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { PERMISSION_MODES, type Employee, type PermissionMode } from '@shared/employees'
+import {
+  MAX_INSTRUCTIONS,
+  PERMISSION_MODES,
+  type Employee,
+  type PermissionMode,
+} from '@shared/employees'
+import { ROLE_TEMPLATES, roleTemplate } from '@shared/roles'
 import { useOffice } from '../store/office'
 
 const COLORS = ['#e8893a', '#6f9a5b', '#5b8fc7', '#c76b8f', '#8f7bd1', '#d1b34a']
 const NAMES = ['Mika', 'Ren', 'Sora', 'Aiko', 'Haru', 'Yui', 'Kaito', 'Nao']
-const ROLES = ['Engineer', 'Reviewer', 'QA', 'Architect', 'Designer', 'Researcher']
+const ROLES = ['Manager', 'Engineer', 'Reviewer', 'QA', 'Architect', 'Designer', 'Researcher']
 const MODEL_HINTS = ['sonnet', 'opus', 'haiku']
 
 const PERMISSION_LABELS: Record<PermissionMode, string> = {
@@ -39,6 +45,9 @@ export function EmployeeDialog({ open, editing, onClose }: Props) {
   const [model, setModel] = useState('')
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('default')
   const [color, setColor] = useState(COLORS[0] as string)
+  const [isManager, setIsManager] = useState(false)
+  const [reportsTo, setReportsTo] = useState('')
+  const [instructions, setInstructions] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -65,6 +74,9 @@ export function EmployeeDialog({ open, editing, onClose }: Props) {
       setModel(editing.model ?? '')
       setPermissionMode(editing.permissionMode)
       setColor(editing.color)
+      setIsManager(editing.isManager)
+      setReportsTo(editing.reportsTo ?? '')
+      setInstructions(editing.instructions ?? '')
     } else {
       setName(NAMES[employees.length % NAMES.length] as string)
       setRole('Engineer')
@@ -72,6 +84,9 @@ export function EmployeeDialog({ open, editing, onClose }: Props) {
       setModel('')
       setPermissionMode('default')
       setColor(COLORS[employees.length % COLORS.length] as string)
+      setIsManager(false)
+      setReportsTo('')
+      setInstructions('')
     }
     // `employees.length` only picks a friendly default; it must not reset a form being edited,
     // so it is deliberately not a dependency.
@@ -95,6 +110,16 @@ export function EmployeeDialog({ open, editing, onClose }: Props) {
     if (open && !editing && provider?.simulated && !folder && info) setFolder(info.homeDirectory)
   }, [open, editing, provider, folder, info])
 
+  /** Fill in the role, whether they lead a team, and what the role is for. Everything stays editable. */
+  function applyTemplate(id: string): void {
+    const template = roleTemplate(id)
+    if (!template) return
+    setRole(template.role)
+    setIsManager(template.isManager)
+    if (template.isManager) setReportsTo('')
+    setInstructions(template.instructions)
+  }
+
   async function browse(): Promise<void> {
     const picked = await window.shokuba.system.pickDirectory()
     if (picked) setFolder(picked)
@@ -104,10 +129,19 @@ export function EmployeeDialog({ open, editing, onClose }: Props) {
     event.preventDefault()
     setBusy(true)
     setError(null)
-    const common = { name, role, color }
+    const common = {
+      name,
+      role,
+      color,
+      isManager,
+      // A manager reports to no one.
+      reportsTo: isManager ? null : reportsTo || null,
+    }
+    const text = instructions.trim()
     if (editing) {
       const result = await updateEmployee(editing.id, {
         ...common,
+        instructions: text || null,
         ...(running
           ? {}
           : { providerId, workingDirectory: folder, permissionMode, model: model || null }),
@@ -118,6 +152,7 @@ export function EmployeeDialog({ open, editing, onClose }: Props) {
     } else {
       const result = await createEmployee({
         ...common,
+        ...(text ? { instructions: text } : {}),
         providerId,
         workingDirectory: folder,
         permissionMode,
@@ -139,6 +174,9 @@ export function EmployeeDialog({ open, editing, onClose }: Props) {
 
   const modes = provider?.permissionModes ?? [...PERMISSION_MODES]
   const launchLocked = running
+  const managers = employees.filter((e) => e.isManager && e.id !== editing?.id)
+  const reports = editing ? employees.filter((e) => e.reportsTo === editing.id) : []
+  const boss = managers.find((m) => m.id === reportsTo)
 
   return (
     <dialog
@@ -149,6 +187,23 @@ export function EmployeeDialog({ open, editing, onClose }: Props) {
     >
       <form onSubmit={(event) => void submit(event)} className="form">
         <h2 id="employee-dialog-title">{editing ? `Edit ${editing.name}` : 'New employee'}</h2>
+
+        <label className="field">
+          <span>Start from a role template</span>
+          <select value="" onChange={(e) => applyTemplate(e.target.value)}>
+            <option value="">Choose one to fill in the role below…</option>
+            {ROLE_TEMPLATES.map((template) => (
+              <option key={template.id} value={template.id}>
+                {template.role}
+                {template.isManager ? ' (leads a team)' : ''}
+              </option>
+            ))}
+          </select>
+          <small className="muted">
+            It only fills in the form. You can change anything, and changing a template later never
+            changes anyone already hired.
+          </small>
+        </label>
 
         <div className="grid-2">
           <label className="field">
@@ -264,6 +319,59 @@ export function EmployeeDialog({ open, editing, onClose }: Props) {
           </label>
         </div>
 
+        <label className="field">
+          <span>What this role is for (optional)</span>
+          <textarea
+            value={instructions}
+            onChange={(e) => setInstructions(e.target.value)}
+            rows={4}
+            maxLength={MAX_INSTRUCTIONS}
+            placeholder="For example: you write the API and keep changes small."
+          />
+          <small className="muted">The agent is told this when it starts.</small>
+        </label>
+
+        <fieldset className="field">
+          <legend>Team</legend>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={isManager}
+              onChange={(e) => setIsManager(e.target.checked)}
+              disabled={reports.length > 0}
+            />
+            <span>Leads a team, and is the one who talks to you</span>
+          </label>
+          {reports.length > 0 && (
+            <small className="muted">
+              {reports.map((r) => r.name).join(', ')} report
+              {reports.length === 1 ? 's' : ''} to {editing?.name}. Move them to another manager
+              first to change this.
+            </small>
+          )}
+          {!isManager && (
+            <label className="field">
+              <span>Reports to</span>
+              <select value={reportsTo} onChange={(e) => setReportsTo(e.target.value)}>
+                <option value="">No one — can message you directly</option>
+                {managers.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                    {` (${m.role})`}
+                  </option>
+                ))}
+              </select>
+              <small className="muted">
+                {boss
+                  ? `They will not message you directly. They ask ${boss.name}, who takes to you only what needs you.`
+                  : managers.length === 0
+                    ? 'No manager yet. Hire one from the “Manager” template to build a team.'
+                    : 'Without a manager they can message you directly.'}
+              </small>
+            </label>
+          )}
+        </fieldset>
+
         <fieldset className="field">
           <legend>Shirt colour</legend>
           <div className="swatches">
@@ -284,7 +392,9 @@ export function EmployeeDialog({ open, editing, onClose }: Props) {
 
         {launchLocked && (
           <p className="muted">
-            Stop this employee to change their provider, folder, model or permissions.
+            Stop this employee to change their provider, folder, model or permissions. Their role,
+            instructions and team are read when the agent starts, but who they may message changes
+            straight away.
           </p>
         )}
         {error && (

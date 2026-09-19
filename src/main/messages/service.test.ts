@@ -399,3 +399,64 @@ describe('listing', () => {
     expect(list[0]?.messages.map((m) => m.id)).toEqual([newer.id])
   })
 })
+
+describe('reporting lines', () => {
+  beforeEach(() => {
+    fx.addEmployee('mira-id', 'Mira', 'Manager', { isManager: true })
+    fx.addEmployee('sora-id', 'Sora', 'QA', { reportsTo: 'mira-id' })
+  })
+
+  it('does not let an employee who reports to a manager message the person', async () => {
+    const error = await rejection(() =>
+      send('sora-id', HUMAN, 'Need a decision', 'SQLite or Postgres?'),
+    )
+    expect(error.code).toBe('via-manager')
+    expect(error.message).toContain('You report to Mira')
+    expect(error.message).toContain('send_message with to: "Mira"')
+    // Nothing was created: not a message, not a conversation, not an event.
+    expect(messages.listConversations()).toEqual([])
+    expect(fx.eventsOf('message.sent')).toEqual([])
+  })
+
+  it('lets that employee ask their manager, who can then reach the person', () => {
+    const up = send('sora-id', 'Mira', 'Question for the person', 'SQLite or Postgres?', {
+      kind: 'question',
+    })
+    expect(up).toMatchObject({ fromId: 'sora-id', toId: 'mira-id', state: 'queued' })
+    const onward = send('mira-id', HUMAN, 'Database choice', 'The team asks: SQLite or Postgres?')
+    expect(onward).toMatchObject({ fromId: 'mira-id', toId: HUMAN, state: 'delivered' })
+  })
+
+  it('lets an employee still message their teammates', () => {
+    const m = send('sora-id', 'mika-id', 'Heads up', 'Tests are flaky')
+    expect(m).toMatchObject({ toId: 'mika-id', state: 'queued' })
+  })
+
+  it('leaves an employee with no manager free to message the person, as before', () => {
+    expect(send('mika-id', HUMAN, 'Hello', 'Anyone there?')).toMatchObject({ toId: HUMAN })
+  })
+
+  it('lets a manager message the person', () => {
+    expect(send('mira-id', HUMAN, 'Status', 'All good')).toMatchObject({ toId: HUMAN })
+  })
+
+  it('does not stop the person writing to anyone', () => {
+    const m = messages.sendFromHuman({ toId: 'sora-id', subject: 'Steer', body: 'Focus on login' })
+    expect(m).toMatchObject({ fromId: HUMAN, toId: 'sora-id' })
+  })
+
+  it('treats a reference to a manager who is gone as no manager at all', () => {
+    // A reporting line to someone no longer in the directory must not lock the employee out.
+    const ghost = new MessageService({
+      db: fx.services.db,
+      events: fx.services.events,
+      directory: {
+        list: () => [{ id: 'lone', name: 'Lone', role: 'Engineer', reportsTo: 'archived-manager' }],
+      },
+      taskMissionId: () => undefined,
+    })
+    expect(
+      ghost.sendFromAgent('lone', { to: HUMAN, subject: 's', body: 'b' }, { source: 'reported' }),
+    ).toMatchObject({ toId: HUMAN })
+  })
+})

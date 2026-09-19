@@ -3,6 +3,7 @@ import { foundation } from './0001_foundation'
 import { employees } from './0002_employees'
 import { missions } from './0003_missions'
 import { messages } from './0004_messages'
+import { teams } from './0005_teams'
 
 /** Ordered list of every migration. Append new ones; never edit or reorder old ones. */
-export const MIGRATIONS: readonly Migration[] = [foundation, employees, missions, messages]
+export const MIGRATIONS: readonly Migration[] = [foundation, employees, missions, messages, teams]

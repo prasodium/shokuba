@@ -14,7 +14,12 @@ import { pathApi, type PlatformId } from '../platform'
 import type { ProviderRegistry } from '../providers/registry'
 
 export type EmployeeErrorCode =
-  'invalid' | 'unknown-provider' | 'invalid-working-directory' | 'not-found' | 'running'
+  | 'invalid'
+  | 'unknown-provider'
+  | 'invalid-working-directory'
+  | 'not-found'
+  | 'running'
+  | 'has-reports'
 
 export class EmployeeError extends Error {
   constructor(
@@ -35,6 +40,9 @@ interface Row {
   model: string | null
   permission_mode: string
   color: string
+  is_manager: number
+  reports_to: string | null
+  instructions: string | null
   created_at: string
   updated_at: string
 }
@@ -50,6 +58,9 @@ const COLUMNS: Record<keyof EmployeeUpdate, string> = {
   model: 'model',
   permissionMode: 'permission_mode',
   color: 'color',
+  isManager: 'is_manager',
+  reportsTo: 'reports_to',
+  instructions: 'instructions',
 }
 
 export interface EmployeeServiceDeps {
@@ -93,14 +104,18 @@ export class EmployeeService {
 
     this.requireProvider(input.providerId)
     const workingDirectory = await this.resolveDirectory(input.workingDirectory)
+    const reportsTo = input.reportsTo ?? null
+    this.checkTeam(undefined, input.isManager, reportsTo)
 
     const ts = this.now().toISOString()
     const id = this.newId()
     this.deps.db
       .prepare(
         `INSERT INTO employees
-           (id, name, role, provider_id, working_directory, model, permission_mode, color, created_at, updated_at)
-         VALUES (@id, @name, @role, @providerId, @workingDirectory, @model, @permissionMode, @color, @ts, @ts)`,
+           (id, name, role, provider_id, working_directory, model, permission_mode, color,
+            is_manager, reports_to, instructions, created_at, updated_at)
+         VALUES (@id, @name, @role, @providerId, @workingDirectory, @model, @permissionMode, @color,
+                 @isManager, @reportsTo, @instructions, @ts, @ts)`,
       )
       .run({
         id,
@@ -111,6 +126,9 @@ export class EmployeeService {
         model: input.model ?? null,
         permissionMode: input.permissionMode,
         color: input.color,
+        isManager: input.isManager ? 1 : 0,
+        reportsTo,
+        instructions: input.instructions || null,
         ts,
       })
 
@@ -131,6 +149,10 @@ export class EmployeeService {
     const existing = this.get(id)
     if (!existing) throw new EmployeeError('not-found', 'No such employee')
 
+    // Becoming a manager means no longer reporting to one.
+    if (patch.isManager === true && patch.reportsTo === undefined && existing.reportsTo !== null) {
+      patch.reportsTo = null
+    }
     const changed = (Object.keys(patch) as Array<keyof EmployeeUpdate>).filter(
       (key) => patch[key] !== undefined,
     )
@@ -149,11 +171,19 @@ export class EmployeeService {
     if (patch.workingDirectory !== undefined) {
       patch.workingDirectory = await this.resolveDirectory(patch.workingDirectory)
     }
+    if (patch.isManager !== undefined || patch.reportsTo !== undefined) {
+      this.checkTeam(
+        existing,
+        patch.isManager ?? existing.isManager,
+        patch.reportsTo !== undefined ? patch.reportsTo : existing.reportsTo,
+      )
+    }
 
-    const params: Record<string, string | null> = { id, ts: this.now().toISOString() }
+    const params: Record<string, string | number | null> = { id, ts: this.now().toISOString() }
     const sets = changed.map((key) => {
       const value = patch[key]
-      params[key] = typeof value === 'string' ? value : null
+      params[key] =
+        typeof value === 'boolean' ? (value ? 1 : 0) : typeof value === 'string' ? value : null
       return `${COLUMNS[key]} = @${key}`
     })
     this.deps.db
@@ -176,6 +206,13 @@ export class EmployeeService {
     if (this.deps.isRunning(id)) {
       throw new EmployeeError('running', `Stop ${existing.name} before removing them`)
     }
+    const reports = this.reportsOf(id)
+    if (reports.length > 0) {
+      throw new EmployeeError(
+        'has-reports',
+        `${names(reports)} report${reports.length === 1 ? 's' : ''} to ${existing.name}. Move them to another manager, or remove them first`,
+      )
+    }
     const ts = this.now().toISOString()
     this.deps.db
       .prepare('UPDATE employees SET archived_at = @ts, updated_at = @ts WHERE id = @id')
@@ -186,6 +223,54 @@ export class EmployeeService {
       actorId: id,
       payload: { employeeId: id, fields: ['archived'] },
     })
+  }
+
+  /** The manager this employee reports to, if any. */
+  managerOf(id: string): Employee | undefined {
+    const reportsTo = this.get(id)?.reportsTo
+    return reportsTo ? this.get(reportsTo) : undefined
+  }
+
+  /** The people who report to this manager. */
+  reportsOf(id: string): Employee[] {
+    return this.list().filter((employee) => employee.reportsTo === id)
+  }
+
+  /**
+   * The team rules: a manager reports to no one; anyone else may report to a manager (never to
+   * themselves, never to a non-manager, never to someone removed). A manager who still has a
+   * team cannot stop being one, or their people would be left without anyone to go through.
+   */
+  private checkTeam(
+    existing: Employee | undefined,
+    isManager: boolean,
+    reportsTo: string | null,
+  ): void {
+    if (isManager && reportsTo !== null) {
+      throw new EmployeeError('invalid', 'A manager reports to the person, not to another manager')
+    }
+    if (reportsTo !== null) {
+      if (existing && reportsTo === existing.id) {
+        throw new EmployeeError('invalid', 'Nobody can report to themselves')
+      }
+      const manager = this.get(reportsTo)
+      if (!manager) throw new EmployeeError('invalid', 'That manager does not exist')
+      if (!manager.isManager) {
+        throw new EmployeeError(
+          'invalid',
+          `${manager.name} is not a manager, so no one can report to them`,
+        )
+      }
+    }
+    if (existing && existing.isManager && !isManager) {
+      const reports = this.reportsOf(existing.id)
+      if (reports.length > 0) {
+        throw new EmployeeError(
+          'has-reports',
+          `${names(reports)} report${reports.length === 1 ? 's' : ''} to ${existing.name}. Move them first`,
+        )
+      }
+    }
   }
 
   private mustGet(id: string): Employee {
@@ -218,6 +303,13 @@ export class EmployeeService {
   }
 }
 
+function names(employees: Employee[]): string {
+  const list = employees.map((employee) => employee.name)
+  return list.length <= 2
+    ? list.join(' and ')
+    : `${list.slice(0, -1).join(', ')} and ${list.at(-1)}`
+}
+
 function firstIssue(error: { issues: Array<{ path: PropertyKey[]; message: string }> }): string {
   const issue = error.issues[0]
   if (!issue) return 'Invalid employee'
@@ -235,6 +327,9 @@ function toEmployee(row: Row): Employee {
     model: row.model,
     permissionMode: row.permission_mode as PermissionMode,
     color: row.color,
+    isManager: row.is_manager === 1,
+    reportsTo: row.reports_to,
+    instructions: row.instructions,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }

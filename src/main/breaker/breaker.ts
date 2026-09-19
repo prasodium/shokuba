@@ -64,6 +64,8 @@ export class CircuitBreaker {
       logger: Logger
       /** Who took part in a conversation, to flag them when it is halted as a possible loop. */
       participants: (conversationId: string) => string[]
+      /** Who this agent should turn to for help: a manager's name, or "human" if it has none. */
+      contactFor?: (employeeId: string) => string
       now?: () => number
     },
   ) {}
@@ -126,9 +128,14 @@ export class CircuitBreaker {
   messageBlocker(employeeId: string): string | null {
     if (levelRank(this.levelOf(employeeId)) < levelRank('constrain')) return null
     const { detail } = this.stateOf(employeeId)
+    const contact = this.deps.contactFor?.(employeeId) ?? 'human'
+    const who =
+      contact === 'human'
+        ? 'message the person you work for (to: "human")'
+        : `message your manager (to: "${contact}")`
     return (
       `Shokuba's circuit breaker has limited you${detail ? ` (${detail})` : ''}, so you cannot message teammates. ` +
-      'If you need help, use report_blocked or message the person you work for (to: "human").'
+      `If you need help, use report_blocked or ${who}.`
     )
   }
 

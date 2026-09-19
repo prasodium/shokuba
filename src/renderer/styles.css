@@ -338,6 +338,35 @@ h2 {
   gap: 6px;
 }
 
+/* Teams: a manager's people sit indented beneath them. */
+.card.is-report {
+  margin-left: 22px;
+  position: relative;
+}
+.card.is-report::before {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: -6px;
+  bottom: 50%;
+  width: 10px;
+  border-left: 2px solid var(--border);
+  border-bottom: 2px solid var(--border);
+  border-bottom-left-radius: 6px;
+}
+.tag-manager {
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  vertical-align: 1px;
+}
+
 /* The circuit breaker: what it is doing to an agent, and why. */
 .breaker-chip {
   --tone: var(--amber);
@@ -626,7 +655,7 @@ time {
   color: var(--muted);
   padding: 0;
 }
-.field input:not([type='radio']),
+.field input:not([type='radio']):not([type='checkbox']),
 .field select {
   padding: 8px 10px;
   border-radius: 8px;

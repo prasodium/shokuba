@@ -15,10 +15,13 @@ const input = (platform: 'darwin' | 'win32' | 'linux', executable: string) => ({
     id: 'e1',
     name: 'Mika',
     role: 'Engineer',
+    isManager: false,
+    instructions: null,
     workingDirectory: '/w',
     model: null,
     permissionMode: 'default' as const,
   },
+  team: { manager: null, reports: [] },
 })
 
 describe('mock (demo) adapter', () => {

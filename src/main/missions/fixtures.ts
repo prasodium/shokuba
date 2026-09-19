@@ -15,11 +15,23 @@ import { MissionService } from './service'
 export interface MissionFixture {
   services: Services
   missions: MissionService
-  addEmployee(id: string, name?: string, role?: string): string
+  addEmployee(id: string, name?: string, role?: string, team?: TeamPlace): string
   /** The employees added so far, as the message directory sees them. */
-  directory(): Array<{ id: string; name: string; role: string }>
+  directory(): Array<{
+    id: string
+    name: string
+    role: string
+    isManager: boolean
+    reportsTo: string | null
+  }>
   eventsOf(...types: string[]): ShokubaEvent[]
   cleanup(): void
+}
+
+/** Where an employee sits in a team, for tests. */
+export interface TeamPlace {
+  isManager?: boolean
+  reportsTo?: string | null
 }
 
 export function createMissionFixture(): MissionFixture {
@@ -30,7 +42,10 @@ export function createMissionFixture(): MissionFixture {
     platform: toPlatformId(),
     logger: createLogger(() => {}),
   })
-  const employees = new Map<string, { name: string; role: string }>()
+  const employees = new Map<
+    string,
+    { name: string; role: string; isManager: boolean; reportsTo: string | null }
+  >()
   let counter = 0
   let tick = 0
 
@@ -45,14 +60,16 @@ export function createMissionFixture(): MissionFixture {
   return {
     services,
     missions,
-    addEmployee(id, name = id, role = 'Engineer') {
+    addEmployee(id, name = id, role = 'Engineer', team = {}) {
+      const isManager = team.isManager ?? false
+      const reportsTo = team.reportsTo ?? null
       services.db
         .prepare(
-          `INSERT INTO employees (id, name, role, provider_id, working_directory, permission_mode, color, created_at, updated_at)
-           VALUES (@id, @name, @role, 'mock', '/tmp', 'default', '#e8893a', 'now', 'now')`,
+          `INSERT INTO employees (id, name, role, provider_id, working_directory, permission_mode, color, is_manager, reports_to, created_at, updated_at)
+           VALUES (@id, @name, @role, 'mock', '/tmp', 'default', '#e8893a', @isManager, @reportsTo, 'now', 'now')`,
         )
-        .run({ id, name, role })
-      employees.set(id, { name, role })
+        .run({ id, name, role, isManager: isManager ? 1 : 0, reportsTo })
+      employees.set(id, { name, role, isManager, reportsTo })
       return id
     },
     directory() {

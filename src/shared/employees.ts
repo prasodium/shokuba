@@ -16,6 +16,17 @@ const shortText = z
   // Names end up in the UI and in file/branch names later; keep them printable.
   .refine((value) => !/[\p{Cc}\p{Cf}]/u.test(value), 'must not contain control characters')
 
+/** What a role is for, in a few sentences. Newlines are fine; other control characters are not. */
+export const MAX_INSTRUCTIONS = 2000
+const instructionsText = z
+  .string()
+  .trim()
+  .max(MAX_INSTRUCTIONS)
+  .refine(
+    (value) => !/[\p{Cc}\p{Cf}]/u.test(value.replace(/[\n\r\t]/g, '')),
+    'must not contain control characters',
+  )
+
 export const EmployeeInputSchema = z.strictObject({
   name: shortText,
   role: shortText,
@@ -34,6 +45,12 @@ export const EmployeeInputSchema = z.strictObject({
     .string()
     .regex(/^#[0-9a-fA-F]{6}$/)
     .default('#e8893a'),
+  /** A manager leads a team and is the one who talks to the person. */
+  isManager: z.boolean().default(false),
+  /** The manager this employee reports to, or null. A manager reports to no one. */
+  reportsTo: z.string().min(1).max(100).nullable().optional(),
+  /** What this role is for; the agent is told it when it starts. */
+  instructions: instructionsText.optional(),
 })
 export type EmployeeInput = z.input<typeof EmployeeInputSchema>
 
@@ -46,6 +63,10 @@ export const EmployeeUpdateSchema = EmployeeInputSchema.partial().extend({
     .string()
     .regex(/^#[0-9a-fA-F]{6}$/)
     .optional(),
+  isManager: z.boolean().optional(),
+  // `null` clears them; `undefined` leaves them alone.
+  reportsTo: z.string().min(1).max(100).nullable().optional(),
+  instructions: instructionsText.nullable().optional(),
 })
 export type EmployeeUpdate = z.infer<typeof EmployeeUpdateSchema>
 
@@ -58,6 +79,10 @@ export interface Employee {
   model: string | null
   permissionMode: PermissionMode
   color: string
+  isManager: boolean
+  /** The manager this employee reports to. Null for a manager, and for anyone not on a team. */
+  reportsTo: string | null
+  instructions: string | null
   createdAt: string
   updatedAt: string
 }

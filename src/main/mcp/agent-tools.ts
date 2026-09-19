@@ -58,12 +58,29 @@ function explain<T>(work: () => T): T {
   }
 }
 
+/** One employee, as an agent's tools see them. */
+export interface TeamMember {
+  id: string
+  name: string
+  role: string
+  isManager?: boolean
+  /** The manager this employee reports to. */
+  reportsTo?: string | null
+}
+
 /** Who is on the team, for `list_teammates`. */
 export interface Team {
-  list(): Array<{ id: string; name: string; role: string }>
+  list(): TeamMember[]
   isRunning(employeeId: string): boolean
   /** Why this agent may not send messages right now (the circuit breaker), or null if it may. */
   messageBlocker?(employeeId: string): string | null
+}
+
+/** The manager an employee reports to, if they have one. */
+function managerOf(team: Team, employeeId: string): TeamMember | undefined {
+  const everyone = team.list()
+  const reportsTo = everyone.find((member) => member.id === employeeId)?.reportsTo
+  return reportsTo ? everyone.find((member) => member.id === reportsTo) : undefined
 }
 
 /**
@@ -124,27 +141,62 @@ export function createAgentTools(
             { taskId: args.taskId, reason: args.reason },
             { source: ctx.source },
           )
-          return `Marked "${task.title}" as blocked. A person will decide what happens next.`
+          // Whoever leads this employee should hear it too, so they can help, or take it further.
+          const manager = managerOf(team, ctx.employeeId)
+          let told = false
+          if (manager) {
+            try {
+              told =
+                messages.sendFromAgent(
+                  ctx.employeeId,
+                  {
+                    to: manager.id,
+                    kind: 'warning',
+                    subject: `Blocked: ${task.title}`.slice(0, 120),
+                    body: args.reason,
+                    taskId: task.id,
+                  },
+                  { source: ctx.source, employeeId: ctx.employeeId },
+                ).state !== 'held'
+            } catch {
+              // The task is blocked either way; a message that cannot be sent must not undo that.
+            }
+          }
+          return told && manager
+            ? `Marked "${task.title}" as blocked. ${manager.name}, your manager, has been told, and a person will decide what happens next.`
+            : `Marked "${task.title}" as blocked. A person will decide what happens next.`
         }),
     }),
 
     defineTool<AgentToolContext, z.ZodObject<Record<string, never>>>({
       name: 'list_teammates',
       description:
-        'Lists your teammates (name, role, id, whether they are running). Use a name or id as "to" in send_message. The person you work for is always reachable as "human".',
+        'Lists your teammates (name, role, id, whether they are running) and how the team is organised: who your manager is, or who reports to you. ' +
+        'Use a name or id as "to" in send_message. If you report to a manager, they are how you reach the person you work for.',
       input: z.object({}),
       handler: (_args, ctx) => {
-        const lines = team
-          .list()
-          .filter((employee) => employee.id !== ctx.employeeId)
-          .map(
-            (employee) =>
-              `- ${employee.name} (${employee.role}) — id ${employee.id} — ${team.isRunning(employee.id) ? 'running' : 'not running'}`,
-          )
+        const everyone = team.list()
+        const me = everyone.find((member) => member.id === ctx.employeeId)
+        const manager = managerOf(team, ctx.employeeId)
+        const lines = everyone
+          .filter((member) => member.id !== ctx.employeeId)
+          .map((member) => {
+            const note =
+              member.id === manager?.id
+                ? ' — your manager'
+                : member.reportsTo === ctx.employeeId
+                  ? ' — reports to you'
+                  : member.isManager
+                    ? ' — a manager'
+                    : ''
+            return `- ${member.name} (${member.role})${note} — id ${member.id} — ${team.isRunning(member.id) ? 'running' : 'not running'}`
+          })
         return [
           `Teammates:`,
           ...(lines.length > 0 ? lines : ['(nobody else is here)']),
-          `- the person you work for — to: "${HUMAN}"`,
+          manager
+            ? `You report to ${manager.name}, so you do not message the person you work for directly. If you need something from them, ask ${manager.name}.`
+            : `- the person you work for — to: "${HUMAN}"${me?.isManager ? ' (you are the one who talks to them for your team)' : ''}`,
         ].join('\n')
       },
     }),
@@ -152,7 +204,8 @@ export function createAgentTools(
     defineTool({
       name: 'send_message',
       description:
-        'Send a message to a teammate, or to the person you work for (to: "human"). Use it when they need something from you or you need something from them. ' +
+        'Send a message to a teammate, or to the person you work for (to: "human"). If you report to a manager, you cannot message the person directly: send it to your manager instead, and they will take it to the person if it needs to go further. ' +
+        'Use it when they need something from you or you need something from them. ' +
         'Do not reply just to acknowledge, and do not chat: conversations that go back and forth many times are stopped and a person is alerted. The message reaches them when they finish their current turn.',
       input: z.object({
         to: z
@@ -172,9 +225,14 @@ export function createAgentTools(
       }),
       handler: (args, ctx) =>
         explain(() => {
-          // A constrained agent may still ask the person for help, but not talk to teammates.
-          const blocker =
-            args.to.trim().toLowerCase() === HUMAN ? null : team.messageBlocker?.(ctx.employeeId)
+          // A constrained agent may still ask whoever it answers to for help (its manager, or
+          // the person if it has none), but not talk to teammates.
+          const manager = managerOf(team, ctx.employeeId)
+          const to = args.to.trim().toLowerCase()
+          const goesUp = manager
+            ? to === manager.id.toLowerCase() || to === manager.name.toLowerCase()
+            : to === HUMAN
+          const blocker = goesUp ? null : team.messageBlocker?.(ctx.employeeId)
           if (blocker) throw new McpToolError(blocker)
           const message = messages.sendFromAgent(
             ctx.employeeId,
