@@ -343,6 +343,24 @@ export class ReviewService {
     }
   }
 
+  /**
+   * Every review of a task, oldest first, for the record of what was said about it. If there are
+   * more than `limit`, the newest are kept and `total` says how many there were.
+   */
+  history(taskId: string, limit = 20): { reviews: Review[]; total: number } {
+    const { n } = this.deps.db
+      .prepare('SELECT COUNT(*) AS n FROM reviews WHERE task_id = ?')
+      .get(taskId) as { n: number }
+    const rows = this.deps.db
+      .prepare(
+        `SELECT * FROM (
+           SELECT rowid AS r, * FROM reviews WHERE task_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?
+         ) ORDER BY created_at ASC, r ASC`,
+      )
+      .all(taskId, limit) as Row[]
+    return { reviews: rows.map((row) => this.toReview(row)), total: n }
+  }
+
   // ---------- going ahead ----------
 
   private onEvent(event: ShokubaEvent): void {

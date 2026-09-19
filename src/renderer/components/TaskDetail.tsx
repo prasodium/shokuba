@@ -7,6 +7,8 @@ import { TASK_STATUS_LABELS } from '../missions/labels'
 import { useMissions } from '../store/missions'
 import { useOffice } from '../store/office'
 import { TaskChangesView } from './TaskChangesView'
+import { canExportEvidence } from '../evidence/summary'
+import { TaskEvidenceView } from './TaskEvidenceView'
 import { TaskReviewView } from './TaskReviewView'
 import { TaskVerificationView } from './TaskVerificationView'
 import { reviewConcern } from '../reviews/summary'
@@ -159,6 +161,7 @@ export function TaskDetail({ task, mission, tasks, onEdit }: Props) {
           version={`${task.status}:${task.updatedAt}`}
         />
       )}
+      {canExportEvidence(task.status) && <TaskEvidenceView key={task.id} taskId={task.id} />}
       {task.status === 'blocked' && task.blockedReason && (
         <div className="task-block">
           <h4>Why it is blocked</h4>

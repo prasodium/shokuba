@@ -66,6 +66,9 @@ const api: ShokubaApi = {
     request: (taskId, reviewerId) => ipcRenderer.invoke(IPC.reviewsRequest, { taskId, reviewerId }),
     saveSettings: (input) => ipcRenderer.invoke(IPC.reviewsSettingsSave, input),
   },
+  evidence: {
+    export: (taskId) => ipcRenderer.invoke(IPC.evidenceExport, { taskId }),
+  },
   messages: {
     list: () => ipcRenderer.invoke(IPC.messagesList),
     send: (input) => ipcRenderer.invoke(IPC.messagesSend, input),

@@ -11,6 +11,7 @@ import {
 } from '../employees'
 import type { ShokubaEvent } from '../events/schema'
 import type { MissionBranchInfo, TaskChanges } from '../git'
+import type { EvidenceExportResult } from '../evidence'
 import type { ReviewSettings, ReviewSettingsSave, TaskReview } from '../reviews'
 import type {
   CheckSettings,
@@ -214,6 +215,13 @@ export interface ShokubaApi {
     request(taskId: string, reviewerId: string | null): Promise<void>
     /** Who reviews a project's work, and whether it is asked for on every submission. */
     saveSettings(input: ReviewSettingsSave): Promise<ReviewSettings>
+  }
+  evidence: {
+    /**
+     * Save a task's evidence pack as a new folder. The person chooses where in a dialog the app
+     * shows; null if they cancel. The page never names a path.
+     */
+    export(taskId: string): Promise<EvidenceExportResult | null>
   }
   messages: {
     /** Recent conversations, newest first. */

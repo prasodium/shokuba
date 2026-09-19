@@ -439,6 +439,30 @@ describe('what is kept', () => {
     expect(second?.results).toHaveLength(3)
   })
 
+  it('lists every run of a task, oldest first, and keeps only the newest when there are many', async () => {
+    setUp()
+    const t = task()
+    fx.missions.missionAction(missionId, 'run')
+    fx.missions.markDispatched(t.id)
+    fx.missions.agentSubmit('ren', { summary: 'done' }, { source: 'reported' })
+    await done(t)
+    const first = await runOf(t)
+    service.runNow(t.id)
+    await vi.waitFor(async () => expect((await runOf(t))?.id).not.toBe(first?.id))
+    await done(t)
+    const second = await runOf(t)
+
+    const all = service.history(t.id)
+    expect(all.total).toBe(2)
+    expect(all.runs.map((r) => r.id)).toEqual([first?.id, second?.id])
+    expect(all.runs[0]?.results.map((r) => r.name)).toEqual(['Install', 'Test', 'Lint'])
+
+    const newest = service.history(t.id, 1)
+    expect(newest.total).toBe(2)
+    expect(newest.runs.map((r) => r.id)).toEqual([second?.id])
+    expect(service.history('nothing-here')).toEqual({ runs: [], total: 0 })
+  })
+
   it('marks a run that was under way when Shokuba stopped as not finished', async () => {
     setUp()
     auto = false

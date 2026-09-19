@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { redactDeep, redactString } from './redact'
+import { redactDeep, redactString, scanSecrets } from './redact'
 
 // Secret-shaped fixtures are assembled at runtime so no token-like literal sits in the
 // source tree (which would trip secret scanners on a public repository).
@@ -135,5 +135,38 @@ describe('redactDeep', () => {
     let deep: Record<string, unknown> = { leaf: 'x' }
     for (let i = 0; i < 200; i++) deep = { next: deep }
     expect(() => redactDeep(deep)).not.toThrow()
+  })
+})
+
+describe('scanSecrets', () => {
+  it('says what kinds of secret a text holds and how many, and never repeats one', () => {
+    const key = fake('sk-' + 'ant-', 30)
+    const text = `one ${key}\ntwo ${key}\nAKIA${'B'.repeat(16)}`
+    const found = scanSecrets(text)
+    expect(found).toEqual([
+      { kind: 'anthropic-key', count: 2 },
+      { kind: 'aws-access-key', count: 1 },
+    ])
+    expect(JSON.stringify(found)).not.toContain(key)
+  })
+
+  it('finds a secret assigned to a name, and a URL with a password in it', () => {
+    const found = scanSecrets(
+      `password = "${'x'.repeat(12)}"\nhttps://ren:${'p'.repeat(12)}@example.invalid/`,
+    )
+    expect(found.map((f) => f.kind).sort()).toEqual(['secret-assignment', 'url-credentials'])
+  })
+
+  it('finds nothing in ordinary text, or in text already redacted', () => {
+    expect(scanSecrets('const total = add(1, 2)\nreturn total')).toEqual([])
+    expect(
+      scanSecrets(redactString(`token = ${'y'.repeat(20)} and ${fake('gh' + 'p_', 36)}`)),
+    ).toEqual([])
+    expect(scanSecrets('')).toEqual([])
+  })
+
+  it('can be run again and again with the same answer', () => {
+    const text = `key ${fake('sk' + '-', 40)}`
+    expect(scanSecrets(text)).toEqual(scanSecrets(text))
   })
 })

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
-import type { FileChange, HeadInfo, MergeOutcome } from '@shared/git'
+import type { FileChange, GitCommit, HeadInfo, MergeOutcome } from '@shared/git'
 import type { Logger } from '../logging/logger'
 import {
   findExecutable,
@@ -175,6 +175,47 @@ export class GitService {
       `${assertStartPoint(base)}..${assertStartPoint(branch)}`,
     ])
     return Number(stdout.trim()) || 0
+  }
+
+  /**
+   * The commits on `head`'s own line of history since it split from `base`, newest first, for a
+   * record of who did what. Following only the first parent keeps out the commits that reached the
+   * branch by being merged in from elsewhere (work another task had accepted), which are not this
+   * task's own.
+   */
+  async commits(
+    repo: string,
+    base: string,
+    head: string,
+    limit = 200,
+  ): Promise<{ commits: GitCommit[]; truncated: boolean }> {
+    const fieldEnd = String.fromCharCode(0x1f)
+    const recordEnd = String.fromCharCode(0x1e)
+    const { stdout } = await this.git(repo, [
+      'log',
+      '--first-parent',
+      '--no-show-signature',
+      '--no-notes',
+      `--max-count=${limit + 1}`,
+      '--format=%H%x1f%an%x1f%aI%x1f%P%x1f%s%x1e',
+      `${assertStartPoint(base)}..${assertStartPoint(head)}`,
+    ])
+    const all = stdout
+      .split(recordEnd)
+      .map((record) => record.replace(/^\r?\n/, ''))
+      .filter((record) => record.length > 0)
+      .map((record): GitCommit => {
+        const [commit = '', author = '', date = '', parents = '', ...subject] =
+          record.split(fieldEnd)
+        return {
+          commit,
+          author,
+          date,
+          merge: parents.trim().split(' ').filter(Boolean).length > 1,
+          subject: subject.join(fieldEnd),
+        }
+      })
+    return { commits: all.slice(0, limit), truncated: all.length > limit }
   }
 
   /** A commit's short id, for showing a person. */

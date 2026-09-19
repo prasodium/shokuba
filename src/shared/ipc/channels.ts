@@ -42,6 +42,7 @@ export const IPC = {
   reviewsTask: 'shokuba:reviews:task',
   reviewsRequest: 'shokuba:reviews:request',
   reviewsSettingsSave: 'shokuba:reviews:settings-save',
+  evidenceExport: 'shokuba:evidence:export',
 
   messagesList: 'shokuba:messages:list',
   messagesSend: 'shokuba:messages:send',

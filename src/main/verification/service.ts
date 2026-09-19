@@ -450,33 +450,51 @@ export class VerificationService {
         'SELECT * FROM check_runs WHERE task_id = ? ORDER BY started_at DESC, rowid DESC LIMIT 1',
       )
       .get(taskId) as (RunRow & { repo_root: string }) | undefined
-    if (!row) return undefined
+    return row ? { repoRoot: row.repo_root, run: this.toRun(row) } : undefined
+  }
+
+  /**
+   * Every run of a task's checks, oldest first, for the record of what was verified. If there are
+   * more than `limit`, the newest are kept and `total` says how many there were.
+   */
+  history(taskId: string, limit = 30): { runs: CheckRun[]; total: number } {
+    const { n } = this.deps.db
+      .prepare('SELECT COUNT(*) AS n FROM check_runs WHERE task_id = ?')
+      .get(taskId) as { n: number }
+    const rows = this.deps.db
+      .prepare(
+        `SELECT * FROM (
+           SELECT rowid AS r, * FROM check_runs WHERE task_id = ? ORDER BY started_at DESC, rowid DESC LIMIT ?
+         ) ORDER BY started_at ASC, r ASC`,
+      )
+      .all(taskId, limit) as RunRow[]
+    return { runs: rows.map((row) => this.toRun(row)), total: n }
+  }
+
+  private toRun(row: RunRow): CheckRun {
     const results = this.deps.db
       .prepare('SELECT * FROM check_results WHERE run_id = ? ORDER BY position')
       .all(row.id) as ResultRow[]
     return {
-      repoRoot: row.repo_root,
-      run: {
-        id: row.id,
-        taskId: row.task_id,
-        commit: row.commit_id,
-        trigger: row.trigger,
-        state: row.state,
-        startedAt: row.started_at,
-        finishedAt: row.finished_at,
-        note: row.note,
-        results: results.map((r): CheckResult => ({
-          position: r.position,
-          kind: r.kind,
-          name: r.name,
-          command: r.command,
-          state: r.state,
-          exitCode: r.exit_code,
-          durationMs: r.duration_ms,
-          output: r.output,
-          truncated: r.truncated === 1,
-        })),
-      },
+      id: row.id,
+      taskId: row.task_id,
+      commit: row.commit_id,
+      trigger: row.trigger,
+      state: row.state,
+      startedAt: row.started_at,
+      finishedAt: row.finished_at,
+      note: row.note,
+      results: results.map((r): CheckResult => ({
+        position: r.position,
+        kind: r.kind,
+        name: r.name,
+        command: r.command,
+        state: r.state,
+        exitCode: r.exit_code,
+        durationMs: r.duration_ms,
+        output: r.output,
+        truncated: r.truncated === 1,
+      })),
     }
   }
 

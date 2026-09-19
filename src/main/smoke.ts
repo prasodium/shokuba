@@ -1174,7 +1174,9 @@ async function reviewPipeline(
     agents.missions.missionAction(mission.id, 'run')
     await waitFor(() => statusOf() === 'submitted', 'the task to be submitted', 40_000)
     const authorFolder = agents.runtime.cwdOf(author.id) ?? ''
-    const submitted = plain('rev-parse', `shokuba/task/${task.id}`)
+    // The demo agent edits no files, so leave a real change in its folder: asking for a review
+    // saves it as a commit first, and it is what the reviewer reads and the pack later shows.
+    writeFileSync(join(authorFolder, 'notes.txt'), 'notes from the author\n')
 
     // 1. Ask a different employee to review it; the author cannot be the one.
     let refused = false
@@ -1185,6 +1187,7 @@ async function reviewPipeline(
     }
     if (!refused) throw new Error('the author was allowed to review their own work')
     await agents.reviews.request(task.id, reviewer.id, 'manual')
+    const submitted = plain('rev-parse', `shokuba/task/${task.id}`)
 
     // 2. The reviewer was restarted in a folder of its own, reads the review and hands it in.
     let latest = (await agents.reviews.forTask(task.id)).latest
@@ -1217,7 +1220,50 @@ async function reviewPipeline(
     await agents.runtime.stop(reviewer.id)
     await waitFor(() => !existsSync(readingFolder), 'the reviewer’s folder to be removed', 20_000)
     if (!existsSync(authorFolder)) throw new Error('the author’s folder was removed')
-    return 'a different demo agent was restarted in a folder of its own at the submitted commit, read the review and handed in its findings; the task stayed as it was, your checkout and main were untouched, and the reviewer’s folder was removed once they left'
+
+    // 5. Accept it, and save the record of it: what was asked, the change, who accepted it and
+    //    what the reviewer found, as a folder, without touching anything that was already there.
+    const accepted = await agents.tasks.action(task.id, { action: 'accept' })
+    if (accepted.status !== 'done') throw new Error(`accepting left the task ${accepted.status}`)
+    const exports = join(dir, 'review-export')
+    mkdirSync(exports)
+    writeFileSync(join(exports, 'keep.txt'), 'keep')
+    const pack = await agents.evidence.export(task.id, exports)
+    const read = (name: string): string => readFileSync(join(pack.folder, name), 'utf8')
+    for (const name of ['report.md', 'evidence.json', 'changes.diff']) {
+      if (!pack.files.includes(name))
+        throw new Error(`the pack has no ${name}: ${pack.files.join(', ')}`)
+    }
+    const report = read('report.md')
+    const expected = [
+      'Accepted by a person, through Shokuba',
+      'The reviewer approved the work on the final commit, with 2 findings.',
+      'a short comment here would help the next reader',
+      'Review asked of Bo',
+      'Demo work complete (simulated)',
+    ]
+    for (const text of expected) {
+      if (!report.includes(text)) throw new Error(`the report does not say "${text}"`)
+    }
+    if (!read('changes.diff').includes('+notes from the author')) {
+      throw new Error('the diff does not hold the change')
+    }
+    const data = JSON.parse(read('evidence.json')) as {
+      outcome: { acceptedBy: string }
+      work: { mergeCommit: string | null; finalCommit: string | null }
+    }
+    if (data.outcome.acceptedBy !== 'person')
+      throw new Error('the pack does not say a person accepted it')
+    if (data.work.mergeCommit !== plain('rev-parse', `shokuba/mission/${mission.id}`)) {
+      throw new Error('the pack names a different merge commit')
+    }
+    if (data.work.finalCommit !== submitted)
+      throw new Error('the pack names a different final commit')
+    if (readFileSync(join(exports, 'keep.txt'), 'utf8') !== 'keep')
+      throw new Error('an existing file changed')
+    if (JSON.stringify(data).includes(dir)) throw new Error('the pack holds a full path')
+    if (plain('rev-parse', 'main') !== mainBefore) throw new Error('main moved')
+    return 'a different demo agent was restarted in a folder of its own at the submitted commit, read the review and handed in its findings; the task stayed as it was, your checkout and main were untouched, and the reviewer’s folder was removed once they left; then accepting it and exporting its evidence pack saved a report, the data and the diff naming who accepted it and what the reviewer found, with no full paths and nothing already there changed'
   } catch (error) {
     const tail = reviewerId
       ? JSON.stringify(agents.runtime.replay(reviewerId).data.slice(-300))

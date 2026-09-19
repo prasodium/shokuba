@@ -57,6 +57,22 @@ interface Row {
   removed_at: string | null
 }
 
+/** Where a task's work is and how it ended up, for the record of the task. */
+export interface WorkspaceEvidence {
+  state: 'active' | 'merged' | 'none' | 'removed'
+  repoRoot: string | null
+  branch: string | null
+  missionBranch: string
+  baseCommit: string | null
+  /** What the work is compared against to show only this task's change. */
+  compareBase: string | null
+  /** Where the task's branch points now. */
+  headCommit: string | null
+  mergeCommit: string | null
+  folderRemoved: boolean
+  note: string | null
+}
+
 /** Enough of a Git repository is left over after a failure to be worth cleaning up. */
 const TEXT_LIMIT = 300
 
@@ -259,7 +275,7 @@ export class WorkspaceService {
   // ---------- reviewing and accepting ----------
 
   /** What the task changed, for the person reviewing it. */
-  async changes(taskId: string): Promise<TaskChanges> {
+  async changes(taskId: string, maxDiffBytes?: number): Promise<TaskChanges> {
     const { git } = this.deps
     const row = this.row(taskId)
     if (!row) return { isolated: false, reason: null }
@@ -271,14 +287,9 @@ export class WorkspaceService {
       return { isolated: false, reason: 'its working folder has been removed' }
     }
     try {
-      const mission = missionBranch(row.mission_id)
-      // A merged task is compared with where it started; one still open, with the mission branch as it is now.
-      const base =
-        row.state === 'active' && (await git.resolve(row.repo_root, mission))
-          ? mission
-          : (row.base_commit ?? mission)
+      const base = await this.compareBase(row, row.repo_root)
       const files: FileChange[] = await git.changedFiles(row.repo_root, base, row.branch)
-      const { text, truncated } = await git.diff(row.repo_root, base, row.branch)
+      const { text, truncated } = await git.diff(row.repo_root, base, row.branch, maxDiffBytes)
       return {
         isolated: true,
         branch: row.branch,
@@ -343,6 +354,50 @@ export class WorkspaceService {
     if (!row || row.state !== 'active' || row.removed_at !== null) return undefined
     if (!row.repo_root || !row.worktree_path || !row.branch) return undefined
     return { repoRoot: row.repo_root, folder: row.worktree_path, branch: row.branch }
+  }
+
+  /**
+   * Where a task's work is and how it ended up, for the record of the task. Unlike `infoFor` this
+   * still answers once the task has been merged or its folder removed, because the branch stays.
+   */
+  async evidenceFor(taskId: string): Promise<WorkspaceEvidence | undefined> {
+    const { git } = this.deps
+    const row = this.row(taskId)
+    if (!row) return undefined
+    let compareBase: string | null = null
+    let head: string | null = null
+    if (git && row.repo_root && row.branch && row.state !== 'none') {
+      try {
+        compareBase = await this.compareBase(row, row.repo_root)
+        head = await git.resolve(row.repo_root, row.branch)
+      } catch (error) {
+        this.deps.logger.warn('workspace.evidence.failed', { taskId, ...describeError(error) })
+      }
+    }
+    return {
+      state: row.state,
+      repoRoot: row.repo_root,
+      branch: row.branch,
+      missionBranch: missionBranch(row.mission_id),
+      baseCommit: row.base_commit,
+      compareBase,
+      headCommit: head,
+      mergeCommit: row.merge_commit,
+      folderRemoved: row.removed_at !== null,
+      note: row.note,
+    }
+  }
+
+  /**
+   * What a task's work is compared against: where it started once it has been merged, and until
+   * then the mission branch as it is now, so only this task's own change is shown.
+   */
+  private async compareBase(row: Row, repoRoot: string): Promise<string> {
+    const { git } = this.deps
+    const mission = missionBranch(row.mission_id)
+    return row.state === 'active' && git && (await git.resolve(repoRoot, mission))
+      ? mission
+      : (row.base_commit ?? mission)
   }
 
   /**

@@ -44,21 +44,44 @@ const RULES: readonly Rule[] = [
   },
 ]
 
+/** Apply one rule, calling `onFound` for each secret it replaces. */
+function applyRule(input: string, rule: Rule, onFound?: () => void): string {
+  return input.replace(rule.pattern, (match: string, ...args: unknown[]) => {
+    if (rule.group === undefined) {
+      onFound?.()
+      return REDACTED(rule.kind)
+    }
+    const captured = args[rule.group - 1]
+    // Something already redacted is not a secret any more.
+    if (typeof captured !== 'string' || captured.startsWith('[REDACTED:')) return match
+    onFound?.()
+    // The secret is the last thing before the end of the match (or a closing "@"), and it
+    // can legitimately equal earlier text such as the key name ("secret=secret"), so
+    // replace the *last* occurrence rather than the first.
+    const at = match.lastIndexOf(captured)
+    return match.slice(0, at) + REDACTED(rule.kind) + match.slice(at + captured.length)
+  })
+}
+
 export function redactString(input: string): string {
   let out = input
-  for (const rule of RULES) {
-    out = out.replace(rule.pattern, (match: string, ...args: unknown[]) => {
-      if (rule.group === undefined) return REDACTED(rule.kind)
-      const captured = args[rule.group - 1]
-      if (typeof captured !== 'string' || captured.startsWith('[REDACTED:')) return match
-      // The secret is the last thing before the end of the match (or a closing "@"), and it
-      // can legitimately equal earlier text such as the key name ("secret=secret"), so
-      // replace the *last* occurrence rather than the first.
-      const at = match.lastIndexOf(captured)
-      return match.slice(0, at) + REDACTED(rule.kind) + match.slice(at + captured.length)
-    })
-  }
+  for (const rule of RULES) out = applyRule(out, rule)
   return out
+}
+
+/**
+ * What kinds of secret-looking text `input` holds and how many of each, never the text itself. For
+ * telling a person a file may hold a secret before they share it, when the file must be kept exactly
+ * as it is and so cannot be redacted. It follows the redactor's own order, so a secret that one rule
+ * has claimed is not counted again by a broader one.
+ */
+export function scanSecrets(input: string): Array<{ kind: string; count: number }> {
+  const counts = new Map<string, number>()
+  let text = input
+  for (const rule of RULES) {
+    text = applyRule(text, rule, () => counts.set(rule.kind, (counts.get(rule.kind) ?? 0) + 1))
+  }
+  return [...counts].map(([kind, count]) => ({ kind, count }))
 }
 
 const SENSITIVE_SUFFIXES = [

@@ -616,6 +616,30 @@ describe('asking for one automatically', () => {
   })
 })
 
+describe('the record of a task’s reviews', () => {
+  it('lists every review of a task, oldest first, with what was found', async () => {
+    const t = await submitted()
+    delivery.ready.add('sora')
+    await reviews.request(t.id, 'sora', 'manual')
+    await reviews.tick()
+    reviews.submit('sora', verdict())
+    clock += 1_000
+    await reviews.request(t.id, 'mika', 'manual')
+
+    const { reviews: all, total } = reviews.history(t.id)
+    expect(total).toBe(2)
+    expect(all.map((r) => [r.reviewerId, r.state, r.verdict])).toEqual([
+      ['sora', 'submitted', 'request_changes'],
+      ['mika', 'queued', null],
+    ])
+    expect(all[0]?.findings).toEqual([
+      { severity: 'major', file: 'src/login.ts', line: 3, note: 'The email is not validated.' },
+    ])
+    expect(reviews.history(t.id, 1).reviews.map((r) => r.reviewerId)).toEqual(['mika'])
+    expect(reviews.history('nothing-here')).toEqual({ reviews: [], total: 0 })
+  })
+})
+
 describe('what a person is told about a task', () => {
   it('has settings and no review before one is asked for', async () => {
     const t = await submitted()

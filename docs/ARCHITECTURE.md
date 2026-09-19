@@ -323,6 +323,25 @@ A person (or, when a project is set up for it, Shokuba on every submission) asks
 - Plan mode is the agent CLI's own setting, not a sandbox: it limits what the reviewer edits, not what a command they run can reach.
 - A reviewer reads; it does not run the code or the checks. What the reviewer says is one model's opinion of a diff, and it can be wrong in either direction.
 
+### Evidence pack (Phase 4, slice 4c)
+
+An evidence pack is a folder of what Shokuba recorded about one task, saved on request. It adds **no tables and no event types**: it reads what the other slices already keep, so it cannot change any of it. [A sample report](examples/evidence-report.md).
+
+**What is read.** `EvidenceCollector` gathers the task and its mission, the workspace record (branch, where it started, where it ended, the merge commit, kept after the folder is gone because the branch stays), the task's own commits (first-parent only, so work merged in from another task is not counted as this one's), the changed files and the diff, every run of the checks with each step's exit code and output, every review with its findings, and the task's events from the append-only event log. **Who accepted it comes from that log**: the `task.status.changed` to `done` and the `source` it was recorded with (`user` for a person's action through the app), never from anything an agent said. Each check run and review is marked as being of the commit the work **ended at** or an earlier one, or unknown, so a pack can show that the checks passed on something other than what was accepted.
+
+**What is written.** `report.md` for a person, `evidence.json` for a machine (`schemaVersion` 1), `changes.diff`, and `checks/run-N-step-M-name.log`. The report's opening summary is built from counts and states only. Every piece of text someone else wrote (task text, the agent's summary, a reviewer's words, names, commit subjects, commands, notes) is shown as a **code span or a fenced block whose fence is longer than anything inside it**, with control characters and text-direction overrides removed first, so it cannot become a link, an image that loads from the internet, HTML, a table cell boundary or a heading. Tests feed hostile text through every field and check that nothing outside a code span or fence contains it.
+
+**Secrets.** Text in the pack goes through the same redactor as everything Shokuba stores. The diff is the exception, because a diff that has been edited is not the change: it is kept exactly as Git produced it and **scanned** instead (`scanSecrets`, using the redactor's own rules), and the pack and the dialog say which kinds were found and how many, without repeating them. A diff with control characters (such as terminal escape sequences) is flagged too. In the fields Shokuba writes itself the pack holds only the project's folder name and never a full path (a note that names one has it replaced), though what the checks printed and the code itself are kept as they were and can hold any path; and every time is in UTC, so it does not carry the timezone of the machine that made a commit.
+
+**Writing it safely.** The destination is chosen by the person in a native folder dialog that the main process shows; the page only names the task, and a path sent from a page is never written to. The exporter makes a **new** folder (`-2`, `-3`… if the name is taken, and a link in the way is not followed), creates every file only if it does not exist (so nothing is overwritten and a link planted between steps is not followed), makes every name itself from plain characters (a step called `../../x` becomes `x`), and if writing fails part-way removes what it made, so a half-written pack never looks whole. Folder and files are private to the user where the OS supports it. Each export is recorded in the audit log (the folder's name, not its path).
+
+**Limits.**
+
+- **A pack is a record, not a proof, and it is not tamper-proof.** It is built from Shokuba's database and Git repository on the same computer, and it is not signed: anyone who can change those can change what a pack says. A signature would need a key kept somewhere the person and the agents cannot both write, which is not built.
+- What a pack says about the work is only as good as its sources: a weak check passes weak work, a review is one model's opinion, and the agent's summary is its own claim (it is labelled as one).
+- Redaction is by pattern, not a guarantee. Read a pack before you share it, especially its diff.
+- Only the newest 200 commits, 20 runs of the checks, 20 reviews and 500 timeline entries are kept, and a diff over 5 MB is cut; the pack says when any of that happened.
+
 ### Database
 
 Tables are added by migrations _when a feature needs them_ — never speculatively. Today: `agent_events`, `audit_log`, `schema_migrations`, `employees`, `missions`, `tasks`, `task_dependencies`, `conversations`, `messages`. Both logs are append-only, enforced by database triggers rather than convention. Employees are archived, not deleted, because events refer to them. Native modules (`better-sqlite3`, `node-pty`) are N-API, so the same binaries run under Node (tests) and Electron (app) with no rebuild step.
@@ -338,14 +357,6 @@ The room shows four desks; more employees than that are counted but not drawn ye
 ### More providers
 
 Codex, Gemini CLI and a generic CLI. They implement the same `ProviderAdapter`; if a CLI has no hooks, its `ObservationChannel` can parse structured output, and only as a last resort terminal text — always labelled `inferred`.
-
-### Git isolation
-
-Each coding task gets its own worktree and branch; unrelated agents never share a working tree.
-
-### Evidence pack
-
-An exportable record for each task: what was asked, the commits and diff, the check results, the reviewer's findings and who accepted it (Phase 4, slice 4c). The checks and the independent reviewer that feed it are built (above).
 
 ### The full office
 

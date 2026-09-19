@@ -6,6 +6,18 @@ export interface FileChange {
   binary: boolean
 }
 
+/** One commit, as a record of who made it and when. */
+export interface GitCommit {
+  commit: string
+  /** The name the commit was made under (the employee's, for a task's own commits). */
+  author: string
+  /** ISO 8601. */
+  date: string
+  /** True for a commit that joins two lines of history. */
+  merge: boolean
+  subject: string
+}
+
 /** Where a repository is right now: the commit checked out, and its branch if it has one. */
 export interface HeadInfo {
   commit: string

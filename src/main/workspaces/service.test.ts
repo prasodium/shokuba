@@ -298,6 +298,61 @@ describe('reviewing what a task changed', () => {
     expect(changes.branch).toBe(`shokuba/task/${t.id}`)
     expect(changes.truncated).toBe(false)
   })
+
+  it('cuts the diff where asked, so a person can be given more than the screen shows', async () => {
+    const t = task('Big one')
+    await work(t, 'big.txt', 'line of text\n'.repeat(5000))
+    const small = await workspaces.changes(t.id, 1_000)
+    expect(small.isolated && small.truncated).toBe(true)
+    const large = await workspaces.changes(t.id, 10_000_000)
+    expect(large.isolated && large.truncated).toBe(false)
+    expect(large.isolated && large.diff.length).toBeGreaterThan(50_000)
+  })
+})
+
+describe('the record of where a task’s work is', () => {
+  it('says where it started, where it is now, and what it is compared with, while it is open', async () => {
+    const t = task('Build it')
+    await work(t, 'a.txt', 'one\nTWO\nthree\n')
+    const evidence = await workspaces.evidenceFor(t.id)
+    expect(evidence).toMatchObject({
+      state: 'active',
+      branch: `shokuba/task/${t.id}`,
+      missionBranch: `shokuba/mission/${missionId}`,
+      mergeCommit: null,
+      folderRemoved: false,
+      // Open work is compared with the mission branch as it is now.
+      compareBase: `shokuba/mission/${missionId}`,
+    })
+    expect(evidence?.headCommit).toBe(sh(repo, 'rev-parse', `shokuba/task/${t.id}`))
+    expect(evidence?.baseCommit).toBe(sh(repo, 'rev-parse', `shokuba/mission/${missionId}`))
+  })
+
+  it('still answers once the task is merged, comparing with where it started', async () => {
+    const t = task('Build it')
+    await work(t, 'a.txt', 'one\nTWO\nthree\n')
+    const started = (await workspaces.evidenceFor(t.id))?.baseCommit
+    await workspaces.mergeForAccept(t)
+    const evidence = await workspaces.evidenceFor(t.id)
+    expect(evidence?.state).toBe('merged')
+    expect(evidence?.compareBase).toBe(started)
+    expect(evidence?.mergeCommit).toBe(sh(repo, 'rev-parse', `shokuba/mission/${missionId}`))
+    expect(evidence?.headCommit).toBe(sh(repo, 'rev-parse', `shokuba/task/${t.id}`))
+  })
+
+  it('says nothing about a task that was never handed out, and why one has no folder', async () => {
+    expect(await workspaces.evidenceFor('nothing-here')).toBeUndefined()
+    const off = build(undefined, 'isolation is switched off')
+    const t = task('Plain')
+    await off.prepare(t)
+    expect(await off.evidenceFor(t.id)).toMatchObject({
+      state: 'none',
+      branch: null,
+      compareBase: null,
+      headCommit: null,
+      note: 'isolation is switched off',
+    })
+  })
 })
 
 describe('accepting a task', () => {

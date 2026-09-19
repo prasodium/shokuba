@@ -1,6 +1,7 @@
 import type { Services } from '../bootstrap'
 import { CircuitBreaker } from '../breaker/breaker'
 import { EmployeeService } from '../employees/service'
+import { EvidenceService } from '../evidence/service'
 import { GitError } from '../git/runner'
 import { GitService } from '../git/service'
 import type { PermissionMode } from '@shared/employees'
@@ -86,6 +87,8 @@ export interface AgentServices {
   verification: VerificationService
   /** Has a different employee read submitted work and report what they found. */
   reviews: ReviewService
+  /** Gathers what was recorded about a task's work and exports it as a folder. */
+  evidence: EvidenceService
   views: AgentViews
   /** Stops every running agent, then closes the report listener. */
   close(): Promise<void>
@@ -344,6 +347,25 @@ export async function createAgentServices(
     logger: services.logger,
   })
 
+  const evidence = new EvidenceService({
+    missions,
+    employees: {
+      get: (id: string) => {
+        const employee = employees.get(id)
+        return employee && { id: employee.id, name: employee.name, role: employee.role }
+      },
+    },
+    events: services.events.log,
+    workspaces,
+    git,
+    verification,
+    reviews,
+    audit: services.audit,
+    platform: options.platform,
+    shokubaVersion: options.version ?? '0.0.0',
+    logger: services.logger,
+  })
+
   const dispatcher = new Dispatcher({
     missions,
     delivery,
@@ -388,6 +410,7 @@ export async function createAgentServices(
     checks,
     verification,
     reviews,
+    evidence,
     views,
     async close() {
       reviewCleaner.stop()

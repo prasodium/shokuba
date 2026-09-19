@@ -196,6 +196,24 @@ export function registerIpc(
     knownProject(input.repoRoot)
     return agents.reviews.saveSettings(input)
   })
+  // An evidence pack is saved where the person says, in a dialog the app shows. The page only
+  // names the task: a path sent from the page is never a place to write.
+  handle(IPC.evidenceExport, TaskIdRequestSchema, trusted, async ({ taskId }, event) => {
+    if (!agents.missions.getTask(taskId)) throw new Error('No such task')
+    const window = BrowserWindow.fromWebContents(event.sender)
+    const options = {
+      title: 'Choose where to save the evidence pack',
+      buttonLabel: 'Save the pack here',
+      properties: ['openDirectory', 'createDirectory'] as Array<
+        'openDirectory' | 'createDirectory'
+      >,
+    }
+    const result = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options)
+    const chosen = result.canceled ? undefined : result.filePaths[0]
+    return chosen ? agents.evidence.export(taskId, chosen) : null
+  })
   handle(IPC.tasksRemove, TaskIdRequestSchema, trusted, ({ taskId }) => {
     agents.missions.removeTask(taskId)
   })

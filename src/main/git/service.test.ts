@@ -373,6 +373,66 @@ describe('reviewing what a task changed', () => {
   })
 })
 
+describe('listing a task’s commits', () => {
+  it('names each commit, who made it and when, newest first', async () => {
+    const folder = await startTask('c1')
+    write(folder, 'a.txt', 'one\nTWO\nthree\n')
+    await git.commitAll(repo, folder, 'First change', 'Ren')
+    write(folder, 'b.txt', 'b\n')
+    await git.commitAll(repo, folder, 'Second change', 'Sora')
+    const { commits, truncated } = await git.commits(repo, baseCommit(), taskBranch('c1'))
+    expect(truncated).toBe(false)
+    expect(commits.map((c) => [c.author, c.subject, c.merge])).toEqual([
+      ['Sora', 'Second change', false],
+      ['Ren', 'First change', false],
+    ])
+    expect(commits[0]?.commit).toBe(sh(repo, 'rev-parse', taskBranch('c1')))
+    expect(commits[0]?.date).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+  })
+
+  it('has nothing to list for a branch that has not moved', async () => {
+    await startTask('c2')
+    expect(await git.commits(repo, baseCommit(), taskBranch('c2'))).toEqual({
+      commits: [],
+      truncated: false,
+    })
+  })
+
+  it('says when it cut the list short, keeping the newest', async () => {
+    const folder = await startTask('c3')
+    for (const n of [1, 2, 3]) {
+      write(folder, `f${n}.txt`, `${n}\n`)
+      await git.commitAll(repo, folder, `Change ${n}`, 'Ren')
+    }
+    const cut = await git.commits(repo, baseCommit(), taskBranch('c3'), 2)
+    expect(cut.truncated).toBe(true)
+    expect(cut.commits.map((c) => c.subject)).toEqual(['Change 3', 'Change 2'])
+  })
+
+  it('leaves out work that reached the branch by being merged in, and marks its own merge', async () => {
+    const mission = await git.ensureBranch(repo, missionBranch('cm'), baseCommit())
+    const folder = await startTask('c4', mission)
+    write(folder, 'mine.txt', 'mine\n')
+    await git.commitAll(repo, folder, 'My work', 'Ren')
+    // Someone else's work lands on the mission branch, and the task pulls it in with a merge.
+    const other = await startTask('c5', mission)
+    write(other, 'theirs.txt', 'theirs\n')
+    await git.commitAll(repo, other, 'Their work', 'Sora')
+    await git.merge(repo, missionBranch('cm'), taskBranch('c5'), 'Accept: theirs', 'Shokuba')
+    sh(folder, 'merge', '--no-edit', '-m', 'Bring in the mission branch', missionBranch('cm'))
+    const { commits } = await git.commits(repo, mission, taskBranch('c4'))
+    expect(commits.map((c) => [c.subject, c.merge])).toEqual([
+      ['Bring in the mission branch', true],
+      ['My work', false],
+    ])
+  })
+
+  it('takes nothing but commit ids and its own branches', async () => {
+    expect((await failure(git.commits(repo, 'main', taskBranch('c1')))).code).toBe('unsafe')
+    expect((await failure(git.commits(repo, '--all', taskBranch('c1')))).code).toBe('unsafe')
+  })
+})
+
 describe('merging accepted work', () => {
   /** A mission branch and a finished task on it, editing `a.txt` line two. */
   async function finishedTask(id: string, mission: string, text: string, file = 'a.txt') {
