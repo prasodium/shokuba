@@ -236,9 +236,13 @@ async function agentPipeline(
       if (!changes.includes(wanted as never))
         throw new Error(`never reached "${wanted}": ${changes.join(',')}`)
     }
-    if (!agents.runtime.replay(employee.id).data.includes('[demo] done.')) {
-      throw new Error('terminal output was not captured')
-    }
+    // The agent's reports (HTTP) arrive before its terminal output does on Windows, where the
+    // console is relayed through ConPTY, so the last line can trail the "idle" report.
+    await waitFor(
+      () => agents.runtime.replay(employee.id).data.includes('[demo] done.'),
+      'the demo agent’s terminal output to be captured',
+      10_000,
+    )
 
     // Interrupting a turn (Claude Code reports nothing for this) must show idle and keep the agent alive.
     agents.runtime.write(employee.id, 'again\r')
@@ -906,10 +910,18 @@ async function isolationPipeline(
       throw new Error('the folder was removed while its agent was still in it')
     await agents.runtime.stop(employee.id)
     await waitFor(() => !existsSync(folder), 'the finished task’s folder to be removed', 20_000)
-    if (plain('branch', '--list', `shokuba/task/${task.id}`) === '')
+    if (plain('branch', '--list', `shokuba/task/${task.id}`) === '') {
       throw new Error('the task branch was removed')
-    const after = await agents.workspaces.changes(task.id)
-    if (!after.isolated || !after.folderRemoved) throw new Error('the removal was not recorded')
+    }
+    // The folder goes first and the record follows (Git tidies its own bookkeeping in between,
+    // which takes longer on Windows), so wait for the record rather than read it in the gap.
+    let recorded = false
+    for (let waited = 0; waited < 20_000 && !recorded; waited += 100) {
+      const after = await agents.workspaces.changes(task.id)
+      recorded = after.isolated && after.folderRemoved
+      if (!recorded) await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    if (!recorded) throw new Error('the removal was not recorded')
     return 'the agent was restarted in the task’s own folder; its work was committed on submit; sent back and resubmitted in the same folder; accepted into the mission branch; main and your checkout untouched; the folder removed once its agent left, the branch kept'
   } catch (error) {
     const tail = employeeId
