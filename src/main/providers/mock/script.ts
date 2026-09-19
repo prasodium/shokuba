@@ -65,9 +65,8 @@ async function runTurn() {
 }
 
 async function main() {
-  say('Shokuba demo agent (simulated - no AI is running). Type anything and press Enter.')
-  await report({ hook_event_name: 'SessionStart', start_reason: 'startup' })
-  process.stdout.write('> ')
+  // Start listening before announcing readiness: once Shokuba sees the agent report in, input
+  // is safe to send. (Console input written earlier can be lost, notably on Windows.)
   if (process.stdin.isTTY) process.stdin.setRawMode(true)
   process.stdin.resume()
   process.stdin.on('data', (chunk) => {
@@ -89,6 +88,9 @@ async function main() {
       }
     }
   })
+  say('Shokuba demo agent (simulated - no AI is running). Type anything and press Enter.')
+  process.stdout.write('> ')
+  await report({ hook_event_name: 'SessionStart', start_reason: 'startup' })
 }
 void main()
 `

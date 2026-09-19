@@ -167,6 +167,7 @@ async function agentPipeline(
     gracefulStopMs: 2_000,
   })
 
+  let employeeId: string | undefined
   try {
     const workdir = join(dir, 'pipeline-work')
     mkdirSync(workdir)
@@ -176,6 +177,7 @@ async function agentPipeline(
       providerId: 'mock',
       workingDirectory: workdir,
     })
+    employeeId = employee.id
     const stateOf = (): string => agents.views.snapshot([employee.id]).views[0]?.state ?? 'unknown'
     const seen = (type: string): number => services.events.log.list({ type: type as never }).length
 
@@ -221,6 +223,17 @@ async function agentPipeline(
       throw new Error('a requested stop must not be recorded as an error')
 
     return `${changes.length} state changes (${[...new Set(changes)].join('>')}), 4 tool events, clean stop`
+  } catch (error) {
+    // Without this, a timeout on a machine nobody can log into says nothing about why.
+    const states = services.events.log
+      .list({ type: 'agent.state.changed', limit: 200 })
+      .map((event) => (event.type === 'agent.state.changed' ? event.payload.to : ''))
+    const tail = employeeId ? agents.runtime.replay(employeeId).data.slice(-500) : ''
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(
+      `${message} [states: ${states.join('>') || 'none'}; terminal tail: ${JSON.stringify(tail)}]`,
+      { cause: error },
+    )
   } finally {
     await agents.close()
     services.close()
