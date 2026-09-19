@@ -428,11 +428,13 @@ describe('what a person can do', () => {
   })
 
   it('never reaches stop by itself, however badly an agent behaves', () => {
-    repeat('mika', 500)
-    for (let i = 0; i < 500; i++) finish('mika', false)
+    // Far past every threshold (the highest is 15), so the point is made without persisting
+    // hundreds of events, which is slow enough on a Windows runner to risk the default limit.
+    repeat('mika', 60)
+    for (let i = 0; i < 60; i++) finish('mika', false)
     expect(breaker.levelOf('mika')).toBe('pause')
     expect(stopped).toEqual([])
-  })
+  }, 30_000)
 
   it('a restart gives the agent a clean slate, and says so', () => {
     repeat('mika', 12)
