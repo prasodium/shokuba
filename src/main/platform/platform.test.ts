@@ -71,11 +71,14 @@ describe('shellCommand', () => {
     })
   })
 
-  it('uses a non-interactive PowerShell on Windows', () => {
+  it('uses cmd.exe /d /s /c on Windows, honouring COMSPEC', () => {
     expect(shellCommand('win32', {}, 'echo hi')).toEqual({
-      file: 'powershell.exe',
-      args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'echo hi'],
+      file: 'cmd.exe',
+      args: ['/d', '/s', '/c', 'echo hi'],
     })
+    expect(shellCommand('win32', { ComSpec: 'C:\\Windows\\System32\\cmd.exe' }, 'x').file).toBe(
+      'C:\\Windows\\System32\\cmd.exe',
+    )
   })
 
   it('does not pass a login flag, unlike an interactive shell', () => {

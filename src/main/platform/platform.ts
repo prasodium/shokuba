@@ -51,12 +51,17 @@ export function defaultShell(platform: PlatformId, env: Env): ShellSpec {
   return { file: usable ?? fallback, args: ['-l'] }
 }
 
-/** Run a single command line through the platform's default shell, non-interactively. */
+/**
+ * Run a single command line through the platform shell, non-interactively.
+ * On Windows this is `cmd.exe /d /s /c` — the same route Node's own child_process takes —
+ * rather than PowerShell, which is slower to start and behaves less predictably when
+ * attached to a pseudo-terminal.
+ */
 export function shellCommand(platform: PlatformId, env: Env, command: string): ShellSpec {
   if (platform === 'win32') {
     return {
-      file: 'powershell.exe',
-      args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command],
+      file: getEnv(env, 'COMSPEC', platform) ?? 'cmd.exe',
+      args: ['/d', '/s', '/c', command],
     }
   }
   return { file: defaultShell(platform, env).file, args: ['-c', command] }
