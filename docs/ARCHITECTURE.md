@@ -28,6 +28,7 @@ This document describes how Shokuba is built, and is explicit about what **exist
 │  Dispatcher             (hands ready tasks to reported-idle agents)            │
 │  MessageService/Router  (conversations, loop protection, delivery)             │
 │  CircuitBreaker         (watches events; limits, pauses and refuses calls)     │
+│  Teams                  (managers, reporting lines; who may message whom)      │
 │  McpEndpoint            (the tools an agent calls: tasks, teammates, messages) │
 │  ipc/handlers           (sender check + Zod on every request)                  │
 │  platform/              (paths, shell, PATH search, env, process termination)  │
@@ -188,6 +189,24 @@ It escalates by itself up to **Paused** and never lowers a level by itself, exce
 - A refusal only works if the CLI honours it. That is verified for Claude Code in headless mode; an interactive session is not yet verified. Pausing also writes Ctrl+C to the terminal as a backstop, and **Stop** always works.
 - **There is no spend limit.** Claude Code's hooks report no cost or token counts, so budget cannot be measured. Time and repetition are.
 - Levels are held in memory. Agents do not survive Shokuba quitting, so nothing is lost by that; the events remain as history.
+
+### Teams (Phase 2, slice 2d)
+
+An employee is a **manager** (`is_manager`), who talks to the person, or reports to one (`reports_to`, a manager's id). A team is a manager and the people who report to them, so there is no team table. Two levels only: a manager reports to the person, never to another manager. `instructions` holds what the role is for, on top of the one-word `role`; it is the employee's own copy, filled from a built-in template (`src/shared/roles.ts`) if you like, so editing a template never rewrites anyone.
+
+**The communication rule.** Managers talk to the person. Everyone else talks to their manager and to their teammates as needed, **but not to the person**: when they need a decision, an answer or access, they ask their manager, who takes to the person only what needs the person. This is enforced in `MessageService.sendFromAgent`, not left to the agent's prompt: a message from an employee who has a manager, addressed to `human`, is refused with a reason that names the manager. Nothing is created (no message, no conversation, no event). The rest is unchanged:
+
+- An employee with **no manager** (everyone before teams existed) can still message the person.
+- The **person can write to anyone**, manager or not. That is how you steer an agent that is stuck or looping.
+- Teammates can message each other freely, under the same hop limit and circuit breaker as before.
+
+When an employee reports `report_blocked`, their manager is also sent a `warning` message with the reason and the task, so the person does not have to relay it. If that message cannot be sent (the manager's inbox is full, or the conversation is halted) the task is blocked all the same.
+
+**Interplay with the circuit breaker.** A limited employee may not message teammates, but may still reach whoever it answers to: its manager, or the person if it has none. The breaker's advice to an agent names that contact.
+
+**What each agent is told.** At launch the agent's system prompt says what its role is for, who its manager is (and that it does not message the person directly), or, for a manager, who reports to them and that they are the one who talks to the person. `list_teammates` shows the same structure. **The prompt is read when the agent starts**, so if you change someone's role, instructions or team while they run, they hear about it at their next start; the messaging rule itself is checked live on every message, and `list_teammates` is always current.
+
+**Limits.** The rule governs the message channel, not what the person can see: an agent's terminal and its task summaries are still visible to you. A manager who is wrong or manipulated can still mislead you, and an employee can still mislead their manager. A manager has no special powers yet beyond being the route to you (slice 2e adds drafting missions).
 
 ### Database
 
