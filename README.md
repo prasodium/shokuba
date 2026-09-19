@@ -33,13 +33,19 @@ Most multi-agent tools are a wall of terminals. Shokuba is an **engineering cont
 
 Shokuba is being built in the open, in small, tested increments. Here is exactly where it stands — nothing below is marketing.
 
-|                      |                                                                                                                                                                                                                                   |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ✅ **Working today** | Electron app shell · append-only event log (SQLite) · typed event bus · secret redaction · hardened, validated IPC · cross-platform layer · CI green on macOS, Linux and Windows, including a real-PTY smoke test inside Electron |
-| 🚧 **Building next** | Claude Code as the first real agent · terminals (xterm.js) · the isometric office · agent state driven by real events                                                                                                             |
-| 🗺️ **Planned**       | Multi-agent task graph · Git worktree isolation · independent verification & evidence packs · Codex / Gemini CLI / custom providers · GitHub issue → verified PR · replay · cinematic camera                                      |
+<p align="center">
+  <img src="docs/assets/office-demo.png" alt="The Shokuba app: an isometric voxel office with three employees at their desks, status bubbles above them, a roster, a live terminal and the event log" width="100%">
+</p>
+<p align="center"><sub>Three <b>demo (simulated)</b> agents. Each bubble says what the event stream reports — and is marked <code>demo</code> here, because nothing in this screenshot is a real AI.</sub></p>
 
-There are **no agents or office in the app yet**. See the [roadmap](docs/ROADMAP.md) for the full plan.
+|                         |                                                                                                                                                                                                                                                                                                               |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ✅ **Working today**    | Employees you can create, edit and start · a real terminal for each (xterm.js + PTY) · **Claude Code** launched in it · an isometric voxel office whose bubbles follow the event stream · a simulated demo agent (no AI account needed) · event log, redaction, hardened IPC · CI on macOS, Linux and Windows |
+| 🔬 **Not yet verified** | Claude Code reporting a full _interactive_ turn back through its hooks. Hook delivery is verified against the real Claude Code 2.1.276 in headless mode, and the real interface runs in the terminal, but the end-to-end interactive check is pending (see the [roadmap](docs/ROADMAP.md))                    |
+| 🚧 **Building next**    | Multiple employees working together · missions and a task graph · message routing with loop protection                                                                                                                                                                                                        |
+| 🗺️ **Planned**          | Git worktree isolation · independent verification & evidence packs · Codex / Gemini CLI / custom providers · GitHub issue → verified PR · the full office (rooms, walking, handoffs) · replay                                                                                                                 |
+
+The office currently shows four desks and a single room. See the [roadmap](docs/ROADMAP.md) for the full plan.
 
 ## Why it's different
 
@@ -79,7 +85,11 @@ npm install
 npm run dev          # launch the app
 ```
 
-Verify your setup end to end — this builds the app and runs it inside real Electron, checking SQLite, a restart, a real pseudo-terminal and Git detection:
+**Without an AI account:** click **Hire your first employee**, choose the **Demo agent (simulated)** provider, pick a folder, create them and press **Start**. Click into their terminal, type anything and press Enter — the demo agent "works" (reading, editing, running tests) and the office follows. Press Ctrl+C mid-task to interrupt it. Everything it does is labelled `simulated`.
+
+**With Claude Code:** if `claude` is installed (on your `PATH`, or bundled in the VS Code / Cursor extension), it appears as a provider. Choose a working folder and start the employee. The first time, Claude Code may show its own one-time setup (theme, login) in the terminal panel — finish it there. Shokuba launches Claude Code with permission checks **on** and never offers a way to turn them off.
+
+Verify your setup end to end — this builds the app and runs it inside real Electron, checking SQLite, a restart, a real pseudo-terminal, the whole agent pipeline (a demo agent reporting through the hook server into events, an interrupt, a clean stop) and Git detection:
 
 ```bash
 npm run smoke
@@ -90,6 +100,7 @@ Electron 44.4.3 / Node 24.21.0 (ABI 149) on darwin-arm64
   PASS  sqlite-and-migrations
   PASS  history-survives-restart
   PASS  pty-spawn
+  PASS  agent-pipeline
   PASS  locate-git
 ```
 
@@ -101,7 +112,7 @@ npm run check
 
 ## Tech
 
-Electron · TypeScript (strict) · React · Zustand · PixiJS (office, upcoming) · node-pty + xterm.js (terminals, upcoming) · SQLite (better-sqlite3) · Zod · Vitest
+Electron · TypeScript (strict) · React · Zustand · PixiJS (the office) · node-pty + xterm.js (terminals) · SQLite (better-sqlite3) · Zod · Vitest
 
 The art direction is an **original** isometric-voxel look — blocky and warm, in the spirit of voxel worlds, but sharing no assets, textures, characters or code with any existing game.
 

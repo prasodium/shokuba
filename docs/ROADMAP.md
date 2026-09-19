@@ -15,11 +15,13 @@ Shokuba is built in small, tested increments. Each phase ends with something tha
 
 ## Phase 1 — First real agent + first glimpse of the office
 
-- [ ] Provider adapter interface
-- [ ] **Claude Code** adapter: detect, spawn in a PTY, observe via hooks over a local socket
-- [ ] Terminal panel (xterm.js): type, interrupt, resize
-- [ ] Employee model, persisted; create / edit an employee
-- [ ] Minimal isometric office: one employee whose status bubble follows **real** events
+- [x] Provider adapter interface (`ProviderAdapter` + `ObservationChannel`; the runtime owns the PTY)
+- [x] **Claude Code** adapter: detect (PATH, common dirs, editor-bundled binaries) and launch in a PTY — verified against Claude Code 2.1.276, whose real interface renders in the terminal panel
+- [ ] Claude Code **observed through hooks, end to end.** Hook delivery is verified against the real Claude Code 2.1.276 in headless mode (`claude -p`): the events arrive authenticated and parse. A full _interactive_ turn is **not yet verified**, because the CLI's one-time first-run setup has not been completed on the development machine. Once it has: `SHOKUBA_LIVE_CLAUDE=1 npm test -- live-claude`
+- [x] Terminal panel (xterm.js): type, interrupt, resize, reconnect — verified with real keystrokes
+- [x] Employee model, persisted; create / edit / remove
+- [x] Minimal isometric office: an employee whose status bubble follows the event stream — verified with the demo agent, whose activity is labelled `simulated`
+- [x] Demo (simulated) provider, so the office and terminal can be used and tested without an AI account
 
 ## Phase 2 — Multi-agent
 

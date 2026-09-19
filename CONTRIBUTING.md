@@ -21,6 +21,12 @@ npm run dev
 | `npm run smoke`  | Build, then run the app in real Electron and check SQLite, a restart, a real PTY and Git |
 | `npm run format` | Format with Prettier                                                                     |
 
+**Trying it without an AI account:** create an employee with the **Demo agent (simulated)** provider, start it, click into its terminal, type anything and press Enter. Its activity is labelled `simulated` throughout.
+
+**Testing against the real Claude Code** (spends a few cents; opt-in): `SHOKUBA_LIVE_CLAUDE=1 npm test -- live-claude`. Claude Code's first-run setup must have been completed once on the machine.
+
+**Screenshots and unattended runs (development only):** `electron . --shokuba-capture=plan.json` runs a scripted timeline — `wait`, `eval` (JavaScript in the page), `type`, `press` and `shot` steps — against the real app. See `src/main/devtools/capture.ts`.
+
 > **Tip:** if the app exits immediately saying it is "running as plain Node", your shell has `ELECTRON_RUN_AS_NODE` set (some other Electron app's terminal leaks it). The npm scripts clear it for you; if you run `electron` by hand, unset it first.
 
 ## Architecture rules
@@ -50,7 +56,7 @@ These keep the project honest. Reviews check for them.
 ## Where help is most wanted
 
 - **Windows and Linux** — the code paths exist and are unit-tested, but they need real-machine testing. See [PLATFORMS.md](docs/PLATFORMS.md).
-- **Provider adapters** — Codex, Gemini CLI and generic CLI adapters once the adapter interface lands.
+- **Provider adapters** — Codex, Gemini CLI and generic CLI adapters. The interface is in `src/main/providers/types.ts`; the Claude Code adapter is the worked example.
 - **Voxel art and animation** — original isometric-voxel assets for the office (no copied game assets, please).
 - **Docs and tests** — always.
 
