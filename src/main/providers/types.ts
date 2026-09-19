@@ -114,4 +114,9 @@ export interface ObservationChannel {
    * pastes into its terminal instead).
    */
   continuation?(text: string): unknown
+  /**
+   * How to answer the report that comes just before a tool call so that call does not run,
+   * with `reason` shown to the agent. Absent when the provider cannot refuse a call.
+   */
+  deny?(reason: string): unknown
 }

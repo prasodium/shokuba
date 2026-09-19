@@ -59,6 +59,9 @@ const api: ShokubaApi = {
     action: (conversationId, action) =>
       ipcRenderer.invoke(IPC.messagesAction, { conversationId, action }),
   },
+  breaker: {
+    action: (employeeId, action) => ipcRenderer.invoke(IPC.breakerAction, { employeeId, action }),
+  },
   terminal: {
     write: (employeeId, data) => ipcRenderer.invoke(IPC.terminalWrite, { employeeId, data }),
     resize: (employeeId, cols, rows) =>

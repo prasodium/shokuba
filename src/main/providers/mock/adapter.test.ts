@@ -77,4 +77,14 @@ describe('mock (demo) adapter', () => {
       reason: 'x',
     })
   })
+
+  it('refuses a tool call the same way the real agent is refused', () => {
+    expect(createMockAdapter().observation.deny?.('no')).toEqual({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: 'no',
+      },
+    })
+  })
 })

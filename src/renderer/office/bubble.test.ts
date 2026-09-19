@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { initialView, type AgentView } from '@shared/agents/view'
-import { STATE_LABELS, bubbleFor, provenance, toneOf } from './bubble'
+import { BREAKER_HELP, BREAKER_LABELS, STATE_LABELS, bubbleFor, provenance, toneOf } from './bubble'
 import { RUNTIME_STATES } from '@shared/types/agent'
 
 const view = (patch: Partial<AgentView>): AgentView => ({ ...initialView('e1', 't'), ...patch })
@@ -73,5 +73,50 @@ describe('labels and tones', () => {
     expect(toneOf('stopped')).toBe('off')
     expect(toneOf('waiting')).toBe('wait')
     expect(toneOf('error')).toBe('error')
+  })
+})
+
+describe('the circuit breaker in the office', () => {
+  const running = { pid: 42, state: 'coding' as const }
+
+  it('says nothing for an agent that is normal or only warned', () => {
+    expect(bubbleFor(view({ ...running, breakerLevel: 'normal' })).caution).toBeNull()
+    expect(bubbleFor(view({ ...running, breakerLevel: 'warning' })).caution).toBeNull()
+  })
+
+  it('marks a limited or paused agent, and turns its bubble amber', () => {
+    expect(bubbleFor(view({ ...running, breakerLevel: 'constrain' }))).toMatchObject({
+      caution: 'limited',
+      tone: 'wait',
+    })
+    expect(bubbleFor(view({ ...running, breakerLevel: 'pause' }))).toMatchObject({
+      caution: 'paused',
+      tone: 'wait',
+    })
+  })
+
+  it('still says what the agent is doing, and keeps a real error red', () => {
+    const model = bubbleFor(
+      view({
+        ...running,
+        breakerLevel: 'constrain',
+        activity: { toolName: 'Edit', summary: 'Edit src/a.ts' },
+      }),
+    )
+    expect(model).toMatchObject({ label: 'Coding', detail: 'Edit src/a.ts' })
+    expect(bubbleFor(view({ pid: 42, state: 'error', breakerLevel: 'pause' })).tone).toBe('error')
+  })
+
+  it('does not mark an agent that is no longer running', () => {
+    expect(
+      bubbleFor(view({ pid: null, state: 'offline', breakerLevel: 'pause' })).caution,
+    ).toBeNull()
+  })
+
+  it('explains every level in words', () => {
+    for (const level of ['warning', 'constrain', 'pause', 'stop'] as const) {
+      expect(BREAKER_LABELS[level]).toBeTruthy()
+      expect(BREAKER_HELP[level]).toBeTruthy()
+    }
   })
 })

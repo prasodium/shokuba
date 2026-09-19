@@ -11,8 +11,11 @@
  * reporting anything (quitting only from an idle prompt).
  *
  * With SHOKUBA_MOCK_CHATTY=1 it answers every message it receives, which lets a test start a
- * runaway exchange between two agents. Plain CommonJS so it runs under Node and
- * Electron-as-Node alike.
+ * runaway exchange between two agents. Typing "loop" makes it repeat one call until Shokuba's
+ * circuit breaker refuses it (and then stop, as a sensible agent would); "stubborn" keeps
+ * trying regardless, until it is interrupted. When Shokuba refuses a call it does not make it,
+ * and reports nothing more about it, exactly as Claude Code does. Plain CommonJS so it runs
+ * under Node and Electron-as-Node alike.
  */
 export const MOCK_AGENT_SCRIPT = String.raw`'use strict'
 const url = process.env.SHOKUBA_HOOK_URL
@@ -39,6 +42,12 @@ async function report(payload) {
     say('[demo] could not report: ' + error.message)
     return {}
   }
+}
+
+// If Shokuba's answer to a PreToolUse refuses the call, why. Otherwise null.
+function refusal(reply) {
+  const out = reply && reply.hookSpecificOutput
+  return out && out.permissionDecision === 'deny' ? String(out.permissionDecisionReason || 'refused') : null
 }
 
 // --- a minimal MCP client, the same handshake Claude Code performs ---
@@ -73,7 +82,9 @@ async function callTool(name, args) {
 async function useShokubaTool(name, args) {
   const id = 'toolu_' + Math.random().toString(36).slice(2, 10)
   const full = 'mcp__shokuba__' + name
-  await report({ hook_event_name: 'PreToolUse', tool_name: full, tool_input: args, tool_use_id: id })
+  const answer = await report({ hook_event_name: 'PreToolUse', tool_name: full, tool_input: args, tool_use_id: id })
+  const why = refusal(answer)
+  if (why) return 'Refused: ' + why
   let text
   try {
     text = await callTool(name, args)
@@ -126,12 +137,36 @@ async function endTurn() {
   }
 }
 
+// A runaway: the same call, again and again. A sensible agent stops when Shokuba refuses it;
+// a stubborn one carries on until it is interrupted.
+async function runLoop(stubborn) {
+  say('[demo] running the tests again...')
+  const pause = Math.max(5, stepMs / 10)
+  for (let attempt = 1; attempt <= 40 && !aborted; attempt++) {
+    const id = 'toolu_' + Math.random().toString(36).slice(2, 10)
+    const input = { command: 'npm test' }
+    const answer = await report({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: input, tool_use_id: id })
+    const why = refusal(answer)
+    if (why) {
+      say('[demo] refused: ' + why)
+      if (!stubborn) return
+    } else {
+      await sleep(pause)
+      await report({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: input, tool_use_id: id, duration_ms: 5 })
+    }
+    await sleep(pause)
+  }
+}
+
 async function runTurn(input) {
   busy = true
   aborted = false
   await report({ hook_event_name: 'UserPromptSubmit', prompt: '(demo)' })
+  const typed = input.trim()
   if (input.startsWith('[Shokuba message]')) {
     await handleMessage(input)
+  } else if (typed === 'loop' || typed === 'stubborn') {
+    await runLoop(typed === 'stubborn')
   } else {
     say('[demo] on it...')
     await sleep(stepMs)
@@ -139,7 +174,12 @@ async function runTurn(input) {
       if (aborted) break
       const id = 'toolu_' + Math.random().toString(36).slice(2, 10)
       say('[demo] ' + step.text)
-      await report({ hook_event_name: 'PreToolUse', tool_name: step.tool, tool_input: step.input, tool_use_id: id })
+      const answer = await report({ hook_event_name: 'PreToolUse', tool_name: step.tool, tool_input: step.input, tool_use_id: id })
+      const why = refusal(answer)
+      if (why) {
+        say('[demo] refused: ' + why)
+        continue
+      }
       await sleep(stepMs)
       if (aborted) break
       await report({ hook_event_name: 'PostToolUse', tool_name: step.tool, tool_input: step.input, tool_use_id: id, duration_ms: stepMs })

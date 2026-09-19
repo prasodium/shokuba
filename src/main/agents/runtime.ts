@@ -78,6 +78,16 @@ export interface AgentRuntimeDeps {
    * null. `canContinue` says whether this provider can be continued at all.
    */
   onTurnFinished?: (employeeId: string, canContinue: boolean) => string | null
+  /**
+   * A tool call is about to run. Returns a reason to refuse it (the circuit breaker), or
+   * null to let it run.
+   */
+  decideTool?: (
+    employeeId: string,
+    toolName: string,
+    summary: string,
+    toolUseId: string | undefined,
+  ) => string | null
   spawnPty?: PtySpawn
   killProcess?: (plan: TerminationPlan) => void
   gracefulStopMs?: number
@@ -423,6 +433,30 @@ export class AgentRuntime {
 
         // The agent has started a turn, so anything just pasted has been taken.
         if (signal.kind === 'turn-started') session.receiving = false
+
+        // A call is about to run. If the circuit breaker refuses it, the answer to this very
+        // report stops it, and the agent is told why.
+        if (signal.kind === 'tool-started' && this.deps.decideTool && observation.deny) {
+          const refusal = this.deps.decideTool(
+            session.employee.id,
+            signal.toolName,
+            signal.summary,
+            signal.toolUseId,
+          )
+          if (refusal) {
+            reply = observation.deny(refusal)
+            // It will not run, so no report of it finishing will ever come: say it here, or
+            // the agent would look stuck in the middle of that call.
+            this.publish(
+              session.tracker.onSignal({
+                kind: 'tool-finished',
+                ...(signal.toolUseId && { toolUseId: signal.toolUseId }),
+                toolName: signal.toolName,
+                ok: false,
+              }),
+            )
+          }
+        }
 
         if (signal.kind === 'turn-finished' && this.deps.onTurnFinished) {
           const canContinue = observation.continuation !== undefined

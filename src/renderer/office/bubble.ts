@@ -1,4 +1,5 @@
 import type { AgentView } from '@shared/agents/view'
+import type { BreakerLevel } from '@shared/breaker'
 import type { EventSource } from '@shared/events/schema'
 import type { RuntimeState } from '@shared/types/agent'
 
@@ -37,6 +38,22 @@ const TONES: Record<RuntimeState, Tone> = {
   error: 'error',
 }
 
+/** What each circuit-breaker level is called, and what it means, for a person reading it. */
+export const BREAKER_LABELS: Record<Exclude<BreakerLevel, 'normal'>, string> = {
+  warning: 'Warning',
+  constrain: 'Limited',
+  pause: 'Paused',
+  stop: 'Stopped',
+}
+
+export const BREAKER_HELP: Record<Exclude<BreakerLevel, 'normal'>, string> = {
+  warning: 'Shokuba noticed something unusual. Nothing is restricted yet.',
+  constrain:
+    'No new tasks or teammate messages. The call it keeps repeating (or further edits) is refused.',
+  pause: 'Interrupted. Every tool call is refused except handing the work back. Reset to resume.',
+  stop: 'Stopped by you.',
+}
+
 /** Provenance of a state as the UI should label it; null when it needs no label. */
 export type Provenance = 'inferred' | 'demo' | null
 
@@ -53,6 +70,8 @@ export interface BubbleModel {
   detail: string | null
   tone: Tone
   provenance: Provenance
+  /** Set when the circuit breaker is restraining the agent, so the office shows it at a glance. */
+  caution: 'limited' | 'paused' | null
   /** Whether the bubble should be drawn at all. */
   visible: boolean
 }
@@ -65,7 +84,16 @@ function clip(text: string, max: number): string {
 
 /** What the status bubble above an employee says, from their current view. */
 export function bubbleFor(view: AgentView | undefined): BubbleModel {
-  if (!view) return { label: 'Offline', detail: null, tone: 'off', provenance: null, visible: true }
+  if (!view) {
+    return {
+      label: 'Offline',
+      detail: null,
+      tone: 'off',
+      provenance: null,
+      caution: null,
+      visible: true,
+    }
+  }
 
   const detail =
     view.state === 'error'
@@ -74,11 +102,23 @@ export function bubbleFor(view: AgentView | undefined): BubbleModel {
         ? view.reason
         : (view.activity?.summary ?? null)
 
+  // Only while it is running: a stopped agent's state already says so.
+  const restrained = view.pid !== null
+  const caution: BubbleModel['caution'] =
+    restrained && view.breakerLevel === 'constrain'
+      ? 'limited'
+      : restrained && view.breakerLevel === 'pause'
+        ? 'paused'
+        : null
+  const tone = TONES[view.state]
+
   return {
     label: STATE_LABELS[view.state],
     detail: detail ? clip(detail, MAX_DETAIL) : null,
-    tone: TONES[view.state],
+    // Amber, like anything else that needs a person's eye; a real error stays red.
+    tone: caution && tone !== 'error' ? 'wait' : tone,
     provenance: provenance(view.stateSource),
+    caution,
     visible: true,
   }
 }

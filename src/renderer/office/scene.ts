@@ -107,7 +107,14 @@ class Bubble {
   }
 
   update(model: BubbleModel, dot: number): void {
-    const key = JSON.stringify([model.label, model.detail, model.tone, model.provenance, dot])
+    const key = JSON.stringify([
+      model.label,
+      model.detail,
+      model.tone,
+      model.provenance,
+      model.caution,
+      dot,
+    ])
     if (key === this.key) return
     this.key = key
     this.pulse = model.tone === 'wait' || model.tone === 'error'
@@ -115,13 +122,16 @@ class Bubble {
     this.label.text = model.label
     this.detail.text = model.detail ?? ''
     this.detail.visible = model.detail !== null
-    this.tag.text = model.provenance ?? ''
-    this.tag.visible = model.provenance !== null
+    // Small notes on the state: a restriction from the circuit breaker, and whether the state
+    // is our inference or demo data. Both can apply.
+    const notes = [model.caution, model.provenance].filter((note) => note !== null)
+    this.tag.text = notes.join(' · ')
+    this.tag.visible = notes.length > 0
 
     const padX = 10
     const padY = 7
     const dotSpace = 16
-    const row1 = dotSpace + this.label.width + (model.provenance ? 8 + this.tag.width : 0)
+    const row1 = dotSpace + this.label.width + (notes.length > 0 ? 8 + this.tag.width : 0)
     const width = Math.max(row1, model.detail ? this.detail.width : 0) + padX * 2
     const height = padY * 2 + 16 + (model.detail ? 15 : 0)
     const tail = 7

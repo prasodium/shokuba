@@ -1,3 +1,4 @@
+import type { BreakerLevel } from '../breaker'
 import type { EventSource, ShokubaEvent } from '../events/schema'
 import type { RuntimeState } from '../types/agent'
 
@@ -20,6 +21,9 @@ export interface AgentView {
   /** The tool the agent is using right now, or null. */
   activity: { toolName: string; summary: string } | null
   error: string | null
+  /** How far the circuit breaker has restrained this agent, and why. */
+  breakerLevel: BreakerLevel
+  breakerReason: string | null
 }
 
 export function initialView(employeeId: string, ts: string): AgentView {
@@ -32,6 +36,8 @@ export function initialView(employeeId: string, ts: string): AgentView {
     pid: null,
     activity: null,
     error: null,
+    breakerLevel: 'normal',
+    breakerReason: null,
   }
 }
 
@@ -72,6 +78,14 @@ export function applyEvent(view: AgentView, event: ShokubaEvent): AgentView {
     case 'agent.tool.finished':
       if (event.payload.employeeId !== view.employeeId) return view
       return { ...view, activity: null }
+
+    case 'breaker.state.changed':
+      if (event.payload.employeeId !== view.employeeId) return view
+      return {
+        ...view,
+        breakerLevel: event.payload.to,
+        breakerReason: event.payload.to === 'normal' ? null : (event.payload.detail ?? null),
+      }
 
     case 'agent.error':
       if (event.payload.employeeId !== view.employeeId) return view

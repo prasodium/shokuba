@@ -108,6 +108,16 @@ export function createClaudeCodeAdapter(deps: DetectDeps = {}): ProviderAdapter 
       // block decision makes it carry on with `reason` as its next instruction. (The nested
       // `hookSpecificOutput` shape shown in some docs is ignored.)
       continuation: (text) => ({ decision: 'block', reason: text }),
+      // Verified against Claude Code 2.1.276: a PreToolUse hook answering with a deny decision
+      // stops the call, and the agent is told the reason. (A top-level block also works, but
+      // this is the documented shape.)
+      deny: (reason) => ({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason: reason,
+        },
+      }),
     },
     detect: (context) => detectClaudeCode(context, deps),
 

@@ -222,6 +222,37 @@ describe('agent tools', () => {
       })
     })
 
+    it('is refused while the circuit breaker limits the sender, but can still reach the person', async () => {
+      const limited = new McpEndpoint(
+        { name: 'shokuba', version: 't' },
+        createAgentTools(fx.missions, messages, {
+          ...team,
+          messageBlocker: (id) => (id === 'mika' ? 'Shokuba has limited you (a loop)' : null),
+        }),
+      )
+      const call = async (from: string, args: Record<string, unknown>) => {
+        const reply = await limited.handle(
+          {
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'tools/call',
+            params: { name: 'send_message', arguments: args },
+          },
+          { employeeId: from, source: 'reported' },
+        )
+        const result = reply?.result as { content: Array<{ text: string }>; isError?: boolean }
+        return { text: result.content[0]?.text ?? '', isError: result.isError === true }
+      }
+
+      const refused = await call('mika', { to: 'ren', subject: 's', body: 'b' })
+      expect(refused.isError).toBe(true)
+      expect(refused.text).toContain('limited you')
+      expect(messages.queuedFor('ren')).toEqual([])
+
+      expect((await call('mika', { to: 'human', subject: 's', body: 'help' })).isError).toBe(false)
+      expect((await call('ren', { to: 'mika', subject: 's', body: 'b' })).isError).toBe(false)
+    })
+
     it('can reach the person', async () => {
       const { text, isError } = await callTool('mika', 'send_message', {
         to: 'human',

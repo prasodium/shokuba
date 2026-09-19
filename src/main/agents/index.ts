@@ -1,4 +1,5 @@
 import type { Services } from '../bootstrap'
+import { CircuitBreaker } from '../breaker/breaker'
 import { EmployeeService } from '../employees/service'
 import { createAgentTools, SHOKUBA_MCP_INSTRUCTIONS } from '../mcp/agent-tools'
 import { McpEndpoint } from '../mcp/server'
@@ -48,6 +49,7 @@ export interface AgentServices {
   missions: MissionService
   messages: MessageService
   router: MessageRouter
+  breaker: CircuitBreaker
   dispatcher: Dispatcher
   views: AgentViews
   /** Stops every running agent, then closes the report listener. */
@@ -92,6 +94,18 @@ export async function createAgentServices(
     directory: { list: team },
     events: services.events,
     logger: services.logger,
+    allowsDelivery: (id: string, fromPerson: boolean) => breaker.allowsDelivery(id, fromPerson),
+  })
+  const breaker: CircuitBreaker = new CircuitBreaker({
+    events: services.events,
+    audit: services.audit,
+    logger: services.logger,
+    port: {
+      isRunning: (id: string) => runtime.isRunning(id),
+      interrupt: (id: string) => runtime.interrupt(id),
+      stop: (id: string) => runtime.stop(id),
+    },
+    participants: (conversationId: string) => messages.participantsOf(conversationId),
   })
   const mcp = new McpEndpoint(
     {
@@ -102,6 +116,7 @@ export async function createAgentServices(
     createAgentTools(missions, messages, {
       list: team,
       isRunning: (id: string) => runtime.isRunning(id),
+      messageBlocker: (id: string) => breaker.messageBlocker(id),
     }),
   )
 
@@ -113,6 +128,8 @@ export async function createAgentServices(
     mcp,
     onTurnFinished: (employeeId: string, canContinue: boolean) =>
       router.turnEnded(employeeId, canContinue),
+    decideTool: (employeeId: string, toolName: string, summary: string, toolUseId?: string) =>
+      breaker.decide(employeeId, toolName, summary, toolUseId),
     logger: services.logger,
     platform: options.platform,
     env: options.env,
@@ -140,8 +157,11 @@ export async function createAgentServices(
     delivery: runtime,
     events: services.events,
     logger: services.logger,
+    allowsTasks: (id: string) => breaker.allowsTasks(id),
   })
-  // The router starts first, so an idle agent is offered its messages before its next task.
+  // The breaker starts first, so it sees an agent's event before anyone acts on it; then the
+  // router, so an idle agent is offered its messages before its next task.
+  breaker.start()
   router.start()
   dispatcher.start()
 
@@ -159,9 +179,11 @@ export async function createAgentServices(
     missions,
     messages,
     router,
+    breaker,
     dispatcher,
     views,
     async close() {
+      breaker.stop()
       router.stop()
       dispatcher.stop()
       await runtime.shutdown()

@@ -20,6 +20,10 @@ export function dispatchHint(
 
   const name = assigneeName ?? 'The assignee'
   if (!view || view.pid === null) return `${name} is not running. Start them and it will be sent.`
+  if (view.breakerLevel === 'constrain' || view.breakerLevel === 'pause') {
+    const why = view.breakerReason ? ` (${view.breakerReason})` : ''
+    return `${name} is ${view.breakerLevel === 'pause' ? 'paused' : 'limited'} by the circuit breaker${why}. Reset them to send it.`
+  }
   if (view.state === 'starting') return `${name} is still starting up.`
   if (view.state === 'waiting')
     return `${name} is waiting for you (a permission prompt). Answer it first.`

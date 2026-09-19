@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { AgentView } from '../agents/view'
+import type { BreakerAction } from '../breaker'
 import {
   EmployeeInputSchema,
   EmployeeUpdateSchema,
@@ -185,6 +186,10 @@ export interface ShokubaApi {
     markRead(conversationId: string): Promise<void>
     /** Resume a halted conversation (lets it continue and releases held messages) or close it. */
     action(conversationId: string, action: ConversationAction): Promise<Conversation>
+  }
+  breaker: {
+    /** Reset an agent's breaker, or pause or stop it by hand. */
+    action(employeeId: string, action: BreakerAction): Promise<void>
   }
   terminal: {
     write(employeeId: string, data: string): Promise<void>

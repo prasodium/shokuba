@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { BREAKER_LEVELS, BREAKER_RULES } from '../breaker'
 import { CONVERSATION_STATUSES, MESSAGE_KINDS } from '../messages'
 import { MISSION_STATUSES, TASK_STATUSES } from '../missions'
 import { RUNTIME_STATES } from '../types/agent'
@@ -185,6 +186,26 @@ export const EventInputSchema = z.discriminatedUnion('type', [
     z.strictObject({ messageId: id, conversationId: id, reason: z.string().max(300) }),
   ),
   event('message.read', z.strictObject({ messageId: id, conversationId: id })),
+
+  // The circuit breaker: how far an agent has been restrained, and each call it refused.
+  event(
+    'breaker.state.changed',
+    z.strictObject({
+      employeeId: id,
+      from: z.enum(BREAKER_LEVELS),
+      to: z.enum(BREAKER_LEVELS),
+      rule: z.enum(BREAKER_RULES),
+      detail: z.string().max(300).optional(),
+    }),
+  ),
+  event(
+    'breaker.denied',
+    z.strictObject({
+      employeeId: id,
+      toolName: z.string().min(1).max(100),
+      reason: z.string().max(500),
+    }),
+  ),
 ])
 
 /** An event as a publisher supplies it. */

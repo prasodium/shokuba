@@ -130,6 +130,19 @@ describe('continuing an agent', () => {
   })
 })
 
+describe('refusing a tool call', () => {
+  it('answers a PreToolUse with the deny decision Claude Code honours, and the reason it reads', () => {
+    const reply = adapter.observation.deny?.('Shokuba paused you.')
+    expect(reply).toEqual({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: 'Shokuba paused you.',
+      },
+    })
+  })
+})
+
 describe('claudeInheritedEnv', () => {
   it('adds AWS settings only when Claude Code is set to use Bedrock', () => {
     expect(claudeInheritedEnv({}, 'darwin')).not.toContain('AWS_PROFILE')

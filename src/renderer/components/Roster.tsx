@@ -1,6 +1,7 @@
 import type { Employee } from '@shared/employees'
 import { useMissions } from '../store/missions'
 import { useOffice } from '../store/office'
+import { BreakerButtons, BreakerChip } from './BreakerChip'
 import { StatePill } from './StatePill'
 
 function folderName(path: string): string {
@@ -81,6 +82,7 @@ export function Roster({ onNew, onEdit }: Props) {
                       )
                       return working ? <span className="card-task">▸ {working.title}</span> : null
                     })()}
+                    <BreakerChip view={view} />
                   </span>
                   <StatePill view={view} />
                 </button>
@@ -94,6 +96,7 @@ export function Roster({ onNew, onEdit }: Props) {
                       >
                         Interrupt
                       </button>
+                      <BreakerButtons employeeId={employee.id} view={view} />
                       <button
                         type="button"
                         className="btn"

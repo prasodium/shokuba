@@ -23,6 +23,7 @@ import {
   type ProviderInfo,
   type TerminalChunk,
 } from '@shared/ipc/api'
+import { BreakerActionRequestSchema } from '@shared/breaker'
 import { IPC } from '@shared/ipc/channels'
 import type { Services } from '../bootstrap'
 import type { AgentServices } from '../agents'
@@ -170,6 +171,13 @@ export function registerIpc(
         ? agents.messages.resume(conversationId)
         : agents.messages.close(conversationId),
   )
+
+  handle(IPC.breakerAction, BreakerActionRequestSchema, trusted, async ({ employeeId, action }) => {
+    if (!agents.employees.get(employeeId)) throw new Error('No such employee')
+    if (action === 'reset') agents.breaker.reset(employeeId)
+    else if (action === 'pause') agents.breaker.pause(employeeId)
+    else await agents.breaker.stopAgent(employeeId)
+  })
 
   handle(IPC.terminalWrite, TerminalWriteRequestSchema, trusted, ({ employeeId, data }) => {
     agents.runtime.write(employeeId, data)

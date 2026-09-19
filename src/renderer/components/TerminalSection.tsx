@@ -1,4 +1,5 @@
 import { selectedEmployee, useOffice } from '../store/office'
+import { BreakerButtons, BreakerChip } from './BreakerChip'
 import { StatePill } from './StatePill'
 import { TerminalPanel } from './TerminalPanel'
 
@@ -34,6 +35,7 @@ export function TerminalSection() {
         <div className="terminal-title">
           <h2>{employee.name}</h2>
           <StatePill view={view} />
+          <BreakerChip view={view} />
         </div>
         <div className="row">
           {running ? (
@@ -45,6 +47,7 @@ export function TerminalSection() {
               >
                 Interrupt
               </button>
+              <BreakerButtons employeeId={employee.id} view={view} />
               <button type="button" className="btn" onClick={() => void stopAgent(employee.id)}>
                 Stop
               </button>

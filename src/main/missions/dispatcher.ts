@@ -19,6 +19,8 @@ const TRIGGERS: ReadonlySet<EventType> = new Set([
   'mission.status.changed',
   'agent.state.changed',
   'agent.started',
+  // A person lifting a restriction can free a task that was being held back.
+  'breaker.state.changed',
 ])
 
 /** After a failed delivery, leave that task alone for a while instead of retrying in a loop. */
@@ -47,6 +49,8 @@ export class Dispatcher {
       delivery: DeliveryPort
       events: EventStore
       logger: Logger
+      /** May this agent be given a new task? (The circuit breaker says no to a constrained one.) */
+      allowsTasks?: (employeeId: string) => boolean
       now?: () => number
     },
   ) {}
@@ -119,6 +123,7 @@ export class Dispatcher {
       if ((this.cooldown.get(task.id) ?? 0) > now) continue
       if (missions.hasActiveTask(agent)) continue
       if (delivery.deliveryBlocker(agent) !== null) continue
+      if (this.deps.allowsTasks && !this.deps.allowsTasks(agent)) continue
 
       claimedAgents.add(agent)
       let claimed

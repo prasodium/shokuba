@@ -15,6 +15,14 @@ export const AGENT_TOOL_NAMES = [
   'send_message',
 ] as const
 
+/**
+ * The tools an agent may always use, even paused: they are how it hands work back to a person.
+ * Everything else can be denied by the circuit breaker.
+ */
+export const HAND_BACK_TOOLS: ReadonlySet<string> = new Set(
+  ['get_current_task', 'submit_task', 'report_blocked'].map((name) => `mcp__shokuba__${name}`),
+)
+
 /** Full names, as Claude Code's permission rules refer to them. */
 export const AGENT_TOOL_PERMISSIONS = AGENT_TOOL_NAMES.map(
   (name) => `mcp__${SHOKUBA_MCP_SERVER}__${name}`,
@@ -54,6 +62,8 @@ function explain<T>(work: () => T): T {
 export interface Team {
   list(): Array<{ id: string; name: string; role: string }>
   isRunning(employeeId: string): boolean
+  /** Why this agent may not send messages right now (the circuit breaker), or null if it may. */
+  messageBlocker?(employeeId: string): string | null
 }
 
 /**
@@ -162,6 +172,10 @@ export function createAgentTools(
       }),
       handler: (args, ctx) =>
         explain(() => {
+          // A constrained agent may still ask the person for help, but not talk to teammates.
+          const blocker =
+            args.to.trim().toLowerCase() === HUMAN ? null : team.messageBlocker?.(ctx.employeeId)
+          if (blocker) throw new McpToolError(blocker)
           const message = messages.sendFromAgent(
             ctx.employeeId,
             {

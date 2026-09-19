@@ -46,6 +46,25 @@ describe('dispatchHint', () => {
     expect(dispatchHint(ready, running, 'Mika', view({ state: 'starting' }))).toMatch(/starting up/)
   })
 
+  it('says when the circuit breaker is holding the task back, and why', () => {
+    const limited = view({
+      state: 'idle',
+      stateSource: 'reported',
+      breakerLevel: 'constrain',
+      breakerReason: 'the same call (Run npm test) 8 times in a row',
+    })
+    expect(dispatchHint(ready, running, 'Mika', limited)).toBe(
+      'Mika is limited by the circuit breaker (the same call (Run npm test) 8 times in a row). Reset them to send it.',
+    )
+    expect(dispatchHint(ready, running, 'Mika', { ...limited, breakerLevel: 'pause' })).toMatch(
+      /paused by the circuit breaker/,
+    )
+    // A warning restricts nothing, so it does not hold anything back.
+    expect(dispatchHint(ready, running, 'Mika', { ...limited, breakerLevel: 'warning' })).toMatch(
+      /Sending to Mika/,
+    )
+  })
+
   it('tells a person when the agent is waiting on them', () => {
     expect(dispatchHint(ready, running, 'Mika', view({ state: 'waiting' }))).toMatch(
       /permission prompt/,

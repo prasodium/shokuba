@@ -198,3 +198,30 @@ describe('Dispatcher', () => {
     expect(delivery.delivered).toEqual([])
   })
 })
+
+describe('while the circuit breaker limits an agent', () => {
+  it('holds its tasks back, gives them to others, and hands them over once it is lifted', async () => {
+    const limited = new Set(['mika'])
+    const gated = new Dispatcher({
+      missions: fx.missions,
+      delivery,
+      events: fx.services.events,
+      logger: createLogger(() => {}),
+      now: () => clock,
+      allowsTasks: (id) => !limited.has(id),
+    })
+    const forMika = add('for mika', 'mika')
+    const forRen = add('for ren', 'ren')
+    delivery.ready.add('mika').add('ren')
+    run()
+
+    await gated.tick()
+    expect(status(forMika.id)).toBe('ready')
+    expect(status(forRen.id)).toBe('in_progress')
+
+    limited.delete('mika')
+    await gated.tick()
+    expect(status(forMika.id)).toBe('in_progress')
+    gated.stop()
+  })
+})

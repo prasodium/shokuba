@@ -211,3 +211,67 @@ describe('paste (for an agent that is already idle)', () => {
     expect(delivery.delivered).toEqual([])
   })
 })
+
+describe('while the circuit breaker limits an agent', () => {
+  let limited: Set<string>
+  let gated: MessageRouter
+
+  beforeEach(() => {
+    limited = new Set()
+    gated = new MessageRouter({
+      messages,
+      delivery,
+      directory: { list: () => fx.directory() },
+      events: fx.services.events,
+      logger: createLogger(() => {}),
+      now: () => clock,
+      // Constrained: only the person gets through.
+      allowsDelivery: (id, fromPerson) => !limited.has(id) || fromPerson,
+    })
+  })
+  afterEach(() => gated.stop())
+
+  it("keeps a teammate's message back, but lets the person's through, at the end of a turn", () => {
+    limited.add('ren-id')
+    const fromMika = send('mika-id', 'ren-id', 'Q', 'from a teammate')
+    messages.sendFromHuman({ toId: 'ren-id', subject: 'Steer', body: 'from the person' })
+
+    const text = gated.turnEnded('ren-id', true)
+    expect(text).toContain('from the person')
+    expect(text).not.toContain('from a teammate')
+    expect(messages.getMessage(fromMika.id)?.state).toBe('queued')
+  })
+
+  it("does not paste a teammate's message into it, and does once the restriction is lifted", async () => {
+    limited.add('ren-id')
+    const m = send('mika-id', 'ren-id', 'Q', 'from a teammate')
+    delivery.ready.add('ren-id')
+
+    await gated.tick()
+    expect(delivery.delivered).toEqual([])
+    expect(messages.getMessage(m.id)?.state).toBe('queued')
+
+    limited.delete('ren-id')
+    await gated.tick()
+    expect(delivery.delivered).toHaveLength(1)
+    expect(messages.getMessage(m.id)?.state).toBe('delivered')
+  })
+
+  it("leaves every message queued for a paused agent, including the person's", async () => {
+    const paused = new MessageRouter({
+      messages,
+      delivery,
+      directory: { list: () => fx.directory() },
+      events: fx.services.events,
+      logger: createLogger(() => {}),
+      now: () => clock,
+      allowsDelivery: () => false,
+    })
+    messages.sendFromHuman({ toId: 'ren-id', subject: 's', body: 'b' })
+    delivery.ready.add('ren-id')
+    await paused.tick()
+    expect(paused.turnEnded('ren-id', true)).toBeNull()
+    expect(delivery.delivered).toEqual([])
+    paused.stop()
+  })
+})

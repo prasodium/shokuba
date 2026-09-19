@@ -385,6 +385,19 @@ export class MessageService {
     })
   }
 
+  /** The employees (not the person) who have sent or received something in a conversation. */
+  participantsOf(conversationId: string): string[] {
+    const rows = this.deps.db
+      .prepare('SELECT from_id AS a, to_id AS b FROM messages WHERE conversation_id = ?')
+      .all(conversationId) as Array<{ a: string; b: string }>
+    const ids = new Set<string>()
+    for (const { a, b } of rows) {
+      if (a !== HUMAN) ids.add(a)
+      if (b !== HUMAN) ids.add(b)
+    }
+    return [...ids]
+  }
+
   // ---------- reading ----------
 
   getMessage(id: string): Message | undefined {

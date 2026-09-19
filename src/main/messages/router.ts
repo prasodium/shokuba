@@ -13,6 +13,8 @@ const TRIGGERS: ReadonlySet<EventType> = new Set([
   'agent.state.changed',
   'agent.started',
   'conversation.status.changed',
+  // A person lifting a restriction can free messages that were being held back.
+  'breaker.state.changed',
 ])
 
 /** After a failed paste, leave that agent alone for a while instead of retrying in a loop. */
@@ -47,6 +49,8 @@ export class MessageRouter {
       directory: Directory
       events: EventStore
       logger: Logger
+      /** May this message be delivered to this agent right now? (The circuit breaker.) */
+      allowsDelivery?: (employeeId: string, fromPerson: boolean) => boolean
       now?: () => number
     },
   ) {}
@@ -74,7 +78,7 @@ export class MessageRouter {
     const { messages } = this.deps
     messages.endHandling(employeeId)
     if (!canContinue) return null
-    const queued = messages.queuedFor(employeeId, MAX_PER_DELIVERY)
+    const queued = this.deliverable(employeeId)
     if (queued.length === 0) return null
     messages.markDelivered(queued, 'continuation')
     return this.render(queued)
@@ -119,7 +123,7 @@ export class MessageRouter {
       if (this.stopped) return
       if ((this.cooldown.get(employeeId) ?? 0) > now) continue
       if (delivery.deliveryBlocker(employeeId) !== null) continue
-      const queued = messages.queuedFor(employeeId, MAX_PER_DELIVERY)
+      const queued = this.deliverable(employeeId)
       if (queued.length === 0) continue
 
       try {
@@ -134,6 +138,17 @@ export class MessageRouter {
         setTimeout(() => this.schedule(), RETRY_COOLDOWN_MS + 50).unref?.()
       }
     }
+  }
+
+  /** What may go to this agent now: the circuit breaker can hold some or all of it back. */
+  private deliverable(employeeId: string): Message[] {
+    const { messages, allowsDelivery } = this.deps
+    // Look past a few held-back messages so the person's are not stuck behind them.
+    const waiting = messages.queuedFor(employeeId, 50)
+    const allowed = allowsDelivery
+      ? waiting.filter((message) => allowsDelivery(employeeId, message.fromId === HUMAN))
+      : waiting
+    return allowed.slice(0, MAX_PER_DELIVERY)
   }
 
   /** The text an agent is given for one or more messages. */

@@ -79,6 +79,8 @@ export async function runSmokeTest(): Promise<SmokeReport> {
 
     await run('message-pipeline', () => messagePipeline(platform, dir, logger))
 
+    await run('breaker-pipeline', () => breakerPipeline(platform, dir, logger))
+
     await run('locate-git', async () => {
       const found = await findExecutable('git', { platform, env: process.env, home: homedir() })
       if (!found) throw new Error('git not found on PATH or in common install locations')
@@ -455,6 +457,121 @@ async function messagePipeline(
         cause: error,
       },
     )
+  } finally {
+    await agents.close()
+    services.close()
+  }
+}
+
+/**
+ * The circuit breaker on real processes: a demo agent that loops is refused its call, a task
+ * is held back from it while it is constrained and handed over once a person resets it, and one
+ * that ignores the refusal is paused and interrupted for real. Only the "AI" is scripted.
+ */
+async function breakerPipeline(
+  platform: ReturnType<typeof toPlatformId>,
+  dir: string,
+  logger: ReturnType<typeof createLogger>,
+): Promise<string> {
+  const services = createServices({
+    dataDir: join(dir, 'breaker-pipeline'),
+    version: 'smoke',
+    platform,
+    logger,
+  })
+  const agents = await createAgentServices(services, {
+    platform,
+    env: process.env,
+    home: homedir(),
+    providers: new ProviderRegistry([createMockAdapter({ stepMs: 30 })]),
+    gracefulStopMs: 2_000,
+  })
+
+  const workdir = join(dir, 'breaker-work')
+  mkdirSync(workdir)
+  let id = ''
+
+  try {
+    const employee = await agents.employees.create({
+      name: 'Ada',
+      role: 'Tester',
+      providerId: 'mock',
+      workingDirectory: workdir,
+    })
+    id = employee.id
+    await agents.runtime.start(employee)
+    const idle = (what: string): Promise<void> =>
+      waitFor(() => agents.runtime.deliveryBlocker(id) === null, what, 20_000)
+    await idle('the demo agent to report in')
+
+    // 1. A runaway loop: the same call, over and over. It is refused, and the agent stops.
+    agents.runtime.write(id, 'loop\r')
+    await waitFor(
+      () => agents.breaker.levelOf(id) === 'constrain',
+      'the loop to be constrained',
+      20_000,
+    )
+    await waitFor(
+      () => services.events.log.list({ type: 'breaker.denied' }).length > 0,
+      'the looping call to be refused',
+      20_000,
+    )
+    await idle('the agent to give up the loop')
+
+    // 2. While constrained, it is given no new task.
+    const mission = agents.missions.createMission({ title: 'Breaker smoke' })
+    const task = agents.missions.createTask({
+      missionId: mission.id,
+      title: 'Check the build',
+      assigneeId: id,
+    })
+    agents.missions.missionAction(mission.id, 'run')
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    if (agents.missions.getTask(task.id)?.status !== 'ready') {
+      throw new Error('a task was handed to an agent the breaker had constrained')
+    }
+
+    // 3. A person resets it; the held task goes out without anything else happening.
+    agents.breaker.reset(id)
+    await waitFor(
+      () => agents.missions.getTask(task.id)?.status !== 'ready',
+      'the held task to be handed over after the reset',
+      20_000,
+    )
+    await waitFor(
+      () => agents.missions.getTask(task.id)?.status === 'submitted',
+      'the demo agent to hand the task back',
+      30_000,
+    )
+    await idle('the agent to finish its task')
+
+    // 4. An agent that ignores the refusal is paused, and its turn is really interrupted.
+    agents.runtime.write(id, 'stubborn\r')
+    await waitFor(
+      () => agents.breaker.levelOf(id) === 'pause',
+      'the stubborn agent to be paused',
+      20_000,
+    )
+    await waitFor(
+      () => agents.runtime.replay(id).data.includes('[demo] interrupted.'),
+      'the paused agent to be interrupted',
+      20_000,
+    )
+
+    const denied = services.events.log.list({ type: 'breaker.denied', limit: 200 }).length
+    const changes = services.events.log
+      .list({ type: 'breaker.state.changed', limit: 200 })
+      .map((event) =>
+        event.type === 'breaker.state.changed' ? `${event.payload.from}>${event.payload.to}` : '',
+      )
+    return `${denied} calls refused; ${changes.join(', ')}; held task released by a reset; paused agent interrupted`
+  } catch (error) {
+    const level = id ? agents.breaker.stateOf(id) : undefined
+    const tail = id ? JSON.stringify(agents.runtime.replay(id).data.slice(-300)) : ''
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`${message} [breaker: ${JSON.stringify(level)}; terminal: ${tail}]`, {
+      cause: error,
+    })
   } finally {
     await agents.close()
     services.close()

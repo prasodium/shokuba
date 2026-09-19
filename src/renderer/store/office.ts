@@ -36,6 +36,8 @@ interface OfficeState {
   startAgent(id: string): Promise<void>
   stopAgent(id: string): Promise<void>
   interruptAgent(id: string): Promise<void>
+  /** Lift the circuit breaker's restrictions on an agent, or pause it by hand. */
+  breakerAction(id: string, action: 'reset' | 'pause'): Promise<void>
 }
 
 export const useOffice = create<OfficeState>((set) => {
@@ -189,6 +191,9 @@ export const useOffice = create<OfficeState>((set) => {
     },
     async interruptAgent(id) {
       await attempt(() => window.shokuba.agents.interrupt(id))
+    },
+    async breakerAction(id, action) {
+      await attempt(() => window.shokuba.breaker.action(id, action))
     },
   }
 })
