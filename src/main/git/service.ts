@@ -6,6 +6,7 @@ import {
   findExecutable,
   isPathInside,
   pathApi,
+  removeTree,
   safeChildEnv,
   type Env,
   type PlatformId,
@@ -240,7 +241,7 @@ export class GitService {
     this.assertInsideWorktrees(dir)
     await this.exclusive(repo, async () => {
       await this.git(repo, ['worktree', 'remove', '--force', dir], { okCodes: [0, 128] })
-      await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+      await removeTree(dir)
       await this.git(repo, ['worktree', 'prune'])
     })
   }

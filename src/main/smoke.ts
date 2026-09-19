@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as pty from 'node-pty'
@@ -9,7 +9,7 @@ import { createAgentServices } from './agents'
 import { createServices } from './bootstrap'
 import { MIGRATIONS } from './database/migrations'
 import { createLogger, describeError } from './logging/logger'
-import { findExecutable, safeChildEnv, shellCommand, toPlatformId } from './platform'
+import { findExecutable, removeTree, safeChildEnv, shellCommand, toPlatformId } from './platform'
 import { GitService } from './git/service'
 import { missionBranch, taskBranch } from './git/refs'
 import { createMockAdapter } from './providers/mock/adapter'
@@ -105,7 +105,7 @@ export async function runSmokeTest(): Promise<SmokeReport> {
   } finally {
     // A folder left behind is harmless; failing or hanging over it would hide the real result.
     try {
-      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+      await removeTree(dir)
     } catch (error) {
       process.stderr.write(`smoke: could not remove ${dir}: ${describeError(error).message}\n`)
     }
