@@ -85,7 +85,7 @@ npm install
 npm run dev          # launch the app
 ```
 
-**Without an AI account:** click **Hire your first employee**, choose the **Demo agent (simulated)** provider, pick a folder, create them and press **Start**. Click into their terminal, type anything and press Enter — the demo agent "works" (reading, editing, running tests) and the office follows. Press Ctrl+C mid-task to interrupt it. Everything it does is labelled `simulated`.
+**Without an AI account:** click **Hire your first employee**, choose the **Demo agent (simulated)** provider, pick a folder, create them and press **Start**. Click into their terminal, type anything and press Enter — the demo agent "works" (reading, editing, running tests) and the office follows. Press Ctrl+C mid-task to interrupt it. Everything it does is labelled `simulated`. (On Windows the demo agent needs Node.js on your `PATH`.)
 
 **With Claude Code:** if `claude` is installed (on your `PATH`, or bundled in the VS Code / Cursor extension), it appears as a provider. Choose a working folder and start the employee. The first time, Claude Code may show its own one-time setup (theme, login) in the terminal panel — finish it there. Shokuba launches Claude Code with permission checks **on** and never offers a way to turn them off.
 
