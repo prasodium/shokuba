@@ -97,11 +97,13 @@ export const AWAY_NOTES: Record<PlaceKind, string> = {
 
 /**
  * What the status bubble above an employee says, from their current view. `awayAt` is the kind of
- * place they have gone to, if they are not at their desk.
+ * place they have gone to, if they are not at their desk. `recorded` says the trip is a recorded
+ * fact (a review Shokuba handed them) and not our reading of what their agent is doing.
  */
 export function bubbleFor(
   view: AgentView | undefined,
   awayAt: PlaceKind | null = null,
+  recorded = false,
 ): BubbleModel {
   if (!view) {
     return {
@@ -132,12 +134,14 @@ export function bubbleFor(
   const tone = TONES[view.state]
 
   // Going somewhere because of what an agent is doing is our reading of it, never something the agent
-  // said, so someone who is away is always marked as such (a demo stays a demo).
-  const provenanceNow: Provenance = awayAt
-    ? view.stateSource === 'simulated'
-      ? 'demo'
-      : 'inferred'
-    : provenance(view.stateSource)
+  // said, so someone who is away for that is marked as such (a demo stays a demo). A trip that is a
+  // recorded fact carries only the state's own label.
+  const provenanceNow: Provenance =
+    awayAt && !recorded
+      ? view.stateSource === 'simulated'
+        ? 'demo'
+        : 'inferred'
+      : provenance(view.stateSource)
 
   return {
     label: STATE_LABELS[view.state],

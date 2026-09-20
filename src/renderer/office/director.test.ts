@@ -247,3 +247,92 @@ describe('a rule of your own', () => {
     })
   })
 })
+
+describe('errands', () => {
+  const reviewing = (id: string, since = T0): Subject => ({
+    id,
+    state: 'thinking',
+    since,
+    errand: 'reading',
+  })
+  const desk = (id: string, state: RuntimeState = 'thinking', since = T0): Subject => ({
+    id,
+    state,
+    since,
+  })
+
+  it('send someone to that kind of place at once, whatever their state and however long it has lasted', () => {
+    const director = new Director(places)
+    // Their state only just began: a state rule would still make them wait.
+    expect(targetOf(director.update(T0, [reviewing('cy', T0)]), 'cy')).toEqual({
+      placeId: 'reading-1',
+      kind: 'reading',
+      slot: 0,
+    })
+  })
+
+  it('bring them home the moment the errand is over', () => {
+    const director = new Director(places)
+    director.update(T0, [reviewing('cy')])
+    expect(targetOf(director.update(T0 + 1, [desk('cy')]), 'cy')).toBeNull()
+  })
+
+  it('keep them there for as long as it lasts', () => {
+    const director = new Director(places)
+    director.update(T0, [reviewing('cy')])
+    expect(targetOf(director.update(T0 + 600_000, [reviewing('cy')]), 'cy')).not.toBeNull()
+  })
+
+  it('give two reviewers the two reading desks, and a third has to wait', () => {
+    const director = new Director(places)
+    const d = director.update(T0, [reviewing('a'), reviewing('b'), reviewing('c')])
+    expect(targetOf(d, 'a')).toMatchObject({ placeId: 'reading-1' })
+    expect(targetOf(d, 'b')).toMatchObject({ placeId: 'reading-2' })
+    expect(targetOf(d, 'c')).toBeNull()
+    // The desk of the first to finish goes to the one waiting.
+    const later = director.update(T0 + 100, [desk('a'), reviewing('b'), reviewing('c')])
+    expect(targetOf(later, 'c')).toMatchObject({ placeId: 'reading-1' })
+  })
+
+  it('come before a state rule: someone at the bench goes to review instead', () => {
+    const director = new Director(places)
+    director.update(T0 + 3_000, [testing('cy')])
+    expect(targetOf(director.update(T0 + 3_100, [testing('cy')]), 'cy')).toMatchObject({
+      kind: 'qa',
+    })
+    const both: Subject = { id: 'cy', state: 'testing', since: T0, errand: 'reading' }
+    director.update(T0 + 3_200, [both])
+    expect(targetOf(director.update(T0 + 3_300, [both]), 'cy')).toMatchObject({ kind: 'reading' })
+  })
+
+  it('then let a state rule take over when the errand ends', () => {
+    const director = new Director(places)
+    director.update(T0 + 5_000, [{ id: 'cy', state: 'testing', since: T0, errand: 'reading' }])
+    director.update(T0 + 5_100, [testing('cy')])
+    expect(targetOf(director.update(T0 + 5_200, [testing('cy')]), 'cy')).toMatchObject({
+      kind: 'qa',
+    })
+  })
+
+  it('are given up when the agent is switched off, and never used with reduced motion', () => {
+    for (const state of ['offline', 'stopped', 'paused'] as const) {
+      const director = new Director(places)
+      const off: Subject = { id: 'cy', state, since: T0, errand: 'reading' }
+      expect(director.update(T0, [off]).get('cy')).toMatchObject({ target: null, absent: true })
+    }
+    const still = new Director(places)
+    expect(targetOf(still.update(T0, [reviewing('cy')], { reducedMotion: true }), 'cy')).toBeNull()
+  })
+
+  it('need a place to go to: with no reading room, nobody goes', () => {
+    const director = new Director(places.filter((p) => p.kind !== 'reading'))
+    expect(targetOf(director.update(T0, [reviewing('cy')]), 'cy')).toBeNull()
+  })
+
+  it('do not change how a state rule waits for anyone else', () => {
+    const director = new Director(places)
+    const d = director.update(T0 + 2_000, [reviewing('cy'), testing('ada')])
+    expect(targetOf(d, 'cy')).not.toBeNull()
+    expect(targetOf(d, 'ada')).toBeNull()
+  })
+})

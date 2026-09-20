@@ -155,6 +155,19 @@ describe('someone who is away from their desk', () => {
     expect(bubbleFor(testing('simulated'), 'qa').provenance).toBe('demo')
   })
 
+  it('carries only the state’s own label when the trip is a recorded fact, like a review', () => {
+    const reviewing = (source: 'reported' | 'inferred' | 'simulated' | 'system') =>
+      view({ state: 'thinking', stateSource: source, activity: null })
+    const away = bubbleFor(reviewing('reported'), 'reading', true)
+    expect(away.detail).toBe('in the reading room')
+    expect(away.provenance).toBeNull()
+    // The state's own label still shows, and a demo is still a demo.
+    expect(bubbleFor(reviewing('inferred'), 'reading', true).provenance).toBe('inferred')
+    expect(bubbleFor(reviewing('simulated'), 'reading', true).provenance).toBe('demo')
+    // Not recorded (the default) is our reading, as before.
+    expect(bubbleFor(reviewing('reported'), 'reading', false).provenance).toBe('inferred')
+  })
+
   it('does not mark someone at their desk any differently than before', () => {
     expect(bubbleFor(testing('reported')).provenance).toBeNull()
     expect(bubbleFor(testing('simulated')).provenance).toBe('demo')

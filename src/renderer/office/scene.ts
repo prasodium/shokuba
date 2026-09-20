@@ -26,11 +26,16 @@ import {
   STATION_DEPTH,
   STATION_WIDTH,
   benchBoxes,
+  benchScreens,
   boardBoxes,
+  boardCardBox,
   chairBoxes,
   deskBoxes,
+  deskPaperBoxes,
+  flyingBoxes,
   glassBoxes,
   inboxBoxes,
+  inboxCardBoxes,
   meetingTableBoxes,
   pantryTableBoxes,
   partitionBox,
@@ -42,6 +47,7 @@ import {
   teaCounterBoxes,
   walkerBoxes,
 } from './furniture'
+import { FlightQueue, flightPoint, type Endpoint, type Flight, type Point3 } from './handoffs'
 import {
   boxFaces,
   hexToNumber,
@@ -66,12 +72,13 @@ import {
   type OfficeMap,
   type Place,
   type PlaceKind,
+  type Point2,
   type Rect,
   type Room,
   type RoomKind,
 } from './map'
 import { buildNavGrid, reachableFrom, seatExit, type NavGrid } from './nav'
-import { LED_COLORS, poseFor } from './pose'
+import { LED_COLORS, poseFor, type Pose } from './pose'
 import {
   advance,
   depthOfWalker,
@@ -85,6 +92,15 @@ import {
   type Home,
   type Walker,
 } from './walker'
+import {
+  EMPTY_SIGNALS,
+  benchLabel,
+  boardLabel,
+  inboxLabel,
+  inboxTint,
+  type BenchState,
+  type OfficeSignals,
+} from './work'
 
 export interface SceneEmployee {
   id: string
@@ -253,26 +269,45 @@ function labelAnchor(place: Place, all: readonly Place[]): { x: number; y: numbe
 /** A small name tag for a shared place, drawn in the overlay so its text stays crisp. */
 class PlaceLabel {
   readonly view = new Container()
+  private readonly label: Text
+  private readonly bg = new Graphics()
+  private text: string
 
   constructor(
     text: string,
     readonly anchor: { x: number; y: number; z: number },
     resolution: number,
+    /** Which kind of place it names, when what it says changes with the work there. */
+    readonly kind: PlaceKind | null = null,
   ) {
-    const label = new Text({
+    this.text = text
+    this.label = new Text({
       text,
       style: { fontFamily: FONT, fontSize: 10.5, fill: 0xf3ead8, fontWeight: '600' },
       resolution,
     })
+    this.label.anchor.set(0.5, 0.5)
+    this.view.addChild(this.bg, this.label)
+    this.view.eventMode = 'none'
+    this.layout()
+  }
+
+  /** Say something else, as when the board's cards change. */
+  setText(text: string): void {
+    if (text === this.text) return
+    this.text = text
+    this.label.text = text
+    this.layout()
+  }
+
+  private layout(): void {
     const padX = 8
     const height = 19
-    const bg = new Graphics()
-      .roundRect(-label.width / 2 - padX, -height, label.width + padX * 2, height, 7)
+    this.bg
+      .clear()
+      .roundRect(-this.label.width / 2 - padX, -height, this.label.width + padX * 2, height, 7)
       .fill({ color: SURFACE, alpha: 0.86 })
-    label.anchor.set(0.5, 0.5)
-    label.position.set(0, -height / 2)
-    this.view.addChild(bg, label)
-    this.view.eventMode = 'none'
+    this.label.position.set(0, -height / 2)
   }
 }
 
@@ -380,6 +415,10 @@ class Desk {
   private awayAt: PlaceKind | null = null
   /** Where their head is while they are away, so the bubble goes with them. */
   private headAt: { x: number; y: number; z: number } | null = null
+  /** Their trip is a recorded fact, not our reading of what their agent is doing. */
+  private recorded = false
+  /** A paper on the desk, while they have a task in hand. */
+  private paper = false
 
   constructor(
     readonly employee: SceneEmployee,
@@ -400,7 +439,7 @@ class Desk {
 
     drawBox(this.rugGfx, at(rug(this.shirt), slot))
     for (const box of chairBoxes()) drawBox(this.back, at(box, slot))
-    for (const box of deskBoxes()) drawBox(this.front, at(box, slot))
+    this.drawFront()
 
     this.bubble = new Bubble(resolution)
     this.nameLabel = new Text({
@@ -440,10 +479,25 @@ class Desk {
     away: boolean
     at: PlaceKind | null
     head: { x: number; y: number; z: number } | null
+    recorded: boolean
   }): void {
     this.away = travel.away
     this.awayAt = travel.at
     this.headAt = travel.head
+    this.recorded = travel.recorded
+  }
+
+  /** The desk, with a paper on it while their owner has a task in hand. */
+  private drawFront(): void {
+    this.front.clear()
+    for (const box of deskBoxes()) drawBox(this.front, at(box, this.slot))
+    if (this.paper) for (const box of deskPaperBoxes()) drawBox(this.front, at(box, this.slot))
+  }
+
+  setPaper(on: boolean): void {
+    if (on === this.paper) return
+    this.paper = on
+    this.drawFront()
   }
 
   /** Release everything this desk created, including the labels that live in the overlay. */
@@ -491,7 +545,7 @@ class Desk {
     }
     drawBox(this.fx, { ...led, color: ledColor })
 
-    const model = bubbleFor(this.view, this.awayAt)
+    const model = bubbleFor(this.view, this.awayAt, this.recorded)
     this.bubble.update(model, LED_COLORS[poseFor(state, 0).led])
     this.bubble.tick(time)
   }
@@ -508,6 +562,46 @@ class Desk {
 
   nameScreen(): { x: number; y: number } {
     return project(this.slot.x + NAME_ANCHOR.x, this.slot.y + NAME_ANCHOR.y, NAME_ANCHOR.z)
+  }
+}
+
+/**
+ * A reading desk: a workstation nobody owns, where someone doing an independent review sits. It is
+ * laid out like an employee's own desk (chair, person, then desk over their lap), with nobody in it
+ * until a reviewer has walked there.
+ */
+class ReadingDesk {
+  readonly container = new Container()
+  private readonly person = new Graphics()
+  private readonly fx = new Graphics()
+
+  constructor(readonly slot: DeskSlot) {
+    const back = new Graphics()
+    const front = new Graphics()
+    drawBox(back, at(rug(0x5b6b80), slot))
+    for (const box of chairBoxes()) drawBox(back, at(box, slot))
+    for (const box of deskBoxes()) drawBox(front, at(box, slot))
+    this.container.zIndex = depthOf(stationRect(slot))
+    this.container.addChild(back, this.person, front, this.fx)
+    this.setSitter(null)
+  }
+
+  /** Who is sitting here, in what pose: nobody if null. The monitor's light shows their state. */
+  setSitter(sitter: { shirt: number; pose: Pose } | null): void {
+    this.person.clear()
+    this.fx.clear()
+    const led = at(LED_BOX, this.slot)
+    if (!sitter) {
+      drawBox(this.fx, { ...led, color: LED_COLORS.off })
+      return
+    }
+    for (const box of personBoxes(sitter.pose, sitter.shirt)) {
+      drawBox(this.person, at(box, this.slot))
+    }
+    drawBox(this.fx, {
+      ...led,
+      color: sitter.pose.ledOn ? LED_COLORS[sitter.pose.led] : LED_COLORS.off,
+    })
   }
 }
 
@@ -562,6 +656,17 @@ interface Traveller {
   /** What they were last told: `desk`, or a place and spot. Only a change starts a new walk. */
   commanded: string
   target: Assignment | null
+  /** The reading desk they are going to sit at (or are sitting at), if that is where they were sent. */
+  chair: { placeId: string; slot: DeskSlot; home: Home } | null
+  /** Where they are going is a recorded fact (a review), not our reading of their agent. */
+  recorded: boolean
+}
+
+/** The colours the bench's screens light up with while the checks run, and after. */
+const BENCH_COLORS: Record<Exclude<BenchState, 'dark'>, number> = {
+  running: 0xffb547,
+  passed: 0x5fd38a,
+  failed: 0xff6a5c,
 }
 
 /**
@@ -578,10 +683,20 @@ export class OfficeScene {
   private readonly floor = new Graphics()
   private readonly items = new Container()
   private readonly overlay = new Container()
+  private readonly flightGfx = new Graphics()
   private readonly deskViews = new Map<string, Desk>()
   /** Things that belong to the current plan, dropped and rebuilt when it changes. */
   private statics: Container[] = []
   private placeLabels: PlaceLabel[] = []
+  /** What the board, the inbox and the bench show of the work, redrawn when the work changes. */
+  private boardGfx: Graphics | null = null
+  private inboxGfx: Graphics | null = null
+  private benchGfx: Graphics | null = null
+  private signals: OfficeSignals = EMPTY_SIGNALS
+  private readingDesks = new Map<string, ReadingDesk>()
+  private readonly flightQueue = new FlightQueue()
+  /** Where each flight in the air is going, fixed when it takes off. */
+  private readonly routes = new Map<string, { from: Point3; to: Point3 }>()
   private map: OfficeMap = buildOffice()
   /** Furniture for desks nobody sits at, so an empty desk still looks like a desk. */
   private emptyDesks = new Map<string, Graphics>()
@@ -625,7 +740,7 @@ export class OfficeScene {
     this.items.sortableChildren = true
     // Nearer employees' labels sit above farther ones'; the names of places sit under them all.
     this.overlay.sortableChildren = true
-    this.world.addChild(this.floor, this.items)
+    this.world.addChild(this.floor, this.items, this.flightGfx)
     this.app.stage.addChild(this.world, this.overlay)
     this.bounds = this.boundsOf(this.map)
     this.camera = fitCamera(this.bounds)
@@ -654,6 +769,12 @@ export class OfficeScene {
       const dt = ticker.deltaMS / 1000
       if (!this.reducedMotion) this.time += dt
       this.moveEveryone(dt)
+      this.updateFlights()
+      if (this.benchGfx) {
+        // The screens breathe while the checks run.
+        this.benchGfx.alpha =
+          this.signals.bench === 'running' ? 0.72 + 0.28 * Math.sin(this.time * 6) : 1
+      }
       for (const desk of this.deskViews.values()) desk.tick(this.time)
       this.followSelected(dt)
       this.placeOverlay()
@@ -706,6 +827,7 @@ export class OfficeScene {
       const desk = new Desk(employee, slot, this.resolution, (id) => this.select(id))
       desk.setView(this.views[employee.id])
       desk.setSelected(this.selected === employee.id)
+      desk.setPaper(this.signals.holding.includes(employee.id))
       this.deskViews.set(employee.id, desk)
       this.items.addChild(desk.container)
       for (const view of [desk.nameLabel, desk.roleLabel, desk.bubble.view]) {
@@ -750,6 +872,21 @@ export class OfficeScene {
       this.following = false
       this.notify()
     }
+  }
+
+  /** What the work looks like now: the board's cards, the inbox, the bench, and who holds a task. */
+  setSignals(signals: OfficeSignals): void {
+    this.signals = signals
+    this.drawSignals()
+    const holding = new Set(signals.holding)
+    for (const [id, desk] of this.deskViews) desk.setPaper(holding.has(id))
+  }
+
+  /** Send a card or an envelope across the office, for a handoff that has just happened. */
+  fly(flight: Flight): void {
+    // With reduced motion nothing crosses the room: the places already show where the work is.
+    if (this.reducedMotion || this.destroyed) return
+    this.flightQueue.push(flight, performance.now())
   }
 
   /** A click on a desk selects it, unless the press was really a drag of the camera. */
@@ -821,9 +958,15 @@ export class OfficeScene {
     const desk = this.deskViews.get(this.selected)
     if (!desk) return
     // Follow the person, wherever they have walked to, or the desk if they are sitting at it.
-    const walker = this.travellers.get(this.selected)?.walker
+    const traveller = this.travellers.get(this.selected)
+    const walker = traveller?.walker
+    const seat = traveller?.chair?.slot
     const target =
-      walker && walker.mode !== 'seated' ? project(walker.x, walker.y, 0.8) : desk.centreScreen()
+      walker && walker.mode !== 'seated'
+        ? project(walker.x, walker.y, 0.8)
+        : seat
+          ? project(seat.x + STATION_WIDTH / 2, seat.y + STATION_DEPTH / 2, 0.6)
+          : desk.centreScreen()
     const next = followStep(this.camera, target, dt, this.reducedMotion, this.bounds)
     if (next.x !== this.camera.x || next.y !== this.camera.y || next.zoom !== this.camera.zoom) {
       this.camera = next
@@ -946,6 +1089,8 @@ export class OfficeScene {
     this.map = map
     for (const view of this.statics) view.destroy({ children: true })
     this.statics = []
+    this.readingDesks = new Map()
+    this.boardGfx = this.inboxGfx = this.benchGfx = null
     for (const label of this.placeLabels) label.view.destroy({ children: true })
     this.placeLabels = []
 
@@ -964,10 +1109,13 @@ export class OfficeScene {
     for (const place of map.places) {
       if (place.kind === 'board') {
         this.addStatic(this.boxesView(boardBoxes(place.footprint)), place.footprint)
+        this.boardGfx = this.addWorkLayer(place.footprint)
       } else if (place.kind === 'qa') {
         this.addStatic(this.boxesView(benchBoxes(place.footprint)), place.footprint)
+        this.benchGfx = this.addWorkLayer(place.footprint)
       } else if (place.kind === 'inbox') {
         this.addStatic(this.boxesView(inboxBoxes(place.footprint)), place.footprint)
+        this.inboxGfx = this.addWorkLayer(place.footprint)
       } else if (place.kind === 'tea') {
         this.addStatic(this.boxesView(teaCounterBoxes(place.footprint)), place.footprint)
       } else if (place.kind === 'snacks') {
@@ -983,22 +1131,29 @@ export class OfficeScene {
           place.footprint,
         )
       } else if (place.station) {
-        this.addStatic(this.emptyStation(place.station), stationRect(place.station))
+        // A reading desk: empty until someone is sent there to review.
+        const reading = new ReadingDesk(place.station)
+        this.readingDesks.set(place.id, reading)
+        this.addStatic(reading.container, stationRect(place.station))
       }
     }
 
     // One name tag per name: the places that have one, and the rooms that are named (the two reading
     // desks share one).
     const named = new Set<string>()
-    const tag = (text: string, anchor: { x: number; y: number; z: number }): void => {
+    const tag = (
+      text: string,
+      anchor: { x: number; y: number; z: number },
+      kind: PlaceKind | null = null,
+    ): void => {
       if (named.has(text)) return
       named.add(text)
-      const label = new PlaceLabel(text, anchor, this.resolution)
+      const label = new PlaceLabel(text, anchor, this.resolution, kind)
       this.placeLabels.push(label)
       this.overlay.addChild(label.view)
     }
     for (const place of map.places) {
-      if (LABELLED.has(place.kind)) tag(place.label, labelAnchor(place, map.places))
+      if (LABELLED.has(place.kind)) tag(place.label, labelAnchor(place, map.places), place.kind)
     }
     for (const r of map.rooms) {
       if (r.label) tag(r.label, { x: r.rect.x + r.rect.w / 2, y: r.rect.y + 0.5, z: 2.3 })
@@ -1010,10 +1165,112 @@ export class OfficeScene {
     this.mainFloor = anchor ? reachableFrom(this.grid, anchor) : new Set()
     this.director.setPlaces(map.places)
     this.syncTravellers(true)
+    this.drawSignals()
 
     this.bounds = this.boundsOf(map)
     this.camera = this.autoFit ? fitCamera(this.bounds) : clampCamera(this.camera, this.bounds)
     this.applyCamera()
+  }
+
+  /** A layer drawn on top of a place, for what the work there looks like. Rebuilt with the plan. */
+  private addWorkLayer(footprint: Rect): Graphics {
+    const g = new Graphics()
+    // Just in front of the place itself, so it is drawn over it and behind whoever stands before it.
+    g.zIndex = depthOf(footprint) + 0.001
+    this.items.addChild(g)
+    this.statics.push(g)
+    return g
+  }
+
+  private placeOfKind(kind: PlaceKind): Place | undefined {
+    return this.map.places.find((p) => p.kind === kind)
+  }
+
+  /** Draw the board's cards, the inbox tray and the bench's screens from the work as it stands. */
+  private drawSignals(): void {
+    const { board, inbox, bench } = this.signals
+    const boardPlace = this.placeOfKind('board')
+    if (this.boardGfx && boardPlace) {
+      const g = this.boardGfx
+      g.clear()
+      board.cards.forEach((card, index) => {
+        const tint = card.kind === 'blocked' ? 'warn' : card.kind === 'done' ? 'good' : 'plain'
+        drawBox(g, boardCardBox(boardPlace.footprint, index, tint))
+      })
+    }
+    const inboxPlace = this.placeOfKind('inbox')
+    if (this.inboxGfx && inboxPlace) {
+      const g = this.inboxGfx
+      g.clear()
+      for (const box of inboxCardBoxes(inboxPlace.footprint, inbox.cards.map(inboxTint))) {
+        drawBox(g, box)
+      }
+    }
+    const benchPlace = this.placeOfKind('qa')
+    if (this.benchGfx && benchPlace) {
+      const g = this.benchGfx
+      g.clear()
+      // Dark unless Shokuba's own checks are running or have finished on work waiting for you.
+      if (bench !== 'dark') {
+        for (const screen of benchScreens(benchPlace.footprint)) {
+          drawBox(g, { ...screen, color: BENCH_COLORS[bench] })
+        }
+      }
+    }
+    for (const label of this.placeLabels) {
+      if (label.kind === 'board') label.setText(boardLabel(board))
+      else if (label.kind === 'inbox') label.setText(inboxLabel(inbox))
+      else if (label.kind === 'qa') label.setText(benchLabel(bench))
+    }
+  }
+
+  // ---------- work changing hands ----------
+
+  /** Where an endpoint is in the room, at the height a card would be held, or null if it is not there. */
+  private pointOf(endpoint: Endpoint): Point3 | null {
+    switch (endpoint.at) {
+      case 'board': {
+        const f = this.placeOfKind('board')?.footprint
+        return f ? { x: f.x + f.w / 2, y: f.y + 0.4, z: 1.6 } : null
+      }
+      case 'inbox': {
+        // Over the inbox's pending tray.
+        const f = this.placeOfKind('inbox')?.footprint
+        return f ? { x: f.x + 0.5, y: f.y + 0.98, z: 0.9 } : null
+      }
+      case 'desk': {
+        const slot = this.deskViews.get(endpoint.id)?.slot
+        return slot ? { x: slot.x + 0.32, y: slot.y + 1.12, z: 0.75 } : null
+      }
+      case 'person': {
+        const walker = this.travellers.get(endpoint.id)?.walker
+        return walker ? { x: walker.x, y: walker.y, z: 0.95 } : null
+      }
+    }
+  }
+
+  /** Take off whatever is next, and draw everything in the air. */
+  private updateFlights(): void {
+    const { started, flying } = this.flightQueue.update(performance.now())
+    for (const flight of started) {
+      const from = this.pointOf(flight.from)
+      const to = this.pointOf(flight.to)
+      // Nobody at either end (an employee with no desk yet): nothing to show.
+      if (from && to) this.routes.set(flight.key, { from, to })
+    }
+    const g = this.flightGfx
+    g.clear()
+    const inAir = new Set<string>()
+    for (const { flight, progress } of flying) {
+      inAir.add(flight.key)
+      const route = this.routes.get(flight.key)
+      if (!route) continue
+      const at = flightPoint(route.from, route.to, progress)
+      const ground = project(at.x, at.y, 0)
+      g.ellipse(ground.x, ground.y, 9, 4.5).fill({ color: 0x000000, alpha: 0.18 })
+      for (const box of flyingBoxes(flight.thing, at, flight.tint)) drawBox(g, box)
+    }
+    for (const key of this.routes.keys()) if (!inAir.has(key)) this.routes.delete(key)
   }
 
   // ---------- people walking ----------
@@ -1056,6 +1313,8 @@ export class OfficeScene {
         view,
         commanded: 'desk',
         target: null,
+        chair: null,
+        recorded: false,
       })
     }
   }
@@ -1073,37 +1332,63 @@ export class OfficeScene {
     return facingOf(f.x + f.w / 2 - spot.x, f.y + f.d / 2 - spot.y, 0)
   }
 
+  /** Where someone sits at a reading desk, and where they step out to. */
+  private chairHome(station: DeskSlot): Home {
+    const seat = seatPoint(station)
+    return { seat, exit: seatExit(this.grid, station, this.mainFloor) ?? seat }
+  }
+
   /**
    * Tell someone where to be. A change of orders starts a walk from wherever they are; `snap` puts
-   * them there at once, for someone seen for the first time or who has nobody to walk for.
+   * them there at once, for someone seen for the first time or who has nobody to walk for. A place
+   * with a desk (a reading desk) is somewhere to sit; any other place is somewhere to stand.
    */
   private command(traveller: Traveller, target: Assignment | null, snap: boolean): void {
     const spot = target ? this.spotOf(target) : undefined
     const place = target && spot ? target : null
+    const station = place ? this.map.places.find((p) => p.id === place.placeId)?.station : undefined
+    const chair =
+      place && station
+        ? { placeId: place.placeId, slot: station, home: this.chairHome(station) }
+        : null
+    // If they are sitting in a chair that is not their own, they step out of it first.
+    const from =
+      traveller.walker.mode === 'seated' && traveller.chair ? traveller.chair.home : traveller.home
     traveller.commanded = place ? `${place.placeId}:${place.slot}` : 'desk'
     traveller.target = place
+    traveller.chair = chair
 
     if (!snap) {
-      const path = spot
-        ? pathTo(this.grid, traveller.walker, traveller.home, spot)
-        : pathHome(this.grid, traveller.walker, traveller.home)
+      let path: Point2[] | null
+      if (chair) {
+        const there = pathTo(this.grid, traveller.walker, from, chair.home.exit)
+        path = there ? [...there, chair.home.seat] : null
+      } else if (spot) {
+        path = pathTo(this.grid, traveller.walker, from, spot)
+      } else {
+        path = pathHome(this.grid, traveller.walker, traveller.home, from)
+      }
       if (path) {
         traveller.walker = startWalk(
           traveller.walker,
           path,
-          place ? { kind: 'stand', facing: this.facingAt(place) } : { kind: 'sit' },
+          place && !chair ? { kind: 'stand', facing: this.facingAt(place) } : { kind: 'sit' },
         )
         return
       }
       // No way there (which the plan's tests rule out): appear there rather than be stuck.
     }
-    traveller.walker =
-      place && spot ? standingAt(spot, this.facingAt(place)) : seatedAt(traveller.home.seat)
+    traveller.walker = chair
+      ? seatedAt(chair.home.seat)
+      : place && spot
+        ? standingAt(spot, this.facingAt(place))
+        : seatedAt(traveller.home.seat)
   }
 
   /** Ask the director who should be where, send people that way, and move them on. */
   private moveEveryone(dt: number): void {
     const now = Date.now()
+    const reviewing = new Set(this.signals.reviewing)
     const subjects: Subject[] = []
     for (const id of this.deskViews.keys()) {
       const view = this.views[id]
@@ -1112,10 +1397,13 @@ export class OfficeScene {
         id,
         state: view?.state ?? 'offline',
         since: Number.isFinite(since) ? since : now,
+        // Doing an independent review is a recorded fact, and it is done at a reading desk.
+        ...(reviewing.has(id) ? { errand: 'reading' as const } : {}),
       })
     }
     const decisions = this.director.update(now, subjects, { reducedMotion: this.reducedMotion })
 
+    const sitters = new Map<string, { shirt: number; pose: Pose }>()
     for (const [id, decision] of decisions) {
       const traveller = this.travellers.get(id)
       const desk = this.deskViews.get(id)
@@ -1129,13 +1417,29 @@ export class OfficeScene {
       // Never more than a moment's worth, so coming back to a hidden window does not make anyone leap.
       traveller.walker = advance(traveller.walker, Math.min(dt, 0.25))
       traveller.view.draw(traveller.walker)
-      const away = traveller.walker.mode !== 'seated'
+      traveller.recorded = decision.target?.kind === 'reading' && reviewing.has(id)
+
+      const seat = traveller.walker.mode === 'seated' ? traveller.chair : null
+      if (seat) {
+        sitters.set(seat.placeId, {
+          shirt: hexToNumber(traveller.color),
+          pose: poseFor(this.views[id]?.state ?? 'offline', this.time),
+        })
+      }
+      const walking = traveller.walker.mode !== 'seated'
       desk.setTravel({
-        away,
+        away: walking || seat !== null,
         at: traveller.target?.kind ?? null,
-        head: away ? { x: traveller.walker.x, y: traveller.walker.y, z: 1.75 } : null,
+        head: walking
+          ? { x: traveller.walker.x, y: traveller.walker.y, z: 1.75 }
+          : seat
+            ? { x: seat.slot.x + HEAD_ANCHOR.x, y: seat.slot.y + HEAD_ANCHOR.y, z: HEAD_ANCHOR.z }
+            : null,
+        recorded: traveller.recorded,
       })
     }
+    for (const [placeId, reading] of this.readingDesks)
+      reading.setSitter(sitters.get(placeId) ?? null)
   }
 
   /** A workstation with nobody at it: a reading desk, waiting. */

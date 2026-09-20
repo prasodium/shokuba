@@ -189,11 +189,15 @@ async function runReview() {
     say('[demo] ' + current)
     return
   }
-  const id = 'toolu_' + Math.random().toString(36).slice(2, 10)
-  const input = { file_path: cwd + '/README.md' }
-  await report({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: input, tool_use_id: id })
-  await sleep(stepMs)
-  await report({ hook_event_name: 'PostToolUse', tool_name: 'Read', tool_input: input, tool_use_id: id, duration_ms: stepMs })
+  // A real review takes a while: read several files, so the office has time to seat the reviewer.
+  const files = ['README.md', 'package.json', 'src/index.ts', 'src/login.ts', 'src/form.ts', 'src/validate.ts', 'test/login.test.ts', 'test/form.test.ts', 'docs/login.md']
+  for (const file of files) {
+    const id = 'toolu_' + Math.random().toString(36).slice(2, 10)
+    const input = { file_path: cwd + '/' + file }
+    await report({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: input, tool_use_id: id })
+    await sleep(stepMs)
+    await report({ hook_event_name: 'PostToolUse', tool_name: 'Read', tool_input: input, tool_use_id: id, duration_ms: stepMs })
+  }
   say('[demo] handing in the review')
   const answer = await useShokubaTool('submit_review', {
     verdict: 'approve',

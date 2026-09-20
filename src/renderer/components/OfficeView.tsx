@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ZOOM_STEP } from '../office/camera'
+import { flightFor } from '../office/handoffs'
 import { MAX_VISIBLE_EMPLOYEES } from '../office/map'
 import { OfficeScene, type CameraState, type SceneEmployee } from '../office/scene'
+import { onLiveEvent } from '../store/live'
+import { useMissions } from '../store/missions'
 import { useOffice } from '../store/office'
+import { useOfficeSignals } from '../store/work'
 
 /** The isometric voxel office. It only *displays* what the event stream says. */
 export function OfficeView({ onNew }: { onNew(): void }) {
@@ -15,6 +19,7 @@ export function OfficeView({ onNew }: { onNew(): void }) {
   const views = useOffice((s) => s.views)
   const selectedId = useOffice((s) => s.selectedId)
   const select = useOffice((s) => s.select)
+  const signals = useOfficeSignals()
 
   useEffect(() => {
     const host = hostRef.current
@@ -58,6 +63,23 @@ export function OfficeView({ onNew }: { onNew(): void }) {
   useEffect(() => scene?.setEmployees(sceneEmployees), [scene, sceneEmployees])
   useEffect(() => scene?.setViews(views), [scene, views])
   useEffect(() => scene?.setSelected(selectedId), [scene, selectedId])
+  useEffect(() => scene?.setSignals(signals), [scene, signals])
+
+  // Work changing hands is drawn as it happens. Only news counts: opening the office never replays
+  // what was recorded before.
+  useEffect(() => {
+    if (!scene) return
+    return onLiveEvent((event) => {
+      const flight = flightFor(event, {
+        assigneeOf: (taskId) =>
+          useMissions
+            .getState()
+            .missions.flatMap((detail) => detail.tasks)
+            .find((task) => task.id === taskId)?.assigneeId ?? null,
+      })
+      if (flight) scene.fly(flight)
+    })
+  }, [scene])
 
   const overflow = Math.max(0, employees.length - MAX_VISIBLE_EMPLOYEES)
 

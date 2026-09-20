@@ -35,7 +35,7 @@ ffmpeg -framerate 7.7 -i frames/frame-%04d.png \
   -loop 0 out.gif
 ```
 
-The `frames` step reports how long the run really took, so set `-framerate` to frames divided by seconds. Typing `test` into a demo agent's terminal makes it run one long test command, which sends its employee to the QA bench.
+The `frames` step reports how long the run really took, so set `-framerate` to frames divided by seconds. Typing `test` into a demo agent's terminal makes it run one long test command, which sends its employee to the QA bench. A reviewer's demo review reads nine files, so it lasts long enough for the reviewer to walk to a reading desk and sit. To film a whole scenario (dispatch, submit, checks, review, accept), start it from one `eval` step that schedules its steps with timers, then take `frames`; `SHOKUBA_MOCK_STEP_MS=1500` gives the review time to be seen. The app under test is the built one (`npm run build`), not the source.
 
 > **Tip:** if the app exits immediately saying it is "running as plain Node", your shell has `ELECTRON_RUN_AS_NODE` set (some other Electron app's terminal leaks it). The npm scripts clear it for you; if you run `electron` by hand, unset it first.
 

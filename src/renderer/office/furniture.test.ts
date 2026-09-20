@@ -1,14 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import {
+  BOARD_COLUMNS,
+  BOARD_ROWS,
   STATION_DEPTH,
   STATION_WIDTH,
   benchBoxes,
   benchScreens,
   boardBoxes,
+  boardCardBox,
+  cardColor,
   chairBoxes,
   deskBoxes,
+  deskPaperBoxes,
+  flyingBoxes,
   glassBoxes,
   inboxBoxes,
+  inboxCardBoxes,
   inboxTray,
   meetingTableBoxes,
   pantryTableBoxes,
@@ -21,6 +28,7 @@ import {
   teaCounterBoxes,
   walkerBoxes,
 } from './furniture'
+import type { Box } from './iso'
 import { GLASS_HEIGHT, PARTITION_HEIGHT, buildOffice, type Point2, type Rect } from './map'
 import { poseFor } from './pose'
 
@@ -347,6 +355,125 @@ describe('the pantry, the tables and the glass', () => {
       const top = boxes.find((b) => b.w === table.footprint.w && b.d === table.footprint.d)
       expect(top?.z).toBeCloseTo(0.7)
       expect(boxes.filter((b) => b.h === 0.7 && b.w === 0.14)).toHaveLength(4)
+    })
+  })
+})
+
+describe('work on the floor', () => {
+  const board = { x: 20.2, y: 0, w: 3.0, d: 0.3 }
+  const inbox = { x: 12.0, y: 1.3, w: 2.0, d: 1.5 }
+  const tints = ['plain', 'good', 'bad', 'warn'] as const
+
+  describe('the mission board', () => {
+    const cork = boardBoxes(board)[1] as Box
+
+    it('has room for every card it is given, each on the cork and none on another', () => {
+      const cards = Array.from({ length: BOARD_COLUMNS * BOARD_ROWS }, (_, i) =>
+        boardCardBox(board, i, 'plain'),
+      )
+      for (const c of cards) {
+        expect(c.x).toBeGreaterThanOrEqual(cork.x)
+        expect(c.x + c.w).toBeLessThanOrEqual(cork.x + cork.w)
+        expect(c.z).toBeGreaterThanOrEqual(cork.z)
+        expect(c.z + c.h).toBeLessThanOrEqual(cork.z + cork.h)
+        // In front of the cork's face, so it can be seen, and thin.
+        expect(c.y).toBeGreaterThanOrEqual(cork.y + cork.d - 1e-9)
+        expect(c.d).toBeLessThan(0.1)
+      }
+      const overlap = (a: Box, b: Box) =>
+        a.x < b.x + b.w && b.x < a.x + a.w && a.z < b.z + b.h && b.z < a.z + a.h
+      for (let i = 0; i < cards.length; i += 1) {
+        for (let j = i + 1; j < cards.length; j += 1) {
+          expect(overlap(cards[i] as Box, cards[j] as Box), `${i} and ${j}`).toBe(false)
+        }
+      }
+    })
+
+    it('fills a row before the next one down, left to right', () => {
+      const at = (i: number) => boardCardBox(board, i, 'plain')
+      for (let i = 1; i < BOARD_COLUMNS; i += 1) {
+        expect(at(i).x).toBeGreaterThan(at(i - 1).x)
+        expect(at(i).z).toBe(at(0).z)
+      }
+      expect(at(BOARD_COLUMNS).x).toBe(at(0).x)
+      expect(at(BOARD_COLUMNS).z).toBeLessThan(at(0).z)
+    })
+
+    it('colours a card by its tint, and each tint differently', () => {
+      const colors = tints.map((t) => boardCardBox(board, 0, t).color)
+      expect(new Set(colors).size).toBe(tints.length)
+      tints.forEach((t, i) => expect(colors[i]).toBe(cardColor(t)))
+    })
+  })
+
+  describe('the inbox tray', () => {
+    const tray = inboxTray(inbox)
+
+    it('holds no cards when nothing is waiting', () => {
+      expect(inboxCardBoxes(inbox, [])).toEqual([])
+    })
+
+    it('stacks the cards upward on the tray, each above the last, inside its edges', () => {
+      const cards = inboxCardBoxes(inbox, ['plain', 'good', 'bad', 'warn', 'plain', 'plain'])
+      expect(cards).toHaveLength(6)
+      cards.forEach((c, i) => {
+        expect(c.x).toBeGreaterThanOrEqual(tray.x)
+        expect(c.x + c.w).toBeLessThanOrEqual(tray.x + tray.w + 0.02)
+        expect(c.y).toBeGreaterThanOrEqual(tray.y)
+        expect(c.y + c.d).toBeLessThanOrEqual(tray.y + tray.d + 0.02)
+        expect(c.z).toBeGreaterThanOrEqual(tray.z + tray.h)
+        if (i > 0) expect(c.z).toBeGreaterThan((cards[i - 1] as Box).z)
+      })
+    })
+
+    it('colours each card by its own tint, bottom first', () => {
+      const cards = inboxCardBoxes(inbox, ['bad', 'good'])
+      expect(cards.map((c) => c.color)).toEqual([cardColor('bad'), cardColor('good')])
+    })
+  })
+
+  describe('a paper on a desk', () => {
+    it('lies on the desk top, clear of the keyboard and the monitor', () => {
+      const top = deskBoxes()[4] as Box
+      const keyboard = deskBoxes()[5] as Box
+      const paper = deskPaperBoxes()
+      expect(paper.length).toBeGreaterThan(0)
+      for (const b of paper) {
+        expect(b.z).toBeGreaterThanOrEqual(top.z + top.h - 1e-9)
+        expect(b.x).toBeGreaterThanOrEqual(top.x)
+        expect(b.x + b.w).toBeLessThanOrEqual(top.x + top.w)
+        expect(b.y).toBeGreaterThanOrEqual(top.y)
+        expect(b.y + b.d).toBeLessThanOrEqual(top.y + top.d)
+        expect(b.x + b.w).toBeLessThanOrEqual(keyboard.x)
+      }
+    })
+  })
+
+  describe('things in the air', () => {
+    const at = { x: 5, y: 6, z: 1 }
+
+    it('centre a card on the point, in its tint', () => {
+      const [card] = flyingBoxes('card', at, 'bad')
+      expect(card).toBeDefined()
+      const c = card as Box
+      expect(c.x + c.w / 2).toBeCloseTo(5)
+      expect(c.y + c.d / 2).toBeCloseTo(6)
+      expect(c.z).toBe(1)
+      expect(c.color).toBe(cardColor('bad'))
+    })
+
+    it('centre an envelope on the point, and its own colour whatever the tint', () => {
+      const boxes = flyingBoxes('envelope', at, 'bad')
+      expect(boxes.length).toBeGreaterThan(1)
+      const [body] = boxes as [Box, ...Box[]]
+      expect(body.x + body.w / 2).toBeCloseTo(5)
+      expect(body.y + body.d / 2).toBeCloseTo(6)
+      expect(boxes.some((b) => b.color === cardColor('bad'))).toBe(false)
+      expect(flyingBoxes('envelope', at, 'good')).toEqual(boxes)
+    })
+
+    it('are told from each other', () => {
+      expect(flyingBoxes('card', at, 'plain')).not.toEqual(flyingBoxes('envelope', at, 'plain'))
     })
   })
 })

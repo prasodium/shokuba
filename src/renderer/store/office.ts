@@ -6,6 +6,7 @@ import type { AppInfo, ProviderInfo } from '@shared/ipc/api'
 import { errorMessage } from '../lib/errors'
 import { foldEvent, foldEvents } from './fold'
 import { useEvents } from './events'
+import { emitLiveEvent } from './live'
 import { useMessages } from './messages'
 import { useMissions } from './missions'
 
@@ -79,6 +80,8 @@ export const useOffice = create<OfficeState>((set) => {
 
       const applyLive = (event: ShokubaEvent): void => {
         useEvents.getState().ingest([event])
+        // Pictures that react to news (work changing hands) hear it here, and never replay history.
+        emitLiveEvent(event)
         set((state) => {
           const next = foldEvent({ views: state.views, lastSeq: state.lastSeq }, event)
           return next.views === state.views && next.lastSeq === state.lastSeq

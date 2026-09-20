@@ -4,7 +4,8 @@ import type { Place, PlaceKind } from './map'
 /**
  * Decides who goes where. Pure: given what every agent is doing and what time it is, it says who
  * should be at a shared place and who at their desk. It walks nobody itself and invents nothing:
- * every trip comes from a rule below, and the reason for a rule is a state the agent really is in.
+ * every trip comes from a rule below, or from an errand, and the reason for each is something that
+ * really is so: a state the agent is in, or a piece of work Shokuba has given them.
  *
  * What makes it calm rather than twitchy: a state has to last a few seconds before anyone walks
  * (a Bash command that looks like a test run can end in a second, and tool states flicker), and
@@ -12,9 +13,8 @@ import type { Place, PlaceKind } from './map'
  * comes and goes never sends a person to and fro.
  */
 
-export interface Rule {
-  /** The agent state that sends someone to a place. */
-  state: RuntimeState
+/** Why someone should be at a kind of place, and how patiently. */
+interface Reason {
   place: PlaceKind
   /** How long the state must have lasted before they set off. */
   enterMs: number
@@ -22,10 +22,15 @@ export interface Rule {
   leaveMs: number
 }
 
+export interface Rule extends Reason {
+  /** The agent state that sends someone to a place. */
+  state: RuntimeState
+}
+
 /**
- * Why people leave their desks. Only agents' own activity is here (slice 5b); handoffs of work
- * follow in 5c. Running tests is deduced from a command that looks like a test run, which is why
- * the bubble says `inferred` when someone is at the bench for it.
+ * Why people leave their desks because of what their agent is doing. Running tests is deduced from
+ * a command that looks like a test run, which is why the bubble says `inferred` when someone is at
+ * the bench for it. (Work Shokuba hands someone is an errand, below, and is a recorded fact.)
  */
 export const RULES: readonly Rule[] = [
   { state: 'testing', place: 'qa', enterMs: 3_000, leaveMs: 2_500 },
@@ -40,6 +45,11 @@ export interface Subject {
   state: RuntimeState
   /** When the state began, in milliseconds. */
   since: number
+  /**
+   * A recorded reason to be at this kind of place right now, apart from their state: an independent
+   * review in progress sends the reviewer to a reading desk. It comes before any state rule.
+   */
+  errand?: PlaceKind
 }
 
 export interface Assignment {
@@ -60,7 +70,7 @@ export interface Decision {
 
 interface Hold {
   assignment: Assignment
-  rule: Rule
+  reason: Reason
 }
 
 export class Director {
@@ -88,8 +98,11 @@ export class Director {
     )
   }
 
-  private ruleFor(state: RuntimeState): Rule | undefined {
-    return this.rules.find((rule) => rule.state === state)
+  /** Why this employee should be somewhere other than their desk, if there is a reason. */
+  private reasonFor(subject: Subject): Reason | undefined {
+    // An errand has no state to wait on: they go, and come back, at once.
+    if (subject.errand) return { place: subject.errand, enterMs: 0, leaveMs: 0 }
+    return this.rules.find((rule) => rule.state === subject.state)
   }
 
   /** The first free spot at any place of `kind`, or null if they are all taken. */
@@ -119,7 +132,7 @@ export class Director {
     for (const id of this.known) if (!present.has(id)) this.known.delete(id)
 
     const decisions = new Map<string, Decision>()
-    const waiting: Array<{ subject: Subject; rule: Rule; order: number }> = []
+    const waiting: Array<{ subject: Subject; reason: Reason; order: number }> = []
 
     subjects.forEach((subject, order) => {
       const first = !this.known.has(subject.id)
@@ -130,22 +143,24 @@ export class Director {
       if (options.reducedMotion || absent) {
         this.holds.delete(subject.id)
       } else if (held) {
-        const rule = this.ruleFor(subject.state)
-        const stillWanted = rule !== undefined && rule.place === held.rule.place
+        const reason = this.reasonFor(subject)
+        const stillWanted = reason !== undefined && reason.place === held.reason.place
         // Leaving takes a moment, so a state that comes and goes does not send anyone to and fro.
-        if (!stillWanted && now - subject.since >= held.rule.leaveMs) this.holds.delete(subject.id)
+        if (!stillWanted && now - subject.since >= held.reason.leaveMs)
+          this.holds.delete(subject.id)
       } else {
-        const rule = this.ruleFor(subject.state)
-        if (rule && now - subject.since >= rule.enterMs) waiting.push({ subject, rule, order })
+        const reason = this.reasonFor(subject)
+        if (reason && now - subject.since >= reason.enterMs)
+          waiting.push({ subject, reason, order })
       }
       decisions.set(subject.id, { target: null, absent, first })
     })
 
     // Give free spots to those who want them, longest-waiting first.
     waiting.sort((a, b) => a.subject.since - b.subject.since || a.order - b.order)
-    for (const { subject, rule } of waiting) {
-      const spot = this.freeSpot(rule.place)
-      if (spot) this.holds.set(subject.id, { assignment: spot, rule })
+    for (const { subject, reason } of waiting) {
+      const spot = this.freeSpot(reason.place)
+      if (spot) this.holds.set(subject.id, { assignment: spot, reason })
     }
 
     for (const [id, decision] of decisions) {

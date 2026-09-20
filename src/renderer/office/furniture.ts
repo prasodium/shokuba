@@ -1,3 +1,4 @@
+import type { Tint } from './handoffs'
 import { shade, sortByDepth, type Box } from './iso'
 import { GLASS_HEIGHT, PARTITION_HEIGHT, type Point2, type Rect } from './map'
 import type { Pose } from './pose'
@@ -192,6 +193,85 @@ export function inboxBoxes(footprint: Rect): Box[] {
 export function inboxTray(footprint: Rect): Box {
   const deskY = footprint.y + 0.6
   return box(footprint.x + 0.25, deskY + 0.2, 0.74, 0.5, 0.36, 0.04, 0xd8d2c6)
+}
+
+// ---------- work on the floor ----------
+//
+// What the shared places show about the real work going on, added on top of the idle furniture
+// above: cards on the board, work in the inbox tray, a paper on the desk of someone with a task.
+
+const CARD_COLORS: Record<Tint, number> = {
+  plain: 0xf4efe1,
+  good: 0x7fc98f,
+  bad: 0xe0766b,
+  warn: 0xf0b350,
+}
+
+/** The colour of a card, by how it is marked. */
+export function cardColor(tint: Tint): number {
+  return CARD_COLORS[tint]
+}
+
+/** The mission board's cards sit in this many columns and rows on the cork. */
+export const BOARD_COLUMNS = 6
+export const BOARD_ROWS = 2
+const CARD_W = 0.34
+const CARD_H = 0.44
+
+/** Where card number `index` is pinned on the board (filling a row, then the next below it). */
+export function boardCardBox(footprint: Rect, index: number, tint: Tint): Box {
+  const column = index % BOARD_COLUMNS
+  const row = Math.floor(index / BOARD_COLUMNS)
+  const z = row === 0 ? 1.62 : 1.08
+  return box(
+    footprint.x + 0.2 + column * 0.44,
+    footprint.y + 0.18,
+    z,
+    CARD_W,
+    0.03,
+    CARD_H,
+    CARD_COLORS[tint],
+  )
+}
+
+/** The cards in the inbox's pending tray, oldest at the bottom, each a little askew. */
+export function inboxCardBoxes(footprint: Rect, tints: readonly Tint[]): Box[] {
+  const tray = inboxTray(footprint)
+  return tints.map((tint, index) =>
+    box(
+      tray.x + 0.04 + (index % 2 === 0 ? 0 : 0.03),
+      tray.y + 0.04 + (index % 3 === 0 ? 0.02 : 0),
+      tray.z + tray.h + index * 0.035,
+      0.42,
+      0.28,
+      0.03,
+      CARD_COLORS[tint],
+    ),
+  )
+}
+
+/** A paper on a desk, for someone with a task in hand, on the desk top left of the keyboard. */
+export function deskPaperBoxes(): Box[] {
+  return [
+    box(0.16, 1.0, 0.63, 0.3, 0.24, 0.012, CARD_COLORS.plain),
+    box(0.2, 1.06, 0.642, 0.2, 0.02, 0.004, 0x9a9384),
+    box(0.2, 1.12, 0.642, 0.14, 0.02, 0.004, 0x9a9384),
+  ]
+}
+
+/** A card or an envelope in the air, centred on a point. */
+export function flyingBoxes(
+  thing: 'card' | 'envelope',
+  at: { x: number; y: number; z: number },
+  tint: Tint,
+): Box[] {
+  if (thing === 'card') {
+    return [box(at.x - 0.18, at.y - 0.13, at.z, 0.36, 0.26, 0.03, CARD_COLORS[tint])]
+  }
+  return [
+    box(at.x - 0.17, at.y - 0.11, at.z, 0.34, 0.22, 0.04, 0xfaf7ee),
+    box(at.x - 0.17, at.y - 0.11, at.z + 0.04, 0.34, 0.05, 0.005, 0xd9705f),
+  ]
 }
 
 /** A potted plant. */

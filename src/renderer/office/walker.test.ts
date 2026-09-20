@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildOffice, seatPoint, type Point2 } from './map'
+import { buildOffice, seatPoint, type DeskSlot, type Point2 } from './map'
 import { buildNavGrid, isFreePoint, pathLength, seatExit } from './nav'
 import {
   STRIDE,
@@ -230,6 +230,32 @@ describe('the way from a desk to a place and back, on the real floor', () => {
     expect(path.at(-2)).toEqual(home.exit)
     const arrived = advance(startWalk(away, path, { kind: 'sit' }), 600)
     expect(arrived).toMatchObject({ x: home.seat.x, y: home.seat.y, mode: 'seated' })
+  })
+
+  describe('from a reading desk', () => {
+    const station = map.places.find((p) => p.id === 'reading-1')?.station as DeskSlot
+    const chair = { seat: seatPoint(station), exit: seatExit(grid, station) as Point2 }
+
+    it('steps out of that chair first, then walks home and sits at its own desk', () => {
+      const path = pathHome(grid, seatedAt(chair.seat), home, chair) as Point2[]
+      expect(path.slice(0, 2)).toEqual([chair.seat, chair.exit])
+      expect(path.at(-2)).toEqual(home.exit)
+      expect(path.at(-1)).toEqual(home.seat)
+      for (const point of path.slice(1, -1)) expect(isFreePoint(grid, point)).toBe(true)
+      const arrived = advance(startWalk(seatedAt(chair.seat), path, { kind: 'sit' }), 600)
+      expect(arrived).toMatchObject({ x: home.seat.x, y: home.seat.y, mode: 'seated' })
+    })
+
+    it('goes on to a place from that chair the same way', () => {
+      const path = pathTo(grid, seatedAt(chair.seat), chair, bench) as Point2[]
+      expect(path.slice(0, 2)).toEqual([chair.seat, chair.exit])
+      expect(path.at(-1)).toEqual(bench)
+    })
+
+    it('does not use the chair when they are standing, only where they are', () => {
+      const away = standingAt(bench, 2)
+      expect(pathHome(grid, away, home, chair)).toEqual(pathHome(grid, away, home))
+    })
   })
 
   it('takes a sensible time: a few seconds across the office, not minutes', () => {

@@ -117,11 +117,20 @@ export function pathTo(grid: NavGrid, walker: Walker, home: Home, target: Point2
   return rest ? [...lead, ...rest.slice(1)] : null
 }
 
-/** The way for `walker` back to their seat, ending with sitting down. Null if there is no way. */
-export function pathHome(grid: NavGrid, walker: Walker, home: Home): Point2[] | null {
-  const here = { x: walker.x, y: walker.y }
-  const rest = findPath(grid, here, home.exit)
-  return rest ? [...rest, home.seat] : null
+/**
+ * The way for `walker` back to their seat, ending with sitting down. `chair` is the seat they are
+ * in, if it is not their own (a reading desk): they step out of it first. Null if there is no way.
+ */
+export function pathHome(
+  grid: NavGrid,
+  walker: Walker,
+  home: Home,
+  chair: Home = home,
+): Point2[] | null {
+  const lead: Point2[] =
+    walker.mode === 'seated' ? [chair.seat, chair.exit] : [{ x: walker.x, y: walker.y }]
+  const rest = findPath(grid, lead[lead.length - 1] as Point2, home.exit)
+  return rest ? [...lead, ...rest.slice(1), home.seat] : null
 }
 
 /** How far through a leg swing they are, 0 to 1, for drawing legs and arms. */
