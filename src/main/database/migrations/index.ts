@@ -12,6 +12,7 @@ import { reviews } from './0010_reviews'
 import { appearance } from './0011_appearance'
 import { roles } from './0012_roles'
 import { departments } from './0013_departments'
+import { officeSettings } from './0014_office_settings'
 
 /** Ordered list of every migration. Append new ones; never edit or reorder old ones. */
 export const MIGRATIONS: readonly Migration[] = [
@@ -28,4 +29,5 @@ export const MIGRATIONS: readonly Migration[] = [
   appearance,
   roles,
   departments,
+  officeSettings,
 ]

@@ -24,6 +24,9 @@ export const IPC = {
   departmentsUpdate: 'shokuba:departments:update',
   departmentsArchive: 'shokuba:departments:archive',
 
+  officeGet: 'shokuba:office:get',
+  officeSave: 'shokuba:office:save',
+
   agentsSnapshot: 'shokuba:agents:snapshot',
   agentsStart: 'shokuba:agents:start',
   agentsStop: 'shokuba:agents:stop',

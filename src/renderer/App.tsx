@@ -5,6 +5,7 @@ import { EmployeeDialog } from './components/EmployeeDialog'
 import { EventDock } from './components/EventDock'
 import { MessagesPanel } from './components/MessagesPanel'
 import { MissionsPanel } from './components/MissionsPanel'
+import { OfficeDialog } from './components/OfficeDialog'
 import { OfficeView } from './components/OfficeView'
 import { Roster } from './components/Roster'
 import { RolesDialog } from './components/RolesDialog'
@@ -29,6 +30,7 @@ export function App() {
 
   const [rolesOpen, setRolesOpen] = useState(false)
   const [departmentsOpen, setDepartmentsOpen] = useState(false)
+  const [officeOpen, setOfficeOpen] = useState(false)
 
   useEffect(() => connect(), [connect])
 
@@ -80,7 +82,7 @@ export function App() {
       <main className="workspace">
         <div className="left">
           <section className="panel office-panel" aria-label="Office">
-            <OfficeView onNew={openNew} />
+            <OfficeView onNew={openNew} onCustomise={() => setOfficeOpen(true)} />
           </section>
           <Roster
             onNew={openNew}
@@ -151,6 +153,7 @@ export function App() {
         onEditDepartments={() => setDepartmentsOpen(true)}
       />
       <DepartmentsDialog open={departmentsOpen} onClose={() => setDepartmentsOpen(false)} />
+      <OfficeDialog open={officeOpen} onClose={() => setOfficeOpen(false)} />
       <RolesDialog open={rolesOpen} onClose={() => setRolesOpen(false)} />
     </div>
   )

@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
+import { DEFAULT_OFFICE_SETTINGS } from '../office'
 import { IPC } from './channels'
 import {
   DepartmentCreateRequestSchema,
   DepartmentIdRequestSchema,
   DepartmentUpdateRequestSchema,
+  OfficeSaveRequestSchema,
   RoleCreateRequestSchema,
   RoleIdRequestSchema,
   RoleUpdateRequestSchema,
@@ -99,6 +101,27 @@ describe('the department requests', () => {
       { departmentId: 'd', patch: { id: 'x' } },
     ]) {
       expect(DepartmentUpdateRequestSchema.safeParse(bad).success, JSON.stringify(bad)).toBe(false)
+    }
+  })
+})
+
+describe('the office requests', () => {
+  it('have a channel to read and one to save', () => {
+    expect([IPC.officeGet, IPC.officeSave].sort()).toEqual([
+      'shokuba:office:get',
+      'shokuba:office:save',
+    ])
+  })
+
+  it('save exactly what the office settings are, and nothing else', () => {
+    expect(OfficeSaveRequestSchema.safeParse(DEFAULT_OFFICE_SETTINGS).success).toBe(true)
+    for (const bad of [
+      {},
+      null,
+      { ...DEFAULT_OFFICE_SETTINGS, wall: '#fff' },
+      { ...DEFAULT_OFFICE_SETTINGS, x: 1 },
+    ]) {
+      expect(OfficeSaveRequestSchema.safeParse(bad).success, JSON.stringify(bad)).toBe(false)
     }
   })
 })

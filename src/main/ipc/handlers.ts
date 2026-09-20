@@ -16,6 +16,7 @@ import {
   MissionCreateRequestSchema,
   MissionIdRequestSchema,
   MissionUpdateRequestSchema,
+  OfficeSaveRequestSchema,
   RepoRootRequestSchema,
   RoleCreateRequestSchema,
   RoleIdRequestSchema,
@@ -112,6 +113,11 @@ export function registerIpc(
       })),
     )
   })
+
+  handle(IPC.officeGet, z.undefined(), trusted, () => services.office.get())
+  handle(IPC.officeSave, OfficeSaveRequestSchema, trusted, (settings) =>
+    services.office.save(settings),
+  )
 
   handle(IPC.departmentsList, z.undefined(), trusted, () => ({
     departments: services.departments.list(),

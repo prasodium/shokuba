@@ -4,6 +4,7 @@ import { flightFor } from '../office/handoffs'
 import { readLifeSetting, writeLifeSetting } from '../office/lifeSetting'
 import { MAX_VISIBLE_EMPLOYEES } from '../office/map'
 import { OfficeScene, type CameraState, type SceneEmployee } from '../office/scene'
+import { styleOf } from '../office/style'
 import { notesFor } from '../office/talk'
 import { useDepartments } from '../store/departments'
 import { useEvents } from '../store/events'
@@ -11,6 +12,7 @@ import { onLiveEvent } from '../store/live'
 import { useMessages } from '../store/messages'
 import { useMissions } from '../store/missions'
 import { useOffice } from '../store/office'
+import { useOfficeSettings } from '../store/officeSettings'
 import { useOfficeSignals } from '../store/work'
 
 /**
@@ -45,7 +47,7 @@ function browserStorage(): Storage | undefined {
  * exception: simulated office life (tea and snack breaks while an agent is idle), which has its own
  * switch.
  */
-export function OfficeView({ onNew }: { onNew(): void }) {
+export function OfficeView({ onNew, onCustomise }: { onNew(): void; onCustomise(): void }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const [scene, setScene] = useState<OfficeScene | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
@@ -104,6 +106,10 @@ export function OfficeView({ onNew }: { onNew(): void }) {
     [employees],
   )
 
+  const settings = useOfficeSettings((s) => s.settings)
+  const style = useMemo(() => styleOf(settings), [settings])
+  useEffect(() => scene?.setStyle(style), [scene, style])
+
   const departments = useDepartments((s) => s.departments)
   // The departments first, so the seating knows them when the employees arrive.
   useEffect(() => scene?.setDepartments(departments), [scene, departments])
@@ -151,6 +157,7 @@ export function OfficeView({ onNew }: { onNew(): void }) {
           if (scene?.handleKey(event.key)) event.preventDefault()
         }}
       />
+      {!failure && style.title !== '' && <div className="office-title">{style.title}</div>}
       {!failure && (
         <div className="office-controls" role="toolbar" aria-label="Office view">
           <button
@@ -208,6 +215,15 @@ export function OfficeView({ onNew }: { onNew(): void }) {
             }}
           >
             Office life
+          </button>
+          <button
+            type="button"
+            className="office-control"
+            title="Change the office's colours, names and decor"
+            disabled={!scene}
+            onClick={onCustomise}
+          >
+            Customise
           </button>
         </div>
       )}

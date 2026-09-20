@@ -10,6 +10,7 @@ import {
   type PermissionMode,
 } from '../employees'
 import type { ShokubaEvent } from '../events/schema'
+import { OfficeSettingsSchema, type OfficeSettings } from '../office'
 import {
   DepartmentInputSchema,
   DepartmentUpdateSchema,
@@ -80,6 +81,7 @@ export const EmployeeUpdateRequestSchema = z.strictObject({
   employeeId,
   patch: EmployeeUpdateSchema,
 })
+export const OfficeSaveRequestSchema = OfficeSettingsSchema
 const departmentId = z.string().min(1).max(200)
 export const DepartmentIdRequestSchema = z.strictObject({ departmentId })
 export const DepartmentCreateRequestSchema = DepartmentInputSchema
@@ -202,6 +204,12 @@ export interface ShokubaApi {
     create(input: EmployeeInput): Promise<Employee>
     update(employeeId: string, patch: EmployeeUpdate): Promise<Employee>
     archive(employeeId: string): Promise<void>
+  }
+  office: {
+    /** How the office is dressed: its name, floors, walls, windows, plants and place names. */
+    get(): Promise<OfficeSettings>
+    /** Replace it. The floor plan itself cannot be changed. */
+    save(settings: OfficeSettings): Promise<OfficeSettings>
   }
   departments: {
     /** Every department, in the order made, and how many people are in each. */

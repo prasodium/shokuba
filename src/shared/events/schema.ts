@@ -119,6 +119,9 @@ export const EventInputSchema = z.discriminatedUnion('type', [
     z.strictObject({ departmentId: id, fields: z.array(z.string().max(50)) }),
   ),
 
+  // The office was dressed differently. Only which parts changed is recorded, never the names.
+  event('office.updated', z.strictObject({ fields: z.array(z.string().max(50)) })),
+
   // Missions and tasks. `missionId` / `taskId` in the envelope let the log be filtered by either.
   event('mission.created', z.strictObject({ missionId: id, title: z.string().max(200) })),
   event('mission.updated', z.strictObject({ missionId: id, fields: z.array(z.string().max(50)) })),

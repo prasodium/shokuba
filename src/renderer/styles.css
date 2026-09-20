@@ -1647,3 +1647,63 @@ h4 {
   box-shadow: none;
   border: 1px solid var(--border);
 }
+
+.office-floors {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+}
+.office-floor {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.office-floor-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.office-floor-pick select {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.office-floor-swatch {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+.office-names {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+}
+.office-title {
+  position: absolute;
+  left: 14px;
+  top: 12px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgb(20 17 15 / 0.72);
+  color: #f3ead8;
+  font-size: 13px;
+  font-weight: 600;
+  pointer-events: none;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 720px) {
+  .office-floors,
+  .office-names {
+    grid-template-columns: 1fr;
+  }
+}

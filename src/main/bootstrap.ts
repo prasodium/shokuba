@@ -8,6 +8,7 @@ import { EventBus } from './events/bus'
 import { EventLog } from './events/log'
 import { DepartmentService } from './departments/service'
 import { EventStore } from './events/store'
+import { OfficeService } from './office/service'
 import { RoleService } from './roles/service'
 import { createLogger, describeError, type Logger } from './logging/logger'
 import type { PlatformId } from './platform'
@@ -29,6 +30,8 @@ export interface Services {
   roles: RoleService
   /** Departments: named, coloured groups of people. */
   departments: DepartmentService
+  /** How the office is dressed: name, floors, walls, windows, plants, place names. */
+  office: OfficeService
   logger: Logger
   schemaVersion: number
   /** Publishes `app.stopping` and closes the database. Safe to call once. */
@@ -66,6 +69,7 @@ export function createServices(options: ServicesOptions): Services {
   const audit = new AuditLog(db)
   const roles = new RoleService({ db, events })
   const departments = new DepartmentService({ db, events })
+  const office = new OfficeService({ db, events })
 
   events.publish({
     type: 'app.started',
@@ -86,6 +90,7 @@ export function createServices(options: ServicesOptions): Services {
     audit,
     roles,
     departments,
+    office,
     logger,
     schemaVersion,
     close() {

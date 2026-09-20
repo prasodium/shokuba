@@ -182,7 +182,7 @@ describe('the departments migration', () => {
       `INSERT INTO employees (id, name, role, provider_id, working_directory, created_at, updated_at)
        VALUES ('e1', 'Ada', 'Engineer', 'mock', '/w', 't', 't')`,
     ).run()
-    expect(migrate(db, MIGRATIONS).applied).toEqual([13])
+    expect(migrate(db, MIGRATIONS.slice(0, 13)).applied).toEqual([13])
     expect(db.prepare('SELECT department_id AS d FROM employees WHERE id = ?').get('e1')).toEqual({
       d: null,
     })
@@ -200,6 +200,21 @@ describe('the departments migration', () => {
            VALUES ('e', 'x', 'y', 'mock', '/w', 'nope', 't', 't')`,
         )
         .run(),
+    ).toThrow()
+  })
+})
+
+describe('the office settings migration', () => {
+  it('makes an empty table for the one row, and allows only one', () => {
+    const db = memory()
+    migrate(db, MIGRATIONS)
+    expect(db.prepare('SELECT COUNT(*) AS n FROM office_settings').get()).toEqual({ n: 0 })
+    db.prepare("INSERT INTO office_settings (id, data, updated_at) VALUES (1, '{}', 't')").run()
+    expect(() =>
+      db.prepare("INSERT INTO office_settings (id, data, updated_at) VALUES (2, '{}', 't')").run(),
+    ).toThrow()
+    expect(() =>
+      db.prepare("INSERT INTO office_settings (id, data, updated_at) VALUES (1, '{}', 't')").run(),
     ).toThrow()
   })
 })

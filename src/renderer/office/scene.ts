@@ -3,6 +3,7 @@ import 'pixi.js/unsafe-eval'
 import { Application, Container, Graphics, Polygon, Text, type TextOptions } from 'pixi.js'
 import type { AgentView } from '@shared/agents/view'
 import { sameAppearance, type Appearance } from '@shared/appearance'
+import type { NameKey } from '@shared/office'
 import { bubbleFor, type BubbleModel, type Trip } from './bubble'
 import { Director, type Assignment, type Subject } from './director'
 import {
@@ -79,11 +80,11 @@ import {
   type Point2,
   type Rect,
   type Room,
-  type RoomKind,
 } from './map'
 import { buildNavGrid, reachableFrom, seatExit, type NavGrid } from './nav'
 import { LIFE_KINDS, Life, speaker, type Outing } from './life'
 import { NoteBoard, type Note } from './talk'
+import { DEFAULT_STYLE, PLACE_NAME_KEY, ROOM_NAME_KEY, type OfficeStyle } from './style'
 import { LED_COLORS, poseFor, type Pose } from './pose'
 import {
   advance,
@@ -151,19 +152,6 @@ const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'
 const ACCENT = 0xe8893a
 const SURFACE = 0x1e1a17
 
-const FLOOR_A = 0x7a5c44
-const FLOOR_B = 0x86664c
-/** The two tones of each kind of room's floor, so a room can be told from the next. */
-const FLOORS: Record<RoomKind, readonly [number, number]> = {
-  open: [FLOOR_A, FLOOR_B],
-  pantry: [0xcfc6b0, 0xdbd2bc],
-  cabin: [0x5f6d64, 0x69776e],
-  yours: [0x6b5f72, 0x756a7c],
-  lab: [0x6f6a5c, 0x7b7566],
-  meeting: [0x55627a, 0x5f6d86],
-  reading: [0x4f5a6e, 0x596479],
-}
-const WALL = 0xeadcbf
 const SLAB = 0x4a382b
 /** How far the pointer must move before a press becomes a drag rather than a click. */
 const DRAG_THRESHOLD = 4
@@ -196,7 +184,7 @@ const SIDE_WINDOWS: ReadonlyArray<{ from: number; to: number }> = [
 ]
 
 /** The floor, the tall walls on the two far sides, and their windows. Drawn when the plan changes. */
-function drawFloor(g: Graphics, map: OfficeMap): void {
+function drawFloor(g: Graphics, map: OfficeMap, style: OfficeStyle): void {
   for (const room of map.rooms) {
     const { x, y, w, d } = room.rect
     // Slab edge, so the room has thickness where it meets the void.
@@ -204,7 +192,7 @@ function drawFloor(g: Graphics, map: OfficeMap): void {
   }
   for (const room of map.rooms) {
     const { x, y, w, d } = room.rect
-    const [a, b] = FLOORS[room.kind]
+    const [a, b] = style.floors[room.kind]
     for (let tx = 0; tx < w; tx++) {
       for (let ty = 0; ty < d; ty++) {
         g.poly(tilePolygon(x + tx, y + ty)).fill((tx + ty) % 2 === 0 ? a : b)
@@ -213,13 +201,14 @@ function drawFloor(g: Graphics, map: OfficeMap): void {
   }
 
   const [back, side] = map.outerWalls
-  if (back) drawBox(g, { ...back, z: 0, h: WALL_HEIGHT, color: WALL })
-  if (side) drawBox(g, { ...side, z: 0, h: WALL_HEIGHT, color: WALL })
+  if (back) drawBox(g, { ...back, z: 0, h: WALL_HEIGHT, color: style.wall })
+  if (side) drawBox(g, { ...side, z: 0, h: WALL_HEIGHT, color: style.wall })
   // Skirting boards.
   if (back) drawBox(g, { x: 0, y: 0, z: 0, w: back.w, d: 0.05, h: 0.18, color: 0x8b6f52 })
   if (side) drawBox(g, { x: 0, y: 0, z: 0, w: 0.05, d: side.d, h: 0.18, color: 0x8b6f52 })
 
-  // Windows, laid on the inner wall faces.
+  // Windows, laid on the inner wall faces, unless the office has none.
+  if (!style.windows) return
   for (const win of BACK_WINDOWS) {
     if (back && win.to <= back.w) {
       drawBox(g, {
@@ -299,6 +288,8 @@ class PlaceLabel {
     readonly kind: PlaceKind | null = null,
     /** A colour to show as a dot before the name, for a department's plate. */
     private readonly dot: number | null = null,
+    /** Which name the person can change it by, if it is one of the shared places'. */
+    readonly nameKey: NameKey | null = null,
   ) {
     this.text = text
     this.label = new Text({
@@ -806,6 +797,9 @@ export class OfficeScene {
   /** Things that belong to the current plan, dropped and rebuilt when it changes. */
   private statics: Container[] = []
   private placeLabels: PlaceLabel[] = []
+  /** How the office is dressed: floors, walls, windows, plants and the names of places. */
+  private style: OfficeStyle = DEFAULT_STYLE
+  private plantViews: Container[] = []
   /** The departments, and what was last given to seat, so a change to either re-seats everyone. */
   private departments: readonly SceneDepartment[] = []
   private lastEmployees: readonly SceneEmployee[] = []
@@ -937,6 +931,30 @@ export class OfficeScene {
     })
     host.appendChild(app.canvas)
     return new OfficeScene(app, host, callbacks)
+  }
+
+  // ---------- how the office is dressed ----------
+
+  /** Dress the office: floors, walls, windows, plants, and what the shared places are called. */
+  setStyle(style: OfficeStyle): void {
+    this.style = style
+    this.floor.clear()
+    drawFloor(this.floor, this.map, style)
+    this.refreshPlants()
+    this.drawSignals()
+  }
+
+  /** The plants, or none if the office has none. They stand on the floor like any furniture. */
+  private refreshPlants(): void {
+    for (const view of this.plantViews) view.destroy({ children: true })
+    this.plantViews = []
+    if (!this.style.plants) return
+    for (const prop of this.map.props) {
+      const view = this.boxesView(plantBoxes(prop.footprint))
+      view.zIndex = depthOf(prop.footprint)
+      this.items.addChild(view)
+      this.plantViews.push(view)
+    }
   }
 
   // ---------- who is in the office ----------
@@ -1293,7 +1311,7 @@ export class OfficeScene {
     this.placeLabels = []
 
     this.floor.clear()
-    drawFloor(this.floor, map)
+    drawFloor(this.floor, map, this.style)
 
     for (const run of groupWalls(map.walls)) {
       const boxes = run.glass
@@ -1301,9 +1319,7 @@ export class OfficeScene {
         : [partitionBox(run.rect), partitionCap(run.rect)]
       this.addStatic(this.boxesView(boxes), run.rect)
     }
-    for (const prop of map.props) {
-      this.addStatic(this.boxesView(plantBoxes(prop.footprint)), prop.footprint)
-    }
+    this.refreshPlants()
     for (const place of map.places) {
       if (place.kind === 'board') {
         this.addStatic(this.boxesView(boardBoxes(place.footprint)), place.footprint)
@@ -1338,23 +1354,25 @@ export class OfficeScene {
 
     // One name tag per name: the places that have one, and the rooms that are named (the two reading
     // desks share one).
-    const named = new Set<string>()
+    const named = new Set<NameKey>()
     const tag = (
-      text: string,
+      key: NameKey,
       anchor: { x: number; y: number; z: number },
       kind: PlaceKind | null = null,
     ): void => {
-      if (named.has(text)) return
-      named.add(text)
-      const label = new PlaceLabel(text, anchor, this.resolution, kind)
+      if (named.has(key)) return
+      named.add(key)
+      const label = new PlaceLabel(this.style.names[key], anchor, this.resolution, kind, null, key)
       this.placeLabels.push(label)
       this.overlay.addChild(label.view)
     }
     for (const place of map.places) {
-      if (LABELLED.has(place.kind)) tag(place.label, labelAnchor(place, map.places), place.kind)
+      const key = PLACE_NAME_KEY[place.kind]
+      if (LABELLED.has(place.kind) && key) tag(key, labelAnchor(place, map.places), place.kind)
     }
     for (const r of map.rooms) {
-      if (r.label) tag(r.label, { x: r.rect.x + r.rect.w / 2, y: r.rect.y + 0.5, z: 2.3 })
+      const key = ROOM_NAME_KEY[r.id]
+      if (r.label && key) tag(key, { x: r.rect.x + r.rect.w / 2, y: r.rect.y + 0.5, z: 2.3 })
     }
 
     // Where people can walk in this plan, and who is where in it.
@@ -1415,10 +1433,13 @@ export class OfficeScene {
         }
       }
     }
+    // The places that show the work say it after their name; the rest are just their name.
     for (const label of this.placeLabels) {
-      if (label.kind === 'board') label.setText(boardLabel(board))
-      else if (label.kind === 'inbox') label.setText(inboxLabel(inbox))
-      else if (label.kind === 'qa') label.setText(benchLabel(bench))
+      const names = this.style.names
+      if (label.kind === 'board') label.setText(boardLabel(board, names.board))
+      else if (label.kind === 'inbox') label.setText(inboxLabel(inbox, names.inbox))
+      else if (label.kind === 'qa') label.setText(benchLabel(bench, names.bench))
+      else if (label.nameKey) label.setText(names[label.nameKey])
     }
   }
 

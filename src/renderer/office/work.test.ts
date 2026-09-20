@@ -392,3 +392,21 @@ describe('the name tags', () => {
     expect(benchLabel('failed')).toBe('QA bench · checks failed')
   })
 })
+
+describe('the name tags, under another name', () => {
+  it('use the name they are given, and say the same things after it', () => {
+    const board = { cards: [], waiting: 2, blocked: 0, done: 1 }
+    expect(boardLabel(board, 'Wall of tasks')).toBe('Wall of tasks · 2 waiting · 1 done')
+    expect(boardLabel({ ...board, waiting: 0, done: 0 }, 'Wall of tasks')).toBe('Wall of tasks')
+    expect(inboxLabel({ cards: [], count: 3 }, 'Desk')).toBe('Desk · 3 waiting')
+    expect(inboxLabel({ cards: [], count: 0 }, 'Desk')).toBe('Desk')
+    expect(benchLabel('running', 'Test rig')).toBe('Test rig · checks running')
+    expect(benchLabel('dark', 'Test rig')).toBe('Test rig')
+  })
+
+  it('are Shokuba’s own names when none is given', () => {
+    expect(boardLabel({ cards: [], waiting: 0, blocked: 0, done: 0 })).toBe('Mission board')
+    expect(inboxLabel({ cards: [], count: 0 })).toBe('Your inbox')
+    expect(benchLabel('dark')).toBe('QA bench')
+  })
+})

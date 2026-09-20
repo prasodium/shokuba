@@ -202,19 +202,19 @@ export function inboxTint(card: InboxCard): Tint {
 }
 
 /** The name tags of the places that show work, with what they are showing. */
-export function boardLabel(board: OfficeSignals['board']): string {
+export function boardLabel(board: OfficeSignals['board'], name = 'Mission board'): string {
   const parts = [
     board.waiting > 0 ? `${board.waiting} waiting` : '',
     board.blocked > 0 ? `${board.blocked} blocked` : '',
     board.done > 0 ? `${board.done} done` : '',
   ].filter((part) => part !== '')
-  return ['Mission board', ...parts].join(' · ')
+  return [name, ...parts].join(' · ')
 }
 
-export function inboxLabel(inbox: OfficeSignals['inbox']): string {
-  return inbox.count > 0 ? `Your inbox · ${inbox.count} waiting` : 'Your inbox'
+export function inboxLabel(inbox: OfficeSignals['inbox'], name = 'Your inbox'): string {
+  return inbox.count > 0 ? `${name} · ${inbox.count} waiting` : name
 }
 
-export function benchLabel(bench: BenchState): string {
-  return bench === 'dark' ? 'QA bench' : `QA bench · checks ${bench}`
+export function benchLabel(bench: BenchState, name = 'QA bench'): string {
+  return bench === 'dark' ? name : `${name} · checks ${bench}`
 }

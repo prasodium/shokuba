@@ -33,6 +33,10 @@ const api: ShokubaApi = {
     update: (employeeId, patch) => ipcRenderer.invoke(IPC.employeesUpdate, { employeeId, patch }),
     archive: (employeeId) => ipcRenderer.invoke(IPC.employeesArchive, { employeeId }),
   },
+  office: {
+    get: () => ipcRenderer.invoke(IPC.officeGet),
+    save: (settings) => ipcRenderer.invoke(IPC.officeSave, settings),
+  },
   departments: {
     list: () => ipcRenderer.invoke(IPC.departmentsList),
     create: (input) => ipcRenderer.invoke(IPC.departmentsCreate, input),
