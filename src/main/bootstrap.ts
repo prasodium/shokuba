@@ -6,6 +6,7 @@ import { migrate } from './database/migrator'
 import { AuditLog } from './events/audit'
 import { EventBus } from './events/bus'
 import { EventLog } from './events/log'
+import { DepartmentService } from './departments/service'
 import { EventStore } from './events/store'
 import { RoleService } from './roles/service'
 import { createLogger, describeError, type Logger } from './logging/logger'
@@ -26,6 +27,8 @@ export interface Services {
   audit: AuditLog
   /** Roles: starting points for hiring, which can be edited. */
   roles: RoleService
+  /** Departments: named, coloured groups of people. */
+  departments: DepartmentService
   logger: Logger
   schemaVersion: number
   /** Publishes `app.stopping` and closes the database. Safe to call once. */
@@ -62,6 +65,7 @@ export function createServices(options: ServicesOptions): Services {
   const events = new EventStore(new EventLog(db), bus)
   const audit = new AuditLog(db)
   const roles = new RoleService({ db, events })
+  const departments = new DepartmentService({ db, events })
 
   events.publish({
     type: 'app.started',
@@ -81,6 +85,7 @@ export function createServices(options: ServicesOptions): Services {
     events,
     audit,
     roles,
+    departments,
     logger,
     schemaVersion,
     close() {

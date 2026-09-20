@@ -173,3 +173,33 @@ describe('the roles migration', () => {
     ).toThrow()
   })
 })
+
+describe('the departments migration', () => {
+  it('adds the table and leaves every employee hired before it with no department', () => {
+    const db = memory()
+    migrate(db, MIGRATIONS.slice(0, 12))
+    db.prepare(
+      `INSERT INTO employees (id, name, role, provider_id, working_directory, created_at, updated_at)
+       VALUES ('e1', 'Ada', 'Engineer', 'mock', '/w', 't', 't')`,
+    ).run()
+    expect(migrate(db, MIGRATIONS).applied).toEqual([13])
+    expect(db.prepare('SELECT department_id AS d FROM employees WHERE id = ?').get('e1')).toEqual({
+      d: null,
+    })
+    expect(db.prepare('SELECT COUNT(*) AS n FROM departments').get()).toEqual({ n: 0 })
+  })
+
+  it('will not let an employee be put in a department that does not exist', () => {
+    const db = memory()
+    migrate(db, MIGRATIONS)
+    db.pragma('foreign_keys = ON')
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO employees (id, name, role, provider_id, working_directory, department_id, created_at, updated_at)
+           VALUES ('e', 'x', 'y', 'mock', '/w', 'nope', 't', 't')`,
+        )
+        .run(),
+    ).toThrow()
+  })
+})

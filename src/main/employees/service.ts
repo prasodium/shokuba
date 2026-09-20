@@ -42,6 +42,7 @@ interface Row {
   permission_mode: string
   color: string
   appearance: string
+  department_id: string | null
   is_manager: number
   reports_to: string | null
   instructions: string | null
@@ -61,6 +62,7 @@ const COLUMNS: Record<keyof EmployeeUpdate, string> = {
   permissionMode: 'permission_mode',
   color: 'color',
   appearance: 'appearance',
+  departmentId: 'department_id',
   isManager: 'is_manager',
   reportsTo: 'reports_to',
   instructions: 'instructions',
@@ -107,6 +109,7 @@ export class EmployeeService {
     const input = parsed.data
 
     this.requireProvider(input.providerId)
+    this.requireDepartment(input.departmentId)
     const workingDirectory = await this.resolveDirectory(input.workingDirectory)
     const reportsTo = input.reportsTo ?? null
     this.checkTeam(undefined, input.isManager, reportsTo)
@@ -117,9 +120,9 @@ export class EmployeeService {
       .prepare(
         `INSERT INTO employees
            (id, name, role, provider_id, working_directory, model, permission_mode, color,
-            appearance, is_manager, reports_to, instructions, created_at, updated_at)
+            appearance, department_id, is_manager, reports_to, instructions, created_at, updated_at)
          VALUES (@id, @name, @role, @providerId, @workingDirectory, @model, @permissionMode, @color,
-                 @appearance, @isManager, @reportsTo, @instructions, @ts, @ts)`,
+                 @appearance, @departmentId, @isManager, @reportsTo, @instructions, @ts, @ts)`,
       )
       .run({
         id,
@@ -131,6 +134,7 @@ export class EmployeeService {
         permissionMode: input.permissionMode,
         color: input.color,
         appearance: JSON.stringify(input.appearance),
+        departmentId: input.departmentId ?? null,
         isManager: input.isManager ? 1 : 0,
         reportsTo,
         instructions: input.instructions || null,
@@ -173,6 +177,7 @@ export class EmployeeService {
       )
     }
     if (patch.providerId !== undefined) this.requireProvider(patch.providerId)
+    this.requireDepartment(patch.departmentId)
     if (patch.workingDirectory !== undefined) {
       patch.workingDirectory = await this.resolveDirectory(patch.workingDirectory)
     }
@@ -293,6 +298,15 @@ export class EmployeeService {
     return employee
   }
 
+  /** A department, if one is named, must be one that exists and has not been removed. */
+  private requireDepartment(departmentId: string | null | undefined): void {
+    if (departmentId === null || departmentId === undefined) return
+    const found = this.deps.db
+      .prepare('SELECT 1 AS found FROM departments WHERE id = ? AND archived_at IS NULL')
+      .get(departmentId)
+    if (!found) throw new EmployeeError('invalid', 'That department does not exist')
+  }
+
   private requireProvider(providerId: string): void {
     if (!this.deps.providers.get(providerId)) {
       throw new EmployeeError('unknown-provider', `Unknown provider "${providerId}"`)
@@ -342,6 +356,7 @@ function toEmployee(row: Row): Employee {
     permissionMode: row.permission_mode as PermissionMode,
     color: row.color,
     appearance: parseAppearance(row.appearance),
+    departmentId: row.department_id,
     isManager: row.is_manager === 1,
     reportsTo: row.reports_to,
     instructions: row.instructions,

@@ -19,6 +19,11 @@ export const IPC = {
   rolesArchive: 'shokuba:roles:archive',
   rolesReset: 'shokuba:roles:reset',
 
+  departmentsList: 'shokuba:departments:list',
+  departmentsCreate: 'shokuba:departments:create',
+  departmentsUpdate: 'shokuba:departments:update',
+  departmentsArchive: 'shokuba:departments:archive',
+
   agentsSnapshot: 'shokuba:agents:snapshot',
   agentsStart: 'shokuba:agents:start',
   agentsStop: 'shokuba:agents:stop',

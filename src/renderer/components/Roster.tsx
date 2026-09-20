@@ -1,5 +1,6 @@
 import type { Employee } from '@shared/employees'
-import { orderTeam } from '../lib/team'
+import { groupByDepartment } from '../lib/departments'
+import { useDepartments } from '../store/departments'
 import { useMissions } from '../store/missions'
 import { useOffice } from '../store/office'
 import { BreakerButtons, BreakerChip } from './BreakerChip'
@@ -14,10 +15,13 @@ interface Props {
   onNew(): void
   onEdit(employee: Employee): void
   onRoles(): void
+  onDepartments(): void
 }
 
-export function Roster({ onNew, onEdit, onRoles }: Props) {
+export function Roster({ onNew, onEdit, onRoles, onDepartments }: Props) {
   const employees = useOffice((s) => s.employees)
+  const departments = useDepartments((s) => s.departments)
+  const sections = groupByDepartment(employees, departments)
   const views = useOffice((s) => s.views)
   const providers = useOffice((s) => s.providers)
   const selectedId = useOffice((s) => s.selectedId)
@@ -33,6 +37,9 @@ export function Roster({ onNew, onEdit, onRoles }: Props) {
       <div className="panel-head">
         <h2>Employees</h2>
         <div className="row">
+          <button type="button" className="btn" onClick={onDepartments}>
+            Departments…
+          </button>
           <button type="button" className="btn" onClick={onRoles}>
             Roles…
           </button>
@@ -54,92 +61,114 @@ export function Roster({ onNew, onEdit, onRoles }: Props) {
         </div>
       ) : (
         <ul className="cards">
-          {orderTeam(employees).map(({ employee, manager }) => {
-            const view = views[employee.id]
-            const running = view?.pid != null
-            const provider = providers.find((p) => p.id === employee.providerId)
-            return (
-              <li
-                key={employee.id}
-                className={`card ${employee.id === selectedId ? 'is-selected' : ''} ${manager ? 'is-report' : ''}`}
-                aria-current={employee.id === selectedId}
-              >
-                <button
-                  type="button"
-                  className="card-main"
-                  onClick={() => select(employee.id)}
-                  aria-label={`Select ${employee.name}`}
+          {sections.flatMap((section) => [
+            ...(sections.length > 1 || section.department
+              ? [
+                  <li
+                    key={`dept-${section.department?.id ?? 'none'}`}
+                    className="roster-department"
+                  >
+                    <span
+                      className="swatch"
+                      style={{ background: section.department?.color ?? 'transparent' }}
+                      aria-hidden="true"
+                    />
+                    <strong>{section.department?.name ?? 'No department'}</strong>
+                    <span className="muted">{section.rows.length}</span>
+                  </li>,
+                ]
+              : []),
+            ...section.rows.map(({ employee, manager }) => {
+              const view = views[employee.id]
+              const running = view?.pid != null
+              const provider = providers.find((p) => p.id === employee.providerId)
+              return (
+                <li
+                  key={employee.id}
+                  className={`card ${employee.id === selectedId ? 'is-selected' : ''} ${manager ? 'is-report' : ''}`}
+                  aria-current={employee.id === selectedId}
                 >
-                  <span
-                    className="swatch"
-                    style={{ background: employee.color }}
-                    aria-hidden="true"
-                  />
-                  <span className="card-text">
-                    <span className="card-title">
-                      {employee.name} <span className="muted">· {employee.role}</span>
-                      {employee.isManager && <span className="tag-manager">Manager</span>}
-                    </span>
-                    <span className="card-sub" title={employee.workingDirectory}>
-                      {provider?.displayName ?? employee.providerId} ·{' '}
-                      {folderName(employee.workingDirectory)}
-                    </span>
-                    {manager && (
-                      <span
-                        className="card-sub"
-                        title="Asks their manager rather than messaging you"
-                      >
-                        reports to {manager.name}
+                  <button
+                    type="button"
+                    className="card-main"
+                    onClick={() => select(employee.id)}
+                    aria-label={`Select ${employee.name}`}
+                  >
+                    <span
+                      className="swatch"
+                      style={{ background: employee.color }}
+                      aria-hidden="true"
+                    />
+                    <span className="card-text">
+                      <span className="card-title">
+                        {employee.name} <span className="muted">· {employee.role}</span>
+                        {employee.isManager && <span className="tag-manager">Manager</span>}
                       </span>
+                      <span className="card-sub" title={employee.workingDirectory}>
+                        {provider?.displayName ?? employee.providerId} ·{' '}
+                        {folderName(employee.workingDirectory)}
+                      </span>
+                      {manager && (
+                        <span
+                          className="card-sub"
+                          title="Asks their manager rather than messaging you"
+                        >
+                          reports to {manager.name}
+                        </span>
+                      )}
+                      {(() => {
+                        const working = allTasks.find(
+                          (t) => t.assigneeId === employee.id && t.status === 'in_progress',
+                        )
+                        return working ? <span className="card-task">▸ {working.title}</span> : null
+                      })()}
+                      <BreakerChip view={view} />
+                    </span>
+                    <StatePill view={view} />
+                  </button>
+                  <div className="card-actions">
+                    {running ? (
+                      <>
+                        <button
+                          type="button"
+                          className="btn"
+                          onClick={() => void interruptAgent(employee.id)}
+                        >
+                          Interrupt
+                        </button>
+                        <BreakerButtons employeeId={employee.id} view={view} />
+                        <button
+                          type="button"
+                          className="btn"
+                          onClick={() => void stopAgent(employee.id)}
+                        >
+                          Stop
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={() => {
+                          select(employee.id)
+                          void startAgent(employee.id)
+                        }}
+                      >
+                        Start
+                      </button>
                     )}
-                    {(() => {
-                      const working = allTasks.find(
-                        (t) => t.assigneeId === employee.id && t.status === 'in_progress',
-                      )
-                      return working ? <span className="card-task">▸ {working.title}</span> : null
-                    })()}
-                    <BreakerChip view={view} />
-                  </span>
-                  <StatePill view={view} />
-                </button>
-                <div className="card-actions">
-                  {running ? (
-                    <>
-                      <button
-                        type="button"
-                        className="btn"
-                        onClick={() => void interruptAgent(employee.id)}
-                      >
-                        Interrupt
-                      </button>
-                      <BreakerButtons employeeId={employee.id} view={view} />
-                      <button
-                        type="button"
-                        className="btn"
-                        onClick={() => void stopAgent(employee.id)}
-                      >
-                        Stop
-                      </button>
-                    </>
-                  ) : (
                     <button
                       type="button"
-                      className="btn btn-primary"
-                      onClick={() => {
-                        select(employee.id)
-                        void startAgent(employee.id)
-                      }}
+                      className="btn btn-ghost"
+                      onClick={() => onEdit(employee)}
                     >
-                      Start
+                      Edit
                     </button>
-                  )}
-                  <button type="button" className="btn btn-ghost" onClick={() => onEdit(employee)}>
-                    Edit
-                  </button>
-                </div>
-              </li>
-            )
-          })}
+                  </div>
+                </li>
+              )
+            }),
+          ])}
         </ul>
       )}
     </section>

@@ -6,6 +6,7 @@ import {
   type PermissionMode,
 } from '@shared/employees'
 import { DEFAULT_APPEARANCE, type Appearance } from '@shared/appearance'
+import { useDepartments } from '../store/departments'
 import { useOffice } from '../store/office'
 import { useRoles } from '../store/roles'
 import { CharacterEditor } from './CharacterEditor'
@@ -27,13 +28,16 @@ interface Props {
   onClose(): void
   /** Open the roles editor, so a role can be changed or added without leaving the form. */
   onEditRoles(): void
+  /** Open the departments editor, likewise. */
+  onEditDepartments(): void
 }
 
 /** Create or edit an employee. Validation lives in main; its messages are shown here. */
-export function EmployeeDialog({ open, editing, onClose, onEditRoles }: Props) {
+export function EmployeeDialog({ open, editing, onClose, onEditRoles, onEditDepartments }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const providers = useOffice((s) => s.providers)
   const roles = useRoles((s) => s.roles)
+  const departments = useDepartments((s) => s.departments)
   const employees = useOffice((s) => s.employees)
   const views = useOffice((s) => s.views)
   const info = useOffice((s) => s.info)
@@ -50,6 +54,7 @@ export function EmployeeDialog({ open, editing, onClose, onEditRoles }: Props) {
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('default')
   const [color, setColor] = useState(COLORS[0] as string)
   const [appearance, setAppearance] = useState<Appearance>(DEFAULT_APPEARANCE)
+  const [departmentId, setDepartmentId] = useState('')
   const [isManager, setIsManager] = useState(false)
   const [reportsTo, setReportsTo] = useState('')
   const [instructions, setInstructions] = useState('')
@@ -80,6 +85,7 @@ export function EmployeeDialog({ open, editing, onClose, onEditRoles }: Props) {
       setPermissionMode(editing.permissionMode)
       setColor(editing.color)
       setAppearance(editing.appearance)
+      setDepartmentId(editing.departmentId ?? '')
       setIsManager(editing.isManager)
       setReportsTo(editing.reportsTo ?? '')
       setInstructions(editing.instructions ?? '')
@@ -91,6 +97,7 @@ export function EmployeeDialog({ open, editing, onClose, onEditRoles }: Props) {
       setPermissionMode('default')
       setColor(COLORS[employees.length % COLORS.length] as string)
       setAppearance(DEFAULT_APPEARANCE)
+      setDepartmentId('')
       setIsManager(false)
       setReportsTo('')
       setInstructions('')
@@ -151,6 +158,7 @@ export function EmployeeDialog({ open, editing, onClose, onEditRoles }: Props) {
       role,
       color,
       appearance,
+      departmentId: departmentId || null,
       isManager,
       // A manager reports to no one.
       reportsTo: isManager ? null : reportsTo || null,
@@ -352,6 +360,27 @@ export function EmployeeDialog({ open, editing, onClose, onEditRoles }: Props) {
             placeholder="For example: you write the API and keep changes small."
           />
           <small className="muted">The agent is told this when it starts.</small>
+        </label>
+
+        <label className="field">
+          <span>Department</span>
+          <div className="row">
+            <select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
+              <option value="">No department</option>
+              {departments.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+            <button type="button" className="btn" onClick={onEditDepartments}>
+              Edit departments…
+            </button>
+          </div>
+          <small className="muted">
+            A department’s people sit together in the office, under a plate with its name. It is
+            separate from who reports to whom.
+          </small>
         </label>
 
         <fieldset className="field">

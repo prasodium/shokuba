@@ -326,18 +326,33 @@ export interface Seatable {
   id: string
   isManager?: boolean
   reportsTo?: string | null
+  /** The department they sit with, or none. */
+  departmentId?: string | null
+}
+
+/** A department's people in the open area, and the desks they have. */
+export interface DepartmentBlock {
+  departmentId: string
+  slots: DeskSlot[]
 }
 
 /**
  * Who sits where. A manager takes a cabin (as many as there are), and everyone else takes the open
  * desks in order, with each manager's team together (a manager without a cabin at the head of theirs)
- * and people with no manager after them. The order among equals is the order given. Whoever does not
- * fit is counted, not seated.
+ * and people with no manager after them. The order among equals is the order given.
+ *
+ * Departments come first: each department's people sit together as a block, the departments in the
+ * order given (`departmentOrder`), then everyone with no department, and inside a block the same team
+ * order applies. A block starts on a fresh column of desks when there is room for every department to
+ * do so, so blocks do not share a column; when there is not, people are packed one after another and
+ * nobody loses a desk for the sake of tidiness. With no departments this is exactly the seating above.
+ * Whoever does not fit is counted, not seated.
  */
 export function assignDesks<T extends Seatable>(
   employees: readonly T[],
   map: OfficeMap,
-): { seated: Array<{ employee: T; slot: DeskSlot }>; overflow: number } {
+  departmentOrder: readonly string[] = [],
+): { seated: Array<{ employee: T; slot: DeskSlot }>; overflow: number; blocks: DepartmentBlock[] } {
   const managers = employees.filter((e) => e.isManager === true)
   const inCabins = managers.slice(0, map.cabins.length)
   const inCabin = new Set(inCabins.map((m) => m.id))
@@ -361,9 +376,55 @@ export function assignDesks<T extends Seatable>(
     inOrder.push(e)
   }
 
-  const open = inOrder.slice(0, map.desks.length)
-  open.forEach((employee, i) => seated.push({ employee, slot: map.desks[i] as DeskSlot }))
-  return { seated, overflow: Math.max(0, inOrder.length - map.desks.length) }
+  // Each department's people together, in the order of the departments, with no department last.
+  const rank = new Map(departmentOrder.map((id, index) => [id, index]))
+  const rankOf = (id: string | null): number => (id === null ? 2e9 : (rank.get(id) ?? 1e9))
+  const groups: Array<{ id: string | null; people: T[] }> = []
+  for (const e of inOrder) {
+    const id = e.departmentId ?? null
+    let group = groups.find((g) => g.id === id)
+    if (!group) {
+      group = { id, people: [] }
+      groups.push(group)
+    }
+    group.people.push(e)
+  }
+  groups.sort((a, b) => rankOf(a.id) - rankOf(b.id))
+
+  // Desks come in columns; give each block its own column if every block can have one.
+  const perColumn = Math.max(1, map.desks.filter((d) => d.x === map.desks[0]?.x).length)
+  const columns = groups.reduce((sum, g) => sum + Math.ceil(g.people.length / perColumn), 0)
+  const aligned = columns * perColumn <= map.desks.length
+
+  const blocks: DepartmentBlock[] = []
+  let cursor = 0
+  let placed = 0
+  for (const group of groups) {
+    if (aligned) cursor = Math.ceil(cursor / perColumn) * perColumn
+    const slots: DeskSlot[] = []
+    for (const employee of group.people) {
+      const slot = map.desks[cursor]
+      cursor += 1
+      if (!slot) continue
+      seated.push({ employee, slot })
+      slots.push(slot)
+      placed += 1
+    }
+    if (group.id !== null && slots.length > 0) blocks.push({ departmentId: group.id, slots })
+  }
+  return { seated, overflow: Math.max(0, inOrder.length - placed), blocks }
+}
+
+/**
+ * Where a department's name plate lies: flat on the floor just below its block, as wide as the block.
+ * It is a marking, not furniture, so people walk over it and nothing has to be planned round it.
+ */
+export function departmentPlate(block: DepartmentBlock, map: OfficeMap): Rect {
+  const xs = block.slots.map((slot) => slot.x)
+  const left = Math.min(...xs)
+  const right = Math.max(...xs) + STATION_WIDTH
+  const bottom = Math.max(...map.desks.map((desk) => desk.y)) + STATION_DEPTH
+  return { x: left - 0.1, y: bottom + 0.6, w: right - left + 0.2, d: 0.45 }
 }
 
 /** Whether two rectangles share any floor. Touching edges do not count (nor does rounding error). */

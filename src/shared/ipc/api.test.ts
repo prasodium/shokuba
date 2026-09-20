@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { IPC } from './channels'
-import { RoleCreateRequestSchema, RoleIdRequestSchema, RoleUpdateRequestSchema } from './api'
+import {
+  DepartmentCreateRequestSchema,
+  DepartmentIdRequestSchema,
+  DepartmentUpdateRequestSchema,
+  RoleCreateRequestSchema,
+  RoleIdRequestSchema,
+  RoleUpdateRequestSchema,
+} from './api'
 
 describe('the channels', () => {
   it('are each named once, all inside Shokuba’s own namespace', () => {
@@ -56,6 +63,42 @@ describe('the role requests', () => {
       { roleId: 'r', patch: {}, extra: 1 },
     ]) {
       expect(RoleUpdateRequestSchema.safeParse(bad).success, JSON.stringify(bad)).toBe(false)
+    }
+  })
+})
+
+describe('the department requests', () => {
+  it('give departments a channel for each thing that can be done to one', () => {
+    expect(
+      [
+        IPC.departmentsList,
+        IPC.departmentsCreate,
+        IPC.departmentsUpdate,
+        IPC.departmentsArchive,
+      ].sort(),
+    ).toEqual(['list', 'create', 'update', 'archive'].map((a) => `shokuba:departments:${a}`).sort())
+  })
+
+  it('name a department by id, and nothing else', () => {
+    expect(DepartmentIdRequestSchema.safeParse({ departmentId: 'd' }).success).toBe(true)
+    for (const bad of [{}, { departmentId: '' }, { departmentId: 'd', extra: 1 }]) {
+      expect(DepartmentIdRequestSchema.safeParse(bad).success, JSON.stringify(bad)).toBe(false)
+    }
+  })
+
+  it('create from a name and a colour, and update with a patch by id', () => {
+    expect(DepartmentCreateRequestSchema.parse({ name: 'QA' }).name).toBe('QA')
+    expect(
+      DepartmentUpdateRequestSchema.safeParse({ departmentId: 'd', patch: { color: '#112233' } })
+        .success,
+    ).toBe(true)
+    for (const bad of [
+      { patch: { color: '#112233' } },
+      { departmentId: 'd' },
+      { departmentId: 'd', patch: { color: 'red' } },
+      { departmentId: 'd', patch: { id: 'x' } },
+    ]) {
+      expect(DepartmentUpdateRequestSchema.safeParse(bad).success, JSON.stringify(bad)).toBe(false)
     }
   })
 })

@@ -11,6 +11,13 @@ import {
 } from '../employees'
 import type { ShokubaEvent } from '../events/schema'
 import {
+  DepartmentInputSchema,
+  DepartmentUpdateSchema,
+  type Department,
+  type DepartmentInput,
+  type DepartmentUpdate,
+} from '../departments'
+import {
   RoleInputSchema,
   RoleUpdateSchema,
   type Role,
@@ -53,6 +60,12 @@ import {
   type TaskUpdate,
 } from '../missions'
 
+/** The departments and how many people are in each. */
+export interface DepartmentList {
+  departments: Department[]
+  headcounts: Record<string, number>
+}
+
 export const EventsListRequestSchema = z.strictObject({
   afterSeq: z.number().int().min(0).default(0),
   limit: z.number().int().min(1).max(500).default(100),
@@ -66,6 +79,13 @@ export const EmployeeCreateRequestSchema = EmployeeInputSchema
 export const EmployeeUpdateRequestSchema = z.strictObject({
   employeeId,
   patch: EmployeeUpdateSchema,
+})
+const departmentId = z.string().min(1).max(200)
+export const DepartmentIdRequestSchema = z.strictObject({ departmentId })
+export const DepartmentCreateRequestSchema = DepartmentInputSchema
+export const DepartmentUpdateRequestSchema = z.strictObject({
+  departmentId,
+  patch: DepartmentUpdateSchema,
 })
 const roleId = z.string().min(1).max(200)
 export const RoleIdRequestSchema = z.strictObject({ roleId })
@@ -182,6 +202,14 @@ export interface ShokubaApi {
     create(input: EmployeeInput): Promise<Employee>
     update(employeeId: string, patch: EmployeeUpdate): Promise<Employee>
     archive(employeeId: string): Promise<void>
+  }
+  departments: {
+    /** Every department, in the order made, and how many people are in each. */
+    list(): Promise<DepartmentList>
+    create(input: DepartmentInput): Promise<Department>
+    update(departmentId: string, patch: DepartmentUpdate): Promise<Department>
+    /** Remove one. Its people stay, with no department. */
+    archive(departmentId: string): Promise<void>
   }
   roles: {
     /** Every role: Shokuba's own first, then yours. Starting points for hiring, never linked to anyone hired. */

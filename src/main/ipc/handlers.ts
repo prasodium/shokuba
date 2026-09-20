@@ -3,6 +3,9 @@ import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from 'el
 import { z } from 'zod'
 import {
   ConversationActionRequestSchema,
+  DepartmentCreateRequestSchema,
+  DepartmentIdRequestSchema,
+  DepartmentUpdateRequestSchema,
   ConversationIdRequestSchema,
   EmployeeCreateRequestSchema,
   EmployeeIdRequestSchema,
@@ -108,6 +111,20 @@ export function registerIpc(
         installation: await adapter.detect(context),
       })),
     )
+  })
+
+  handle(IPC.departmentsList, z.undefined(), trusted, () => ({
+    departments: services.departments.list(),
+    headcounts: services.departments.headcounts(),
+  }))
+  handle(IPC.departmentsCreate, DepartmentCreateRequestSchema, trusted, (input) =>
+    services.departments.create(input),
+  )
+  handle(IPC.departmentsUpdate, DepartmentUpdateRequestSchema, trusted, ({ departmentId, patch }) =>
+    services.departments.update(departmentId, patch),
+  )
+  handle(IPC.departmentsArchive, DepartmentIdRequestSchema, trusted, ({ departmentId }) => {
+    services.departments.archive(departmentId)
   })
 
   handle(IPC.rolesList, z.undefined(), trusted, () => services.roles.list())

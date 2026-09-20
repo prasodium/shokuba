@@ -5,6 +5,7 @@ import { readLifeSetting, writeLifeSetting } from '../office/lifeSetting'
 import { MAX_VISIBLE_EMPLOYEES } from '../office/map'
 import { OfficeScene, type CameraState, type SceneEmployee } from '../office/scene'
 import { notesFor } from '../office/talk'
+import { useDepartments } from '../store/departments'
 import { useEvents } from '../store/events'
 import { onLiveEvent } from '../store/live'
 import { useMessages } from '../store/messages'
@@ -96,12 +97,16 @@ export function OfficeView({ onNew }: { onNew(): void }) {
         role: e.role,
         color: e.color,
         appearance: e.appearance,
+        departmentId: e.departmentId,
         isManager: e.isManager,
         reportsTo: e.reportsTo,
       })),
     [employees],
   )
 
+  const departments = useDepartments((s) => s.departments)
+  // The departments first, so the seating knows them when the employees arrive.
+  useEffect(() => scene?.setDepartments(departments), [scene, departments])
   useEffect(() => scene?.setEmployees(sceneEmployees), [scene, sceneEmployees])
   useEffect(() => scene?.setViews(views), [scene, views])
   useEffect(() => scene?.setSelected(selectedId), [scene, selectedId])

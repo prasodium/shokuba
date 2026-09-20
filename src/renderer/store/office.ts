@@ -8,6 +8,7 @@ import { foldEvent, foldEvents } from './fold'
 import { useEvents } from './events'
 import { emitLiveEvent } from './live'
 import { useMessages } from './messages'
+import { useDepartments } from './departments'
 import { useMissions } from './missions'
 import { useRoles } from './roles'
 
@@ -93,6 +94,14 @@ export const useOffice = create<OfficeState>((set) => {
           void useMissions.getState().refresh()
         }
         if (event.type.startsWith('role.')) void useRoles.getState().refresh()
+        // Headcounts move when someone is hired, edited (into or out of a department) or removed.
+        if (
+          event.type.startsWith('department.') ||
+          event.type === 'agent.created' ||
+          event.type === 'employee.updated'
+        ) {
+          void useDepartments.getState().refresh()
+        }
         if (event.type.startsWith('message.') || event.type.startsWith('conversation.')) {
           void useMessages.getState().refresh()
         }
@@ -124,6 +133,7 @@ export const useOffice = create<OfficeState>((set) => {
           void useMissions.getState().refresh()
           void useMessages.getState().refresh()
           void useRoles.getState().refresh()
+          void useDepartments.getState().refresh()
           const views = Object.fromEntries(snapshot.views.map((view) => [view.employeeId, view]))
           const folded = foldEvents({ views, lastSeq: snapshot.lastSeq }, buffered)
           useEvents.getState().ingest(buffered)

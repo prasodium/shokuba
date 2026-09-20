@@ -13,6 +13,7 @@ const person = (id: string, extra: Partial<Employee> = {}): Employee => ({
   permissionMode: 'default',
   color: '#e8893a',
   appearance: DEFAULT_APPEARANCE,
+  departmentId: null,
   isManager: false,
   reportsTo: null,
   instructions: null,

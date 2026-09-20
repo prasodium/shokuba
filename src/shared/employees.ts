@@ -48,6 +48,8 @@ export const EmployeeInputSchema = z.strictObject({
     .default('#e8893a'),
   /** How the voxel character looks, apart from the shirt: skin, hair, what they wear. */
   appearance: AppearanceSchema.default(DEFAULT_APPEARANCE),
+  /** The department they sit with, or none. */
+  departmentId: z.string().min(1).max(100).nullable().optional(),
   /** A manager leads a team and is the one who talks to the person. */
   isManager: z.boolean().default(false),
   /** The manager this employee reports to, or null. A manager reports to no one. */
@@ -69,6 +71,8 @@ export const EmployeeUpdateSchema = EmployeeInputSchema.partial().extend({
   // The whole look is replaced at once; a part alone is never sent.
   appearance: AppearanceSchema.optional(),
   isManager: z.boolean().optional(),
+  // `null` takes them out of their department; `undefined` leaves it alone.
+  departmentId: z.string().min(1).max(100).nullable().optional(),
   // `null` clears them; `undefined` leaves them alone.
   reportsTo: z.string().min(1).max(100).nullable().optional(),
   instructions: instructionsText.nullable().optional(),
@@ -85,6 +89,8 @@ export interface Employee {
   permissionMode: PermissionMode
   color: string
   appearance: Appearance
+  /** The department they sit with, or null. */
+  departmentId: string | null
   isManager: boolean
   /** The manager this employee reports to. Null for a manager, and for anyone not on a team. */
   reportsTo: string | null

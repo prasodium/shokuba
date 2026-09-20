@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { Employee } from '@shared/employees'
+import { DepartmentsDialog } from './components/DepartmentsDialog'
 import { EmployeeDialog } from './components/EmployeeDialog'
 import { EventDock } from './components/EventDock'
 import { MessagesPanel } from './components/MessagesPanel'
@@ -27,6 +28,7 @@ export function App() {
   })
 
   const [rolesOpen, setRolesOpen] = useState(false)
+  const [departmentsOpen, setDepartmentsOpen] = useState(false)
 
   useEffect(() => connect(), [connect])
 
@@ -80,7 +82,12 @@ export function App() {
           <section className="panel office-panel" aria-label="Office">
             <OfficeView onNew={openNew} />
           </section>
-          <Roster onNew={openNew} onEdit={openEdit} onRoles={() => setRolesOpen(true)} />
+          <Roster
+            onNew={openNew}
+            onEdit={openEdit}
+            onRoles={() => setRolesOpen(true)}
+            onDepartments={() => setDepartmentsOpen(true)}
+          />
         </div>
         <div className="right">
           <div className="tabs" role="tablist" aria-label="Terminal, missions and messages">
@@ -141,7 +148,9 @@ export function App() {
         editing={dialog.editing}
         onClose={closeDialog}
         onEditRoles={() => setRolesOpen(true)}
+        onEditDepartments={() => setDepartmentsOpen(true)}
       />
+      <DepartmentsDialog open={departmentsOpen} onClose={() => setDepartmentsOpen(false)} />
       <RolesDialog open={rolesOpen} onClose={() => setRolesOpen(false)} />
     </div>
   )

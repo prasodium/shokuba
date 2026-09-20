@@ -66,10 +66,12 @@ import {
   WALL_HEIGHT,
   assignDesks,
   buildOffice,
+  departmentPlate,
   depthOf,
   groupWalls,
   seatPoint,
   stationRect,
+  type DepartmentBlock,
   type DeskSlot,
   type OfficeMap,
   type Place,
@@ -117,6 +119,16 @@ export interface SceneEmployee {
   /** Managers sit in a cabin, and their team sits together. */
   isManager?: boolean
   reportsTo?: string | null
+  /** The department they sit with, or none. */
+  departmentId?: string | null
+}
+
+/** A department, for its name plate on the floor. */
+export interface SceneDepartment {
+  id: string
+  name: string
+  /** The plate's colour, #rrggbb. */
+  color: string
 }
 
 /** What the view controls need to know about the camera. */
@@ -285,6 +297,8 @@ class PlaceLabel {
     resolution: number,
     /** Which kind of place it names, when what it says changes with the work there. */
     readonly kind: PlaceKind | null = null,
+    /** A colour to show as a dot before the name, for a department's plate. */
+    private readonly dot: number | null = null,
   ) {
     this.text = text
     this.label = new Text({
@@ -309,11 +323,17 @@ class PlaceLabel {
   private layout(): void {
     const padX = 8
     const height = 19
+    // A dot before the name takes a little room, and moves the name over to make it.
+    const lead = this.dot === null ? 0 : 12
+    const width = this.label.width + padX * 2 + lead
     this.bg
       .clear()
-      .roundRect(-this.label.width / 2 - padX, -height, this.label.width + padX * 2, height, 7)
+      .roundRect(-width / 2, -height, width, height, 7)
       .fill({ color: SURFACE, alpha: 0.86 })
-    this.label.position.set(0, -height / 2)
+    if (this.dot !== null) {
+      this.bg.circle(-width / 2 + padX + 4, -height / 2, 4.5).fill(this.dot)
+    }
+    this.label.position.set(lead / 2, -height / 2)
   }
 }
 
@@ -786,6 +806,11 @@ export class OfficeScene {
   /** Things that belong to the current plan, dropped and rebuilt when it changes. */
   private statics: Container[] = []
   private placeLabels: PlaceLabel[] = []
+  /** The departments, and what was last given to seat, so a change to either re-seats everyone. */
+  private departments: readonly SceneDepartment[] = []
+  private lastEmployees: readonly SceneEmployee[] = []
+  /** Each department's name plate on the floor: a coloured slab and its name. */
+  private plates: Array<{ view: Graphics; label: PlaceLabel }> = []
   /** What the board, the inbox and the bench show of the work, redrawn when the work changes. */
   private boardGfx: Graphics | null = null
   private inboxGfx: Graphics | null = null
@@ -916,9 +941,21 @@ export class OfficeScene {
 
   // ---------- who is in the office ----------
 
+  /** The departments, in order: they decide who sits together, and each gets a plate on the floor. */
+  setDepartments(departments: readonly SceneDepartment[]): void {
+    this.departments = departments
+    this.setEmployees(this.lastEmployees)
+  }
+
   setEmployees(employees: readonly SceneEmployee[]): void {
-    // The office is one plan whatever the team size: people are seated into it.
-    const { seated } = assignDesks(employees, this.map)
+    this.lastEmployees = employees
+    // The office is one plan whatever the team size: people are seated into it, each department's
+    // people together.
+    const { seated, blocks } = assignDesks(
+      employees,
+      this.map,
+      this.departments.map((d) => d.id),
+    )
     const keep = new Set(seated.map((s) => s.employee.id))
 
     for (const [id, desk] of this.deskViews) {
@@ -955,8 +992,37 @@ export class OfficeScene {
       }
     }
     this.refreshEmptyDesks()
+    this.refreshPlates(blocks)
     this.syncTravellers()
     this.placeOverlay()
+  }
+
+  /** One plate on the floor below each department's block, in its colour, with its name. */
+  private refreshPlates(blocks: readonly DepartmentBlock[]): void {
+    for (const plate of this.plates) {
+      plate.view.destroy()
+      plate.label.view.destroy({ children: true })
+    }
+    this.plates = []
+    for (const block of blocks) {
+      const department = this.departments.find((d) => d.id === block.departmentId)
+      if (!department) continue
+      const rect = departmentPlate(block, this.map)
+      const color = hexToNumber(department.color)
+      const view = new Graphics()
+      drawBox(view, { x: rect.x, y: rect.y, z: 0, w: rect.w, d: rect.d, h: 0.05, color })
+      view.zIndex = depthOf(rect)
+      this.items.addChild(view)
+      const label = new PlaceLabel(
+        department.name,
+        { x: rect.x + rect.w / 2, y: rect.y + rect.d + 0.3, z: 0.1 },
+        this.resolution,
+        null,
+        color,
+      )
+      this.overlay.addChild(label.view)
+      this.plates.push({ view, label })
+    }
   }
 
   /** Give every desk nobody is sitting at its own furniture, and take it away once someone is. */
@@ -1674,7 +1740,7 @@ export class OfficeScene {
       desk.roleLabel.scale.set(k)
       desk.roleLabel.visible = s >= ROLE_MIN_SCALE
     }
-    for (const label of this.placeLabels) {
+    for (const label of [...this.placeLabels, ...this.plates.map((plate) => plate.label)]) {
       const p = place(project(label.anchor.x, label.anchor.y, label.anchor.z))
       label.view.position.set(p.x, p.y)
       label.view.scale.set(k)

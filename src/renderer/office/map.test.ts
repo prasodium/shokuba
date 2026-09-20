@@ -5,14 +5,18 @@ import {
   FLOOR_WIDTH,
   MAX_VISIBLE_EMPLOYEES,
   PARTITION_THICKNESS,
+  STATION_DEPTH,
+  STATION_WIDTH,
   WALL_PIECE,
   assignDesks,
   buildOffice,
+  departmentPlate,
   depthOf,
   groupWalls,
   overlaps,
   seatPoint,
   stationRect,
+  type DeskSlot,
   type Point2,
   type Rect,
   type Seatable,
@@ -396,7 +400,7 @@ describe('who sits where', () => {
   })
 
   it('handles an empty office, and gives the same seating for the same people', () => {
-    expect(assignDesks([], map)).toEqual({ seated: [], overflow: 0 })
+    expect(assignDesks([], map)).toEqual({ seated: [], overflow: 0, blocks: [] })
     const people = [person('a', { isManager: true }), person('b', { reportsTo: 'a' }), person('c')]
     expect(assignDesks(people, map)).toEqual(assignDesks(people, map))
   })
@@ -471,5 +475,204 @@ describe('groupWalls', () => {
 
   it('gives nothing for nothing', () => {
     expect(groupWalls([])).toEqual([])
+  })
+})
+
+describe('seating by department', () => {
+  const inDept = (
+    id: string,
+    departmentId: string | null,
+    extra: Partial<Seatable> = {},
+  ): Seatable => ({
+    id,
+    departmentId,
+    ...extra,
+  })
+  const desk = (seated: ReturnType<typeof assignDesks>['seated'], id: string) =>
+    seated.find((s) => s.employee.id === id)?.slot as DeskSlot
+  const index = (slot: DeskSlot) => map.desks.findIndex((d) => d.x === slot.x && d.y === slot.y)
+
+  it('is exactly the seating without departments, when nobody has one', () => {
+    const people = [
+      person('solo'),
+      person('mira', { isManager: true }),
+      person('ada', { reportsTo: 'mira' }),
+      person('kai'),
+    ]
+    const plain = assignDesks(people, map)
+    expect(assignDesks(people, map, ['x', 'y'])).toEqual(plain)
+    expect(plain.blocks).toEqual([])
+  })
+
+  it('seats each department together, in the order of the departments, then those with none', () => {
+    const people = [
+      inDept('n1', null),
+      inDept('b1', 'B'),
+      inDept('a1', 'A'),
+      inDept('b2', 'B'),
+      inDept('a2', 'A'),
+    ]
+    const { seated, blocks } = assignDesks(people, map, ['A', 'B'])
+    const order = seated.map((s) => s.employee.id)
+    expect(order).toEqual(['a1', 'a2', 'b1', 'b2', 'n1'])
+    expect(blocks.map((b) => b.departmentId)).toEqual(['A', 'B'])
+    // The order of the departments decides who is first, not the order people were given.
+    expect(assignDesks(people, map, ['B', 'A']).blocks.map((b) => b.departmentId)).toEqual([
+      'B',
+      'A',
+    ])
+  })
+
+  it('starts each department on a column of its own, so two never share one', () => {
+    // Three in A take a column and a half; B starts on the next column, not in the half left.
+    const people = [inDept('a1', 'A'), inDept('a2', 'A'), inDept('a3', 'A'), inDept('b1', 'B')]
+    const { seated } = assignDesks(people, map, ['A', 'B'])
+    expect(index(desk(seated, 'a3'))).toBe(2)
+    expect(index(desk(seated, 'b1'))).toBe(4)
+    expect(desk(seated, 'b1').x).not.toBe(desk(seated, 'a3').x)
+  })
+
+  it('keeps a manager’s team together inside a department', () => {
+    const people = [
+      inDept('x', 'A'),
+      inDept('mira', 'A', { isManager: true }),
+      inDept('noor', 'A', { isManager: true }),
+      inDept('ren', 'A', { reportsTo: 'noor' }),
+      inDept('ada', 'A', { reportsTo: 'noor' }),
+    ]
+    const { seated } = assignDesks(people, map, ['A'])
+    expect(seated.filter((s) => s.slot.kind === 'desk').map((s) => s.employee.id)).toEqual([
+      'noor',
+      'ren',
+      'ada',
+      'x',
+    ])
+  })
+
+  it('seats a department’s manager in the cabin, and gives the block only those in the open', () => {
+    const people = [inDept('mira', 'A', { isManager: true }), inDept('ada', 'A'), inDept('bo', 'A')]
+    const { seated, blocks } = assignDesks(people, map, ['A'])
+    expect(desk(seated, 'mira')).toEqual(map.cabins[0])
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0]?.slots).toEqual([desk(seated, 'ada'), desk(seated, 'bo')])
+  })
+
+  it('has no block for a department whose only people did not get a desk', () => {
+    // Twelve in A fill every desk; the one person in B has none, so B has nothing to mark.
+    const people = [
+      ...Array.from({ length: 12 }, (_, i) => inDept(`a${i}`, 'A')),
+      inDept('b1', 'B'),
+    ]
+    const { blocks, overflow } = assignDesks(people, map, ['A', 'B'])
+    expect(overflow).toBe(1)
+    expect(blocks.map((b) => b.departmentId)).toEqual(['A'])
+  })
+
+  it('has no block for a department whose only people are in cabins', () => {
+    const { blocks } = assignDesks([inDept('mira', 'A', { isManager: true })], map, ['A'])
+    expect(blocks).toEqual([])
+  })
+
+  it('puts a department that is not in the order after those that are, in the order they came', () => {
+    const people = [inDept('z1', 'Z'), inDept('a1', 'A'), inDept('y1', 'Y')]
+    const { blocks } = assignDesks(people, map, ['A'])
+    expect(blocks.map((b) => b.departmentId)).toEqual(['A', 'Z', 'Y'])
+  })
+
+  it('packs people one after another when the departments would not all fit a column each', () => {
+    // Four departments of three people need eight columns of two, and there are six: they are packed.
+    const people = ['A', 'B', 'C', 'D'].flatMap((d) => [1, 2, 3].map((n) => inDept(`${d}${n}`, d)))
+    const { seated, overflow, blocks } = assignDesks(people, map, ['A', 'B', 'C', 'D'])
+    expect(overflow).toBe(0)
+    expect(seated).toHaveLength(12)
+    expect(seated.map((s) => index(s.slot))).toEqual([...Array(12).keys()])
+    expect(blocks.map((b) => b.slots.length)).toEqual([3, 3, 3, 3])
+  })
+
+  it('never costs anyone a desk for the sake of tidiness, and counts only whoever there is really no desk for', () => {
+    const fit = Array.from({ length: 12 }, (_, i) =>
+      inDept(`e${i}`, i % 5 === 0 ? 'A' : i % 3 === 0 ? 'B' : 'C'),
+    )
+    expect(assignDesks(fit, map, ['A', 'B', 'C']).overflow).toBe(0)
+    const over = Array.from({ length: 15 }, (_, i) => inDept(`e${i}`, i % 2 === 0 ? 'A' : 'B'))
+    const { seated, overflow } = assignDesks(over, map, ['A', 'B'])
+    expect(seated).toHaveLength(12)
+    expect(overflow).toBe(3)
+  })
+
+  it('always gives each person their own desk, and a block only its own people, however people are split', () => {
+    for (let n = 1; n <= 16; n += 1) {
+      for (const departments of [1, 2, 3, 4]) {
+        const people = Array.from({ length: n }, (_, i) =>
+          inDept(`e${i}`, i % (departments + 1) === departments ? null : `d${i % departments}`),
+        )
+        const order = Array.from({ length: departments }, (_, i) => `d${i}`)
+        const { seated, overflow, blocks } = assignDesks(people, map, order)
+        const keys = seated.map((s) => `${s.slot.x},${s.slot.y}`)
+        expect(new Set(keys).size, `${n}/${departments}`).toBe(keys.length)
+        expect(seated.length + overflow, `${n}/${departments}`).toBe(n)
+        for (const block of blocks) {
+          const owners = seated
+            .filter((s) => block.slots.some((slot) => slot.x === s.slot.x && slot.y === s.slot.y))
+            .map((s) => (s.employee as Seatable).departmentId)
+          expect(new Set(owners), `${n}/${departments}`).toEqual(new Set([block.departmentId]))
+        }
+      }
+    }
+  })
+
+  it('gives the same seating for the same people', () => {
+    const people = [inDept('a', 'A'), inDept('b', 'B'), inDept('c', null)]
+    expect(assignDesks(people, map, ['A', 'B'])).toEqual(assignDesks(people, map, ['A', 'B']))
+  })
+})
+
+describe('a department’s name plate', () => {
+  const open = roomOf('open')
+  const blockOf = (indexes: number[]) => ({
+    departmentId: 'A',
+    slots: indexes.map((i) => map.desks[i] as DeskSlot),
+  })
+
+  it('lies below its block, as wide as the block and a little more', () => {
+    const block = blockOf([0, 1, 2, 3])
+    const plate = departmentPlate(block, map)
+    const left = Math.min(...block.slots.map((s) => s.x))
+    const right = Math.max(...block.slots.map((s) => s.x)) + STATION_WIDTH
+    expect(plate.x).toBeLessThan(left)
+    expect(plate.x + plate.w).toBeGreaterThan(right)
+    expect(plate.x + plate.w - right).toBeCloseTo(left - plate.x)
+    const bottom = Math.max(...map.desks.map((d) => d.y)) + STATION_DEPTH
+    expect(plate.y).toBeGreaterThan(bottom)
+  })
+
+  it('is at the same height for every block, whichever rows its people are in', () => {
+    const y = (indexes: number[]) => departmentPlate(blockOf(indexes), map).y
+    // Desks 0, 2 and 4 are in the first row, and 1, 3 and 5 in the second.
+    expect(y([0])).toBe(y([1]))
+    expect(y([0, 2, 4])).toBe(y([1, 3, 5]))
+    expect(y([0, 1])).toBe(y([4]))
+  })
+
+  it('is on the open floor and clear of every desk, for every block that could be', () => {
+    for (let first = 0; first < map.desks.length; first += 1) {
+      for (let last = first; last < map.desks.length; last += 1) {
+        const plate = departmentPlate(
+          blockOf(Array.from({ length: last - first + 1 }, (_, k) => first + k)),
+          map,
+        )
+        expect(plate.x).toBeGreaterThanOrEqual(open.x)
+        expect(plate.x + plate.w).toBeLessThanOrEqual(open.x + open.w)
+        expect(plate.y).toBeGreaterThanOrEqual(open.y)
+        expect(plate.y + plate.d).toBeLessThanOrEqual(open.y + open.d)
+        for (const slot of map.desks) expect(overlaps(plate, stationRect(slot))).toBe(false)
+      }
+    }
+  })
+
+  it('does not overlap the plate of another block on a column of its own', () => {
+    const a = departmentPlate(blockOf([0, 1, 2]), map)
+    const b = departmentPlate(blockOf([4, 5]), map)
+    expect(overlaps(a, b)).toBe(false)
   })
 })
