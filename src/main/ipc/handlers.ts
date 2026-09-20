@@ -38,8 +38,10 @@ import {
   IssuesRequestSchema,
   PlanAskRequestSchema,
   PlanTakeBackRequestSchema,
+  PullFollowUpRequestSchema,
   PullOpenRequestSchema,
   PullPreviewRequestSchema,
+  PullStatusRequestSchema,
 } from '@shared/github'
 import { ReviewSettingsSaveSchema } from '@shared/reviews'
 import { CheckSettingsSaveSchema } from '@shared/verification'
@@ -283,6 +285,14 @@ export function registerIpc(
     agents.pulls.preview(input),
   )
   handle(IPC.githubPullOpen, PullOpenRequestSchema, trusted, (input) => agents.pulls.open(input))
+  // Following the pull request only reads GitHub. Making a task from what went wrong is the person's
+  // click, and writes only to Shokuba's own missions.
+  handle(IPC.githubPullStatus, PullStatusRequestSchema, trusted, (input) =>
+    agents.follow.status(input),
+  )
+  handle(IPC.githubPullFollowUp, PullFollowUpRequestSchema, trusted, (input) =>
+    agents.follow.followUp(input),
+  )
   handle(IPC.tasksRemove, TaskIdRequestSchema, trusted, ({ taskId }) => {
     agents.missions.removeTask(taskId)
   })

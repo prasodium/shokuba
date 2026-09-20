@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { MAX_ISSUE_BODY, MAX_ISSUE_TITLE } from '@shared/github'
 import {
+  CHECK_RUN_FIELDS,
+  CHECK_RUNS_FIELDS,
   CREATED_PULL_FIELD,
   DEFAULT_BRANCH_FIELD,
   GitHubClient,
@@ -8,7 +10,16 @@ import {
   issueUrl,
   LIST_FIELDS,
   LOGIN_FIELD,
+  MAX_FEEDBACK,
   MAX_PULL_BODY,
+  MAX_REVIEW_COMMENTS,
+  PULL_FIELDS,
+  REVIEW_COMMENTS_FIELDS,
+  REVIEWS_FIELDS,
+  STATUSES_FIELDS,
+  checkUrl,
+  runState,
+  statusState,
   OPEN_PULLS_FIELD,
   ONE_FIELDS,
   pullUrl,
@@ -565,5 +576,362 @@ describe('createPull', () => {
         .catch((e: unknown) => e)
       expect((error as GhError).code, text).toBe('bad-response')
     }
+  })
+})
+
+const SHA = 'a'.repeat(40)
+
+describe('runState and statusState', () => {
+  it('reads a CI run: passed, failed, or still going', () => {
+    for (const conclusion of ['success', 'neutral', 'skipped']) {
+      expect(runState('completed', conclusion), conclusion).toBe('passed')
+    }
+    for (const conclusion of [
+      'failure',
+      'timed_out',
+      'cancelled',
+      'action_required',
+      'startup_failure',
+      'stale',
+    ]) {
+      expect(runState('completed', conclusion), conclusion).toBe('failed')
+    }
+    for (const status of [
+      'queued',
+      'in_progress',
+      'waiting',
+      'requested',
+      'pending',
+      null,
+      undefined,
+      5,
+    ]) {
+      expect(runState(status, 'failure'), String(status)).toBe('pending')
+    }
+  })
+
+  it('does not call a finished run passed or failed when it says something it does not know', () => {
+    for (const conclusion of [null, undefined, 'something-new', 3]) {
+      expect(runState('completed', conclusion), String(conclusion)).toBe('pending')
+    }
+  })
+
+  it('reads a commit status', () => {
+    expect(statusState('success')).toBe('passed')
+    expect(statusState('failure')).toBe('failed')
+    expect(statusState('error')).toBe('failed')
+    for (const state of ['pending', 'other', null, undefined])
+      expect(statusState(state)).toBe('pending')
+  })
+})
+
+describe('getPull', () => {
+  it('asks about the pull request and reads its state', async () => {
+    const gh = scripted(JSON.stringify({ state: 'open', merged: false, draft: true, head: SHA }))
+    expect(await new GitHubClient(gh).getPull(REPO, 7)).toEqual({
+      state: 'open',
+      draft: true,
+      head: SHA,
+    })
+    const args = gh.calls[0] as string[]
+    expect(args).toContain('repos/octo/widgets/pulls/7')
+    expect(args[args.indexOf('--jq') + 1]).toBe(PULL_FIELDS)
+    expect(args).not.toContain('POST')
+  })
+
+  it('says merged when it was merged, though GitHub calls it closed', async () => {
+    const gh = scripted(JSON.stringify({ state: 'closed', merged: true, draft: false, head: SHA }))
+    expect((await new GitHubClient(gh).getPull(REPO, 7)).state).toBe('merged')
+    expect(
+      (
+        await new GitHubClient(
+          scripted(JSON.stringify({ state: 'closed', merged: false, head: SHA })),
+        ).getPull(REPO, 7)
+      ).state,
+    ).toBe('closed')
+  })
+
+  it('is a draft only when GitHub says so', async () => {
+    for (const draft of [undefined, false, 'yes', 1]) {
+      const gh = scripted(JSON.stringify({ state: 'open', draft, head: SHA }))
+      expect((await new GitHubClient(gh).getPull(REPO, 7)).draft, String(draft)).toBe(false)
+    }
+  })
+
+  it('is a bad response when it is not a pull request it can read', async () => {
+    for (const text of [
+      '{}',
+      'not json',
+      '[]',
+      JSON.stringify({ state: 'weird', head: SHA }),
+      JSON.stringify({ state: 'open', head: 'nope' }),
+      JSON.stringify({ state: 'open' }),
+    ]) {
+      const error = await new GitHubClient(scripted(text)).getPull(REPO, 7).catch((e: unknown) => e)
+      expect((error as GhError).code, text).toBe('bad-response')
+    }
+  })
+
+  it('refuses a number or repository that could change the request, before asking', async () => {
+    for (const number of [0, -1, 1.5, Number.NaN]) {
+      const gh = scripted('{}')
+      await expect(new GitHubClient(gh).getPull(REPO, number)).rejects.toBeInstanceOf(GhError)
+      expect(gh.calls).toHaveLength(0)
+    }
+  })
+})
+
+describe('listChecks', () => {
+  const runs = JSON.stringify([
+    { id: 11, name: 'build', status: 'completed', conclusion: 'success' },
+    { id: 12, name: 'lint', status: 'completed', conclusion: 'failure' },
+    { id: 13, name: 'e2e', status: 'in_progress', conclusion: null },
+  ])
+  const statuses = JSON.stringify([{ context: 'ci/legacy', state: 'error' }])
+
+  it('lists the CI runs and the commit statuses, each with how it stands', async () => {
+    const gh = scripted(runs, statuses)
+    expect(await new GitHubClient(gh).listChecks(REPO, SHA)).toEqual([
+      {
+        ref: 'run:11',
+        name: 'build',
+        state: 'passed',
+        url: 'https://github.com/octo/widgets/runs/11',
+      },
+      {
+        ref: 'run:12',
+        name: 'lint',
+        state: 'failed',
+        url: 'https://github.com/octo/widgets/runs/12',
+      },
+      {
+        ref: 'run:13',
+        name: 'e2e',
+        state: 'pending',
+        url: 'https://github.com/octo/widgets/runs/13',
+      },
+      { ref: 'status:ci/legacy', name: 'ci/legacy', state: 'failed', url: null },
+    ])
+    const [first, second] = gh.calls as string[][]
+    expect(first).toContain(`repos/octo/widgets/commits/${SHA}/check-runs`)
+    expect(first?.[(first?.indexOf('--jq') ?? 0) + 1]).toBe(CHECK_RUNS_FIELDS)
+    expect(second).toContain(`repos/octo/widgets/commits/${SHA}/status`)
+    expect(second?.[(second?.indexOf('--jq') ?? 0) + 1]).toBe(STATUSES_FIELDS)
+  })
+
+  it('makes each address itself and never follows one it was sent', async () => {
+    const gh = scripted(
+      JSON.stringify([
+        {
+          id: 5,
+          name: 'x',
+          status: 'completed',
+          conclusion: 'success',
+          html_url: 'https://evil.example',
+          details_url: 'https://evil.example',
+        },
+      ]),
+      '[]',
+    )
+    const [one] = await new GitHubClient(gh).listChecks(REPO, SHA)
+    expect(one?.url).toBe(checkUrl(REPO, 5))
+    expect(JSON.stringify(one)).not.toContain('evil')
+  })
+
+  it('cleans names, and gives a name to one that has none, and skips a status without a name', async () => {
+    const gh = scripted(
+      JSON.stringify([
+        {
+          id: 5,
+          name: `Build\u202e\n${'x'.repeat(300)}`,
+          status: 'completed',
+          conclusion: 'success',
+        },
+        { id: 6, status: 'completed', conclusion: 'success' },
+      ]),
+      JSON.stringify([{ context: '', state: 'success' }, { state: 'success' }]),
+    )
+    const items = await new GitHubClient(gh).listChecks(REPO, SHA)
+    expect(items).toHaveLength(2)
+    expect(items[0]?.name).not.toMatch(/[\u202e\n]/)
+    expect([...(items[0]?.name ?? '')].length).toBeLessThanOrEqual(120)
+    expect(items[1]?.name).toBe('check 6')
+  })
+
+  it('drops what it cannot read and keeps the rest', async () => {
+    const gh = scripted(
+      JSON.stringify([
+        null,
+        'x',
+        { id: 'a' },
+        { id: 0 },
+        { id: 9, name: 'ok', status: 'completed', conclusion: 'success' },
+      ]),
+      '[]',
+    )
+    expect((await new GitHubClient(gh).listChecks(REPO, SHA)).map((c) => c.ref)).toEqual(['run:9'])
+  })
+
+  it('is a bad response when either answer is not a list', async () => {
+    for (const replies of [
+      ['{}', '[]'],
+      ['[]', '{}'],
+      ['not json', '[]'],
+    ] as const) {
+      const error = await new GitHubClient(scripted(...replies))
+        .listChecks(REPO, SHA)
+        .catch((e: unknown) => e)
+      expect((error as GhError).code, replies.join('|')).toBe('bad-response')
+    }
+  })
+
+  it('refuses a commit that is not a full id, before asking', async () => {
+    for (const commit of ['', 'main', SHA.slice(0, 8), `${SHA}~1`, '--all', 'A'.repeat(40)]) {
+      const gh = scripted('[]', '[]')
+      await expect(new GitHubClient(gh).listChecks(REPO, commit), commit).rejects.toBeInstanceOf(
+        GhError,
+      )
+      expect(gh.calls, commit).toHaveLength(0)
+    }
+  })
+})
+
+describe('checkOutput', () => {
+  it('reads what a CI run reported, cleaned and cut', async () => {
+    const summary = `Line one\n${'y'.repeat(MAX_FEEDBACK * 2)}`
+    const gh = scripted(
+      JSON.stringify({ name: 'lint', conclusion: 'failure', title: '3 errors', summary }),
+    )
+    const out = await new GitHubClient(gh).checkOutput(REPO, 12)
+    expect(out).toMatchObject({ name: 'lint', conclusion: 'failure', title: '3 errors' })
+    expect([...out.summary]).toHaveLength(MAX_FEEDBACK)
+    const args = gh.calls[0] as string[]
+    expect(args).toContain('repos/octo/widgets/check-runs/12')
+    expect(args[args.indexOf('--jq') + 1]).toBe(CHECK_RUN_FIELDS)
+  })
+
+  it('has empty text for what is missing or is not text', async () => {
+    const out = await new GitHubClient(
+      scripted(JSON.stringify({ name: 'x', title: null, summary: 5 })),
+    ).checkOutput(REPO, 1)
+    expect(out).toEqual({ name: 'x', conclusion: '', title: '', summary: '' })
+  })
+
+  it('refuses a number that is not one, and an answer it cannot read', async () => {
+    await expect(new GitHubClient(scripted('{}')).checkOutput(REPO, 0)).rejects.toBeInstanceOf(
+      GhError,
+    )
+    const error = await new GitHubClient(scripted('[]'))
+      .checkOutput(REPO, 1)
+      .catch((e: unknown) => e)
+    expect((error as GhError).code).toBe('bad-response')
+  })
+})
+
+describe('listReviews', () => {
+  it('reads who said what: author, decision and text, cleaned', async () => {
+    const gh = scripted(
+      JSON.stringify([
+        { id: 5, user: 'ada', state: 'changes_requested', body: 'Please fix\u202e this.' },
+        { id: 6, user: 'grace', state: 'APPROVED', body: null },
+      ]),
+    )
+    const reviews = await new GitHubClient(gh).listReviews(REPO, 7)
+    expect(reviews).toEqual([
+      { id: 5, author: 'ada', state: 'CHANGES_REQUESTED', body: 'Please fix this.' },
+      { id: 6, author: 'grace', state: 'APPROVED', body: '' },
+    ])
+    const args = gh.calls[0] as string[]
+    expect(args).toContain('repos/octo/widgets/pulls/7/reviews')
+    expect(args[args.indexOf('--jq') + 1]).toBe(REVIEWS_FIELDS)
+  })
+
+  it('skips a reviewer whose name is not a GitHub login, and what it cannot read', async () => {
+    const gh = scripted(
+      JSON.stringify([
+        { id: 1, user: 'a b', state: 'APPROVED' },
+        { id: 2, user: null, state: 'APPROVED' },
+        { id: 3, user: '../x', state: 'APPROVED' },
+        { id: 'x', user: 'ada' },
+        null,
+        { id: 4, user: 'dependabot[bot]', state: 'COMMENTED' },
+      ]),
+    )
+    expect((await new GitHubClient(gh).listReviews(REPO, 7)).map((r) => r.author)).toEqual([
+      'dependabot[bot]',
+    ])
+  })
+
+  it('is a bad response when it is not a list', async () => {
+    const error = await new GitHubClient(scripted('{}'))
+      .listReviews(REPO, 7)
+      .catch((e: unknown) => e)
+    expect((error as GhError).code).toBe('bad-response')
+  })
+})
+
+describe('reviewComments', () => {
+  it('reads the file, line and text of each, and asks about that review of that pull request', async () => {
+    const gh = scripted(
+      JSON.stringify([
+        { path: 'src/login.ts', line: 12, body: 'This is wrong.' },
+        { path: 'a.ts', line: null, body: 'General.' },
+      ]),
+    )
+    expect(await new GitHubClient(gh).reviewComments(REPO, 7, 5)).toEqual([
+      { path: 'src/login.ts', line: 12, body: 'This is wrong.' },
+      { path: 'a.ts', line: null, body: 'General.' },
+    ])
+    const args = gh.calls[0] as string[]
+    expect(args).toContain('repos/octo/widgets/pulls/7/reviews/5/comments')
+    expect(args[args.indexOf('--jq') + 1]).toBe(REVIEW_COMMENTS_FIELDS)
+  })
+
+  it('keeps at most the limit, skips empty ones and a line that is not a line number', async () => {
+    const many = Array.from({ length: MAX_REVIEW_COMMENTS + 15 }, (_, i) => ({
+      path: 'f',
+      line: i + 1,
+      body: `c${i}`,
+    }))
+    const out = await new GitHubClient(scripted(JSON.stringify(many))).reviewComments(REPO, 7, 5)
+    expect(out).toHaveLength(MAX_REVIEW_COMMENTS)
+    const odd = await new GitHubClient(
+      scripted(
+        JSON.stringify([
+          { path: 'f', line: -3, body: 'x' },
+          { path: 'f', line: 1.5, body: 'y' },
+          { path: 'f', line: 2, body: '' },
+          { path: 'f', line: 3, body: 'z' },
+        ]),
+      ),
+    ).reviewComments(REPO, 7, 5)
+    expect(odd).toEqual([
+      { path: 'f', line: null, body: 'x' },
+      { path: 'f', line: null, body: 'y' },
+      { path: 'f', line: 3, body: 'z' },
+    ])
+  })
+
+  it('cuts a long comment', async () => {
+    const out = await new GitHubClient(
+      scripted(JSON.stringify([{ path: 'f', line: 1, body: 'z'.repeat(5000) }])),
+    ).reviewComments(REPO, 7, 5)
+    expect([...(out[0]?.body ?? '')]).toHaveLength(1000)
+  })
+
+  it('refuses numbers that are not numbers, and an answer that is not a list', async () => {
+    for (const [n, r] of [
+      [0, 1],
+      [7, 0],
+      [7, 1.5],
+    ] as const) {
+      const gh = scripted('[]')
+      await expect(new GitHubClient(gh).reviewComments(REPO, n, r)).rejects.toBeInstanceOf(GhError)
+      expect(gh.calls).toHaveLength(0)
+    }
+    const error = await new GitHubClient(scripted('{}'))
+      .reviewComments(REPO, 7, 5)
+      .catch((e: unknown) => e)
+    expect((error as GhError).code).toBe('bad-response')
   })
 })

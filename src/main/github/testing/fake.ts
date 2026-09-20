@@ -21,6 +21,21 @@ export interface FakeGhScript {
   /** Who is signed in; `null` for nobody. */
   login: string | null
   issues?: FakeIssue[]
+  /** The pull request being followed (open, unmerged and not a draft if not said). */
+  pull?: { state?: 'open' | 'closed'; merged?: boolean; draft?: boolean; head?: string }
+  checkRuns?: Array<{ id: number; name: string; status: string; conclusion: string | null }>
+  statuses?: Array<{ context: string; state: string }>
+  checkOutputs?: Record<
+    string,
+    { name: string; conclusion: string; title: string; summary: string }
+  >
+  reviews?: Array<{
+    id: number
+    user: { login: string } | null
+    state: string
+    body: string | null
+  }>
+  reviewComments?: Record<string, Array<{ path: string; line: number | null; body: string }>>
   /** The repository's default branch (`main` if not said). */
   defaultBranch?: string
   /** Open pull requests, whatever branch is asked about. */

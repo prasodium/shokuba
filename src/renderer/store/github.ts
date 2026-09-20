@@ -10,4 +10,6 @@ export const useGitHub = createGitHubStore({
   takeBackPlan: (missionId) => window.shokuba.github.takeBackPlan(missionId),
   pullPreview: (missionId) => window.shokuba.github.pullPreview(missionId),
   pullOpen: (input) => window.shokuba.github.pullOpen(input),
+  pullStatus: (missionId) => window.shokuba.github.pullStatus(missionId),
+  pullFollowUp: (input) => window.shokuba.github.pullFollowUp(input),
 })

@@ -298,3 +298,79 @@ describe('the mission planner migration', () => {
     ).toThrow()
   })
 })
+
+describe('the GitHub pull requests migration', () => {
+  const missionAndLink = (db: Db): void => {
+    db.prepare(
+      "INSERT INTO missions (id, title, created_at, updated_at) VALUES ('m1', 'm', 't', 't')",
+    ).run()
+    db.prepare(
+      `INSERT INTO github_links
+         (mission_id, owner, repo, repo_root, issue_number, issue_title, issue_url, issue_body, imported_at)
+       VALUES ('m1', 'octo', 'widgets', '/w', 7, 't', 'u', '', 't')`,
+    ).run()
+  }
+
+  it('leaves every link made before it with no pull request', () => {
+    const db = memory()
+    migrate(db, MIGRATIONS.slice(0, 16))
+    missionAndLink(db)
+    expect(migrate(db, MIGRATIONS.slice(0, 17)).applied).toEqual([17])
+    expect(
+      db
+        .prepare(
+          'SELECT pr_number AS n, pr_draft AS d, pr_opened_at AS at, pr_head AS h FROM github_links',
+        )
+        .get(),
+    ).toEqual({ n: null, d: 0, at: null, h: null })
+  })
+
+  it('can record the pull request that was opened', () => {
+    const db = memory()
+    migrate(db, MIGRATIONS)
+    missionAndLink(db)
+    db.prepare(
+      "UPDATE github_links SET pr_number = 12, pr_draft = 1, pr_opened_at = 't', pr_head = 'abc'",
+    ).run()
+    expect(db.prepare('SELECT pr_number AS n, pr_draft AS d FROM github_links').get()).toEqual({
+      n: 12,
+      d: 1,
+    })
+  })
+})
+
+describe('the GitHub feedback migration', () => {
+  const task = (db: Db): void => {
+    db.prepare(
+      "INSERT INTO missions (id, title, created_at, updated_at) VALUES ('m1', 'm', 't', 't')",
+    ).run()
+    db.prepare(
+      "INSERT INTO tasks (id, mission_id, title, status, position, created_at, updated_at) VALUES ('t1', 'm1', 't', 'ready', 1, 't', 't')",
+    ).run()
+  }
+  const feedback = (db: Db, kind = 'check', taskId = 't1'): void => {
+    db.prepare(
+      "INSERT INTO github_feedback (task_id, mission_id, kind, author, body, created_at) VALUES (?, 'm1', ?, NULL, 'x', 't')",
+    ).run(taskId, kind)
+  }
+
+  it('adds an empty table', () => {
+    const db = memory()
+    migrate(db, MIGRATIONS.slice(0, 17))
+    expect(migrate(db, MIGRATIONS.slice(0, 18)).applied).toEqual([18])
+    expect(db.prepare('SELECT COUNT(*) AS n FROM github_feedback').get()).toEqual({ n: 0 })
+  })
+
+  it('keeps one piece of feedback for a task that exists, of one of two kinds', () => {
+    const db = memory()
+    migrate(db, MIGRATIONS)
+    db.pragma('foreign_keys = ON')
+    task(db)
+    feedback(db, 'check')
+    expect(() => feedback(db, 'review')).toThrow()
+    expect(() => feedback(db, 'check', 'nope')).toThrow()
+    db.prepare('DELETE FROM github_feedback').run()
+    expect(() => feedback(db, 'comment')).toThrow()
+    expect(() => feedback(db, 'review')).not.toThrow()
+  })
+})

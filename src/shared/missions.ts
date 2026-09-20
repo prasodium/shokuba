@@ -79,7 +79,7 @@ export const MissionUpdateSchema = z.strictObject({
 })
 export type MissionUpdate = z.infer<typeof MissionUpdateSchema>
 
-export const MISSION_ACTIONS = ['run', 'pause', 'cancel'] as const
+export const MISSION_ACTIONS = ['run', 'pause', 'cancel', 'reopen'] as const
 export type MissionAction = (typeof MISSION_ACTIONS)[number]
 
 export const TaskInputSchema = z.strictObject({

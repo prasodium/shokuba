@@ -96,6 +96,8 @@ export interface MissionServiceDeps {
   employeeExists: (employeeId: string) => boolean
   /** The GitHub issue a mission came from, if it did: only its number and repository. */
   sourceOf?: (missionId: string) => { number: number; repo: string } | null | undefined
+  /** Whether a task was made from feedback on a pull request (a check, or a review). */
+  feedbackOf?: (taskId: string) => 'check' | 'review' | null | undefined
   now?: () => Date
   newId?: () => string
 }
@@ -293,7 +295,8 @@ export class MissionService {
 
   // ---------- tasks (people) ----------
 
-  createTask(raw: TaskInput, actor: Actor = USER): Task {
+  /** `within` runs in the same transaction, after the task is saved: saved with it or not at all. */
+  createTask(raw: TaskInput, actor: Actor = USER, within?: (task: Task) => void): Task {
     const parsed = TaskInputSchema.safeParse(raw)
     if (!parsed.success) throw new MissionError('invalid', firstIssue(parsed.error))
     const input = parsed.data
@@ -341,7 +344,9 @@ export class MissionService {
       if (input.assigneeId) {
         out.push(assignedEvent(id, mission.id, input.assigneeId, actor))
       }
-      return this.mustTask(id)
+      const task = this.mustTask(id)
+      within?.(task)
+      return task
     })
   }
 
@@ -543,8 +548,10 @@ export class MissionService {
     const mission = this.mustMission(task.missionId)
     const siblings = this.loadTasks(task.missionId)
     const issue = this.deps.sourceOf?.(mission.id)
+    const feedback = this.deps.feedbackOf?.(task.id)
     return buildBriefing({
       ...(issue && { issue }),
+      ...(feedback && { feedback }),
       missionTitle: mission.title,
       taskId: task.id,
       title: task.title,
@@ -823,11 +830,14 @@ const MISSION_TRANSITIONS: Record<MissionAction, Partial<Record<MissionStatus, M
   run: { draft: 'running', paused: 'running' },
   pause: { running: 'paused' },
   cancel: { draft: 'cancelled', running: 'cancelled', paused: 'cancelled' },
+  // A finished mission comes back paused, so nothing runs until the person presses Resume.
+  reopen: { completed: 'paused' },
 }
 const PAST_TENSE: Record<MissionAction, string> = {
   run: 'started',
   pause: 'paused',
   cancel: 'cancelled',
+  reopen: 'reopened',
 }
 
 function statusEvent(

@@ -305,13 +305,25 @@ describe('preview', () => {
     )
   })
 
-  it('cannot be opened twice: a pull request already recorded is a problem', async () => {
+  it('follows a pull request opened for this mission: new commits go to it while it is open on GitHub', async () => {
     fx.services.db
       .prepare("UPDATE github_links SET pr_number = 9, pr_opened_at = 't' WHERE mission_id = ?")
       .run(missionId)
-    expect((await build().preview({ missionId })).problems.join(' ')).toMatch(
-      /already opened for this mission/,
-    )
+    const preview = await build({ openPulls: [{ number: 9, draft: true }] }).preview({ missionId })
+    expect(preview.problems).toEqual([])
+    expect(preview.existing).toMatchObject({ number: 9 })
+  })
+
+  it('cannot be pushed to once the pull request opened for the mission is closed, merged or is not the one open', async () => {
+    fx.services.db
+      .prepare("UPDATE github_links SET pr_number = 9, pr_opened_at = 't' WHERE mission_id = ?")
+      .run(missionId)
+    for (const openPulls of [[], [{ number: 3 }]]) {
+      const preview = await build({ openPulls }).preview({ missionId })
+      expect(preview.problems.join(' '), JSON.stringify(openPulls)).toMatch(
+        /pull request opened for this mission \(#9\) is no longer open on GitHub/,
+      )
+    }
   })
 
   it('cannot be opened when origin no longer points at this repository, or is not encrypted', async () => {
@@ -537,13 +549,30 @@ describe('open', () => {
     expect(posts()).toHaveLength(0)
   })
 
-  it('opens nothing twice: a second try after success is refused', async () => {
-    const service = build()
-    await opened(service)
-    const again = await refusal(opened(service))
-    expect(again.message).toMatch(/already opened for this mission/)
-    expect(git?.pushes).toHaveLength(1)
-    expect(posts()).toHaveLength(1)
+  it('opens no second pull request: a later try pushes to the one it opened, and records nothing again', async () => {
+    const first = build()
+    await opened(first)
+    const at = fx.services.db.prepare('SELECT pr_opened_at AS at FROM github_links').get()
+    const audits = fx.services.audit.list().filter((a) => a.action === 'github.pull.open').length
+    const events = fx.services.events.log.list({ type: 'github.pull.opened' }).length
+
+    // GitHub now shows the one that was opened.
+    const later = build({ openPulls: [{ number: 7, draft: true }] })
+    const result = await opened(later)
+    expect(result).toMatchObject({ number: 7, existing: true })
+    expect(git?.pushes).toHaveLength(2)
+    expect(posts()).toHaveLength(0)
+    expect(fx.services.db.prepare('SELECT pr_opened_at AS at FROM github_links').get()).toEqual(at)
+    expect(fx.services.audit.list().filter((a) => a.action === 'github.pull.open')).toHaveLength(
+      audits,
+    )
+    expect(fx.services.events.log.list({ type: 'github.pull.opened' })).toHaveLength(events)
+  })
+
+  it('refuses a later try when the pull request it opened has since been closed', async () => {
+    await opened(build())
+    const error = await refusal(opened(build()))
+    expect(error.message).toMatch(/no longer open on GitHub/)
   })
 
   it('when a pull request is already open, pushes the new commits to it and opens no second one', async () => {

@@ -106,6 +106,11 @@ Shokuba is being built in the open, in small, tested increments. Here is exactly
 <p align="center"><sub>Opening a pull request (an animation, with <b>demo</b> agents, a stand-in GitHub tool, and the push sent to a local folder, so nothing here touches a real account). Shokuba <b>shows exactly what it will do first</b> and does nothing until you press the button; if anything changed in between, it refuses and shows it again. It pushes only its own mission branch, through your own Git setup, never forcing, never merging, never commenting, and never publishes a change or text that holds a secret.</sub></p>
 
 <p align="center">
+  <img src="docs/assets/github-follow-demo.gif" alt="An animation of the whole app: under the recorded pull request the mission shows Open as a draft, one check failing, one passing and one still running, and Changes requested by a reviewer; pressing Make a task beside the failing check reopens the finished mission as paused and adds a task called Fix a failing check on the pull request; pressing Make a task beside the reviewer's request adds a second task named for the reviewer; both are unassigned and wait for the person" width="100%">
+</p>
+<p align="center"><sub>Following the pull request (an animation, with <b>demo</b> agents and a stand-in GitHub tool). Shokuba only <b>reads</b> GitHub here. A failing check or a request for changes becomes a task in one click, in Shokuba's own words: what the check or the reviewer <i>said</i> is kept apart and an agent reads it only through a read-only tool that marks it <b>untrusted</b>, never in its terminal. A finished mission is reopened <b>paused</b>, so nothing runs until you say so.</sub></p>
+
+<p align="center">
   <img src="docs/assets/missions-demo.png" alt="The Missions tab: a task graph where the first task is done and the two tasks that depended on it are now in progress with two employees, the third waiting on both" width="100%">
 </p>
 <p align="center"><sub>A mission: <i>Design the API</i> was accepted, so <i>Build the API</i> and <i>Write the docs</i> were handed to two agents at once; <i>Review everything</i> waits for both. (Demo agents.)</sub></p>

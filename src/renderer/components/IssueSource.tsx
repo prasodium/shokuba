@@ -5,6 +5,7 @@ import { planningView } from '../github/planning'
 import { recordLine } from '../github/pull'
 import { useGitHub } from '../store/github'
 import { useOffice } from '../store/office'
+import { PullFollowPanel } from './PullFollowPanel'
 import { PullRequestDialog } from './PullRequestDialog'
 
 interface Props {
@@ -113,10 +114,16 @@ export function IssueSource({ link, mission }: Props) {
 
       <div className="issue-planning">
         {link.pullRequest ? (
-          <p className="mission-author" role="note" title={link.pullRequest.url}>
-            {recordLine(link.pullRequest, link.repo)}
-            <span className="muted"> · {link.pullRequest.url}</span>
-          </p>
+          <>
+            <p className="mission-author" role="note" title={link.pullRequest.url}>
+              {recordLine(link.pullRequest, link.repo)}
+              <span className="muted"> · {link.pullRequest.url}</span>
+            </p>
+            <PullFollowPanel missionId={mission.id} />
+            <button type="button" className="btn" onClick={() => setPullOpen(true)}>
+              Push new commits…
+            </button>
+          </>
         ) : (
           <>
             <button type="button" className="btn" onClick={() => setPullOpen(true)}>

@@ -5,6 +5,7 @@ import type {
   GitHubStatus,
   IssueSummary,
   PullPreview,
+  PullStatus,
 } from '@shared/github'
 import { createGitHubStore, type GitHubApi } from './githubStore'
 
@@ -42,6 +43,8 @@ const api = (over: Partial<GitHubApi> = {}): GitHubApi => ({
   takeBackPlan: async () => undefined,
   pullPreview: async () => ({}) as PullPreview,
   pullOpen: async () => ({ number: 7, url: 'u', draft: true, existing: false }),
+  pullStatus: async () => ({}) as PullStatus,
+  pullFollowUp: async () => ({ taskId: 't1', reopened: true }),
   ...over,
 })
 
@@ -474,5 +477,69 @@ describe('pullPreview and pullOpen', () => {
       error: 'Something changed since you looked at this',
     })
     expect(reads).toBe(1)
+  })
+})
+
+describe('pullStatus and pullFollowUp', () => {
+  it('status asks about that mission and hands back what was read', async () => {
+    const asked: string[] = []
+    const status = { state: 'open' } as unknown as PullStatus
+    const store = createGitHubStore(
+      api({
+        pullStatus: async (missionId) => {
+          asked.push(missionId)
+          return status
+        },
+      }),
+    )
+    expect(await store.getState().pullStatus('m1')).toEqual({ ok: true, value: status })
+    expect(asked).toEqual(['m1'])
+  })
+
+  it('status says why it could not read, without the wrapper Electron adds', async () => {
+    const store = createGitHubStore(
+      api({
+        pullStatus: async () => {
+          throw new Error("Error invoking remote method 'x': GhError: GitHub could not be reached.")
+        },
+      }),
+    )
+    expect(await store.getState().pullStatus('m1')).toEqual({
+      ok: false,
+      error: 'GitHub could not be reached.',
+    })
+  })
+
+  it('follow-up sends exactly the request, and gives back the task made', async () => {
+    const sent: unknown[] = []
+    const store = createGitHubStore(
+      api({
+        pullFollowUp: async (request) => {
+          sent.push(request)
+          return { taskId: 't9', reopened: false }
+        },
+      }),
+    )
+    const outcome = await store
+      .getState()
+      .pullFollowUp({ missionId: 'm1', kind: 'check', ref: 'run:12' })
+    expect(sent).toEqual([{ missionId: 'm1', kind: 'check', ref: 'run:12' }])
+    expect(outcome).toEqual({ ok: true, value: { taskId: 't9', reopened: false } })
+  })
+
+  it('follow-up says why it was refused', async () => {
+    const store = createGitHubStore(
+      api({
+        pullFollowUp: async () => {
+          throw new Error('GitHubError: That check is not failing any more.')
+        },
+      }),
+    )
+    expect(
+      await store.getState().pullFollowUp({ missionId: 'm1', kind: 'check', ref: 'run:12' }),
+    ).toEqual({
+      ok: false,
+      error: 'That check is not failing any more.',
+    })
   })
 })

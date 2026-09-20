@@ -6,6 +6,12 @@
 // environment variable, because the real tool is run with a stripped-down environment):
 //   { "login": "octocat" | null,          who is signed in (null = signed out)
 //     "issues": [ {...GitHub issue objects...} ],
+//     "pull": { "state": "open", "merged": false, "draft": true, "head": "<40 hex>" },
+//     "checkRuns": [ {"id": 1, "name": "build", "status": "completed", "conclusion": "failure"} ],
+//     "statuses": [ {"context": "ci/x", "state": "success"} ],
+//     "checkOutputs": { "1": {"name": "build", "conclusion": "failure", "title": "...", "summary": "..."} },
+//     "reviews": [ {"id": 5, "user": {"login": "ada"}, "state": "CHANGES_REQUESTED", "body": "..."} ],
+//     "reviewComments": { "5": [ {"path": "a.ts", "line": 3, "body": "..."} ] },
 //     "defaultBranch": "main",            the repository's default branch
 //     "openPulls": [ {"number": 3} ],     open pull requests, whatever branch is asked about
 //     "nextPull": 7,                      the number a new pull request gets
@@ -116,6 +122,56 @@ if (args[0] === 'sleep') {
     respond(
       (script.openPulls ?? []).map((pull) => ({ number: pull.number, draft: pull.draft === true })),
     )
+    process.exit(0)
+  }
+  // A pull request that is being followed: its state, its checks and its reviews.
+  const pullOne = /^repos\/[^/]+\/[^/]+\/pulls\/(\d+)$/.exec(path ?? '')
+  if (pullOne) {
+    const pull = script.pull ?? {}
+    respond({
+      state: pull.state ?? 'open',
+      merged: pull.merged === true,
+      draft: pull.draft === true,
+      head: pull.head ?? 'a'.repeat(40),
+    })
+    process.exit(0)
+  }
+  if (/^repos\/[^/]+\/[^/]+\/commits\/[0-9a-f]+\/check-runs$/.test(path ?? '')) {
+    respond(script.checkRuns ?? [])
+    process.exit(0)
+  }
+  if (/^repos\/[^/]+\/[^/]+\/commits\/[0-9a-f]+\/status$/.test(path ?? '')) {
+    respond(script.statuses ?? [])
+    process.exit(0)
+  }
+  const checkRun = /^repos\/[^/]+\/[^/]+\/check-runs\/(\d+)$/.exec(path ?? '')
+  if (checkRun) {
+    const found = (script.checkOutputs ?? {})[checkRun[1]]
+    if (!found) fail('gh: Not Found (HTTP 404)')
+    respond({
+      name: found.name,
+      conclusion: found.conclusion,
+      title: found.title,
+      summary: found.summary,
+    })
+    process.exit(0)
+  }
+  if (/^repos\/[^/]+\/[^/]+\/pulls\/\d+\/reviews$/.test(path ?? '')) {
+    respond(
+      (script.reviews ?? []).map((r) => ({
+        id: r.id,
+        user: r.user?.login ?? null,
+        state: r.state,
+        body: r.body ?? null,
+      })),
+    )
+    process.exit(0)
+  }
+  const reviewComments = /^repos\/[^/]+\/[^/]+\/pulls\/\d+\/reviews\/(\d+)\/comments$/.exec(
+    path ?? '',
+  )
+  if (reviewComments) {
+    respond((script.reviewComments ?? {})[reviewComments[1]] ?? [])
     process.exit(0)
   }
   const list = /^repos\/([^/]+)\/([^/]+)\/issues$/.exec(path ?? '')

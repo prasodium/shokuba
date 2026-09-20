@@ -16,6 +16,7 @@ import { officeSettings } from './0014_office_settings'
 import { githubLinks } from './0015_github_links'
 import { missionPlanner } from './0016_mission_planner'
 import { githubPulls } from './0017_github_pulls'
+import { githubFeedback } from './0018_github_feedback'
 
 /** Ordered list of every migration. Append new ones; never edit or reorder old ones. */
 export const MIGRATIONS: readonly Migration[] = [
@@ -36,4 +37,5 @@ export const MIGRATIONS: readonly Migration[] = [
   githubLinks,
   missionPlanner,
   githubPulls,
+  githubFeedback,
 ]

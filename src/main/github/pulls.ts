@@ -122,7 +122,11 @@ export class PullRequestService {
       })
 
       if (preview.existing) {
-        this.record(missionId, preview, preview.existing.number, preview.existing.draft, plan)
+        // Only a pull request that was not already recorded (one opened elsewhere) is recorded now.
+        const recorded = this.deps.link(missionId)?.pullRequest?.number
+        if (recorded !== preview.existing.number) {
+          this.record(missionId, preview, preview.existing.number, preview.existing.draft, plan)
+        }
         return { ...preview.existing, existing: true }
       }
       try {
@@ -169,12 +173,6 @@ export class PullRequestService {
     const branch = missionBranch(missionId)
     const problems: string[] = []
     const warnings: string[] = []
-    if (link.pullRequest) {
-      problems.push(
-        `A pull request (#${link.pullRequest.number}) was already opened for this mission.`,
-      )
-    }
-
     // The work: what is on the mission branch, and where it started.
     const headSha = await git.resolve(link.repoRoot, branch)
     const baseSha = this.baseOf(missionId, link.repoRoot)
@@ -220,6 +218,13 @@ export class PullRequestService {
     }
     const base = await client.defaultBranch(ref)
     const existing = await client.findOpenPull(ref, branch)
+    // One opened for this mission before is followed: new commits are pushed to it while it is open.
+    // Once it is closed or merged there is nothing left to push to.
+    if (link.pullRequest && existing?.number !== link.pullRequest.number) {
+      problems.push(
+        `The pull request opened for this mission (#${link.pullRequest.number}) is no longer open on GitHub, so there is nothing to push new commits to.`,
+      )
+    }
     if (existing) {
       warnings.push(
         `A pull request for this branch is already open (#${existing.number}). Opening will push the new commits to it and will not open a second one.`,

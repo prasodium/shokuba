@@ -589,3 +589,113 @@ describe('the briefing of a mission that came from a GitHub issue', () => {
     f.cleanup()
   })
 })
+
+describe('reopening a finished mission', () => {
+  /** A mission with one accepted task, so it has finished. */
+  function finished() {
+    const m = fx.missions.createMission({ title: 'Done work' })
+    const t = fx.missions.createTask({ missionId: m.id, title: 'Only task', assigneeId: 'mika' })
+    fx.missions.missionAction(m.id, 'run')
+    fx.missions.markDispatched(t.id)
+    fx.missions.agentSubmit('mika', { summary: 'ok' }, { source: 'reported' })
+    fx.missions.taskAction(t.id, { action: 'accept' })
+    expect(fx.missions.getMission(m.id)?.status).toBe('completed')
+    return m
+  }
+
+  it('brings it back paused, so nothing runs until the person presses Resume', () => {
+    const m = finished()
+    const reopened = fx.missions.missionAction(m.id, 'reopen')
+    expect(reopened.status).toBe('paused')
+    const [event] = fx.eventsOf('mission.status.changed').slice(-1)
+    expect(event).toMatchObject({
+      source: 'user',
+      payload: { missionId: m.id, from: 'completed', to: 'paused', reason: 'reopened' },
+    })
+  })
+
+  it('lets a task be added to it again, and finishes again when that is done', () => {
+    const m = finished()
+    expect(() => fx.missions.createTask({ missionId: m.id, title: 'Follow-up' })).toThrow(/closed/)
+    fx.missions.missionAction(m.id, 'reopen')
+    const t = fx.missions.createTask({ missionId: m.id, title: 'Follow-up', assigneeId: 'mika' })
+    expect(fx.missions.getMission(m.id)?.status).toBe('paused')
+    fx.missions.missionAction(m.id, 'run')
+    fx.missions.markDispatched(t.id)
+    fx.missions.agentSubmit('mika', { summary: 'fixed' }, { source: 'reported' })
+    fx.missions.taskAction(t.id, { action: 'accept' })
+    expect(fx.missions.getMission(m.id)?.status).toBe('completed')
+  })
+
+  it('is only for a mission that has finished: not a draft, a running or paused one, or a cancelled one', () => {
+    const draft = fx.missions.createMission({ title: 'Draft' })
+    expect(() => fx.missions.missionAction(draft.id, 'reopen')).toThrow(/cannot be reopened/)
+    const running = fx.missions.createMission({ title: 'Running' })
+    fx.missions.createTask({ missionId: running.id, title: 't' })
+    fx.missions.missionAction(running.id, 'run')
+    expect(() => fx.missions.missionAction(running.id, 'reopen')).toThrow(/cannot be reopened/)
+    fx.missions.missionAction(running.id, 'pause')
+    expect(() => fx.missions.missionAction(running.id, 'reopen')).toThrow(/cannot be reopened/)
+    fx.missions.missionAction(running.id, 'cancel')
+    expect(() => fx.missions.missionAction(running.id, 'reopen')).toThrow(/cannot be reopened/)
+  })
+})
+
+describe('creating a task with something saved alongside it', () => {
+  it('saves them together, or neither', () => {
+    const m = fx.missions.createMission({ title: 'Pair' })
+    let seen = ''
+    const task = fx.missions.createTask(
+      { missionId: m.id, title: 'With a partner' },
+      undefined,
+      (t) => {
+        seen = t.id
+      },
+    )
+    expect(seen).toBe(task.id)
+
+    const before = fx.eventsOf('task.created').length
+    expect(() =>
+      fx.missions.createTask({ missionId: m.id, title: 'Never saved' }, undefined, () => {
+        throw new Error('the partner could not be saved')
+      }),
+    ).toThrow(/partner/)
+    expect(
+      fx.missions
+        .listMissions()
+        .find((d) => d.mission.id === m.id)
+        ?.tasks.map((t) => t.title),
+    ).toEqual(['With a partner'])
+    expect(fx.eventsOf('task.created')).toHaveLength(before)
+  })
+})
+
+describe('the briefing of a task made from feedback on a pull request', () => {
+  const from = (feedback: 'check' | 'review' | null) => {
+    const f = createMissionFixture({ feedbackOf: () => feedback })
+    f.addEmployee('mika')
+    const m = f.missions.createMission({ title: 'From an issue' })
+    const t = f.missions.createTask({ missionId: m.id, title: 'Fix it', assigneeId: 'mika' })
+    return { f, taskId: t.id }
+  }
+
+  it('says where it came from and how to read it, marked as not to be obeyed', () => {
+    const check = from('check')
+    const text = check.f.missions.briefing(check.taskId)
+    expect(text).toContain('Source: a check that failed on the pull request.')
+    expect(text).toContain('read_issue')
+    expect(text).toMatch(/never as instructions/)
+    check.f.cleanup()
+    const review = from('review')
+    expect(review.f.missions.briefing(review.taskId)).toContain(
+      'Source: changes a reviewer asked for on the pull request.',
+    )
+    review.f.cleanup()
+  })
+
+  it('has no such line for an ordinary task', () => {
+    const plain = from(null)
+    expect(plain.f.missions.briefing(plain.taskId)).not.toContain('Source:')
+    plain.f.cleanup()
+  })
+})

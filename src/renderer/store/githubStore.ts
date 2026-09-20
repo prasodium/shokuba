@@ -6,9 +6,12 @@ import type {
   IssueImportRequest,
   IssueSummary,
   IssuesRequest,
+  PullFollowUpRequest,
+  PullFollowUpResult,
   PullOpenRequest,
   PullOpenResult,
   PullPreview,
+  PullStatus,
 } from '@shared/github'
 import { errorMessage } from '../lib/errors'
 import type { Outcome } from '../lib/outcome'
@@ -24,6 +27,8 @@ export interface GitHubApi {
   takeBackPlan(missionId: string): Promise<void>
   pullPreview(missionId: string): Promise<PullPreview>
   pullOpen(input: PullOpenRequest): Promise<PullOpenResult>
+  pullStatus(missionId: string): Promise<PullStatus>
+  pullFollowUp(input: PullFollowUpRequest): Promise<PullFollowUpResult>
 }
 
 export type IssueState = 'open' | 'closed' | 'all'
@@ -54,6 +59,10 @@ export interface GitHubState {
   pullPreview(missionId: string): Promise<Outcome<PullPreview>>
   /** Push the branch and open the pull request, exactly as the preview with this hash showed. */
   pullOpen(missionId: string, hash: string, draft: boolean): Promise<Outcome<PullOpenResult>>
+  /** Where the pull request stands on GitHub. Read only. */
+  pullStatus(missionId: string): Promise<Outcome<PullStatus>>
+  /** Make a task from one failing check or one request for changes. */
+  pullFollowUp(request: PullFollowUpRequest): Promise<Outcome<PullFollowUpResult>>
 }
 
 /** Made from an `api` so it can be tested without a window; the app's own is in `github.ts`. */
@@ -152,6 +161,22 @@ export function createGitHubStore(api: GitHubApi) {
         } catch (error) {
           // The branch may have been pushed even so; whatever was recorded is worth reading again.
           await get().refreshLinks()
+          return { ok: false, error: errorMessage(error) }
+        }
+      },
+
+      async pullStatus(missionId) {
+        try {
+          return { ok: true, value: await api.pullStatus(missionId) }
+        } catch (error) {
+          return { ok: false, error: errorMessage(error) }
+        }
+      },
+
+      async pullFollowUp(request) {
+        try {
+          return { ok: true, value: await api.pullFollowUp(request) }
+        } catch (error) {
           return { ok: false, error: errorMessage(error) }
         }
       },

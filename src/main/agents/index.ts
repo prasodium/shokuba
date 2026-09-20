@@ -6,6 +6,7 @@ import { GitError } from '../git/runner'
 import { GitService } from '../git/service'
 import { GitHubClient } from '../github/client'
 import { GhCli, type GhRunner } from '../github/gh'
+import { FeedbackStore, PullFollowService } from '../github/follow'
 import { IssueReader } from '../github/issue-brief'
 import { IssuePlanning } from '../github/planning'
 import { PullRequestService } from '../github/pulls'
@@ -111,6 +112,8 @@ export interface AgentServices {
   issuePlanning: IssuePlanning
   /** Previewing and opening a pull request: the one thing that writes to GitHub. */
   pulls: PullRequestService
+  /** Following the pull request (read only), and making tasks from what goes wrong with it. */
+  follow: PullFollowService
   views: AgentViews
   /** Stops every running agent, then closes the report listener. */
   close(): Promise<void>
@@ -166,6 +169,8 @@ export async function createAgentServices(
       const link = github.link(missionId)
       return link ? { number: link.issueNumber, repo: link.repo } : null
     },
+    // Whether a task was made from what a check or a reviewer said about the pull request.
+    feedbackOf: (taskId: string) => feedback.kindOf(taskId),
   })
   const team = (): Array<{
     id: string
@@ -398,6 +403,7 @@ export async function createAgentServices(
     logger: services.logger,
   })
 
+  const feedback = new FeedbackStore(services.db)
   const githubClient = new GitHubClient(
     options.github ??
       new GhCli({ platform: options.platform, env: options.env, home: options.home }),
@@ -422,7 +428,18 @@ export async function createAgentServices(
     workingDirectories: () => employees.list().map((employee) => employee.workingDirectory),
   })
 
-  const issueReader = new IssueReader({ missions, link: (id: string) => github.link(id) })
+  const issueReader = new IssueReader({
+    missions,
+    link: (id: string) => github.link(id),
+    feedback: (taskId: string) => feedback.get(taskId),
+  })
+  const follow = new PullFollowService({
+    audit: services.audit,
+    feedback,
+    missions,
+    link: (id: string) => github.link(id),
+    client: githubClient,
+  })
   const issuePlanning = new IssuePlanning({
     missions,
     link: (id: string) => github.link(id),
@@ -497,6 +514,7 @@ export async function createAgentServices(
     github,
     issuePlanning,
     pulls,
+    follow,
     views,
     async close() {
       reviewCleaner.stop()

@@ -35,7 +35,10 @@ export interface TeamPlace {
 }
 
 export function createMissionFixture(
-  options: { sourceOf?: MissionServiceDeps['sourceOf'] } = {},
+  options: {
+    sourceOf?: MissionServiceDeps['sourceOf']
+    feedbackOf?: MissionServiceDeps['feedbackOf']
+  } = {},
 ): MissionFixture {
   const dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'shokuba-missions-')))
   const services = createServices({
@@ -56,6 +59,7 @@ export function createMissionFixture(
     events: services.events,
     employeeExists: (id) => employees.has(id),
     ...(options.sourceOf && { sourceOf: options.sourceOf }),
+    ...(options.feedbackOf && { feedbackOf: options.feedbackOf }),
     newId: () => `id-${++counter}`,
     now: () => new Date(Date.UTC(2026, 0, 1, 0, 0, ++tick)),
   })

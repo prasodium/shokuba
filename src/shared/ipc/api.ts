@@ -34,9 +34,12 @@ import type {
   IssueImportRequest,
   IssueSummary,
   IssuesRequest,
+  PullFollowUpRequest,
+  PullFollowUpResult,
   PullOpenRequest,
   PullOpenResult,
   PullPreview,
+  PullStatus,
 } from '../github'
 import type { ReviewSettings, ReviewSettingsSave, TaskReview } from '../reviews'
 import type {
@@ -324,6 +327,13 @@ export interface ShokubaApi {
      * refused unless everything is still exactly as the preview with this hash showed it.
      */
     pullOpen(input: PullOpenRequest): Promise<PullOpenResult>
+    /** Where the pull request stands on GitHub: open, closed or merged, its checks, its reviewers. Read only. */
+    pullStatus(missionId: string): Promise<PullStatus>
+    /**
+     * Make a task from one failing check or one request for changes on the pull request. What GitHub
+     * said is kept apart from the task and read by an agent only through a read-only tool.
+     */
+    pullFollowUp(input: PullFollowUpRequest): Promise<PullFollowUpResult>
   }
   messages: {
     /** Recent conversations, newest first. */

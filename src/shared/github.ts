@@ -124,6 +124,69 @@ export interface PullPreview {
   hash: string
 }
 
+/** How a check on a pull request stands. */
+export const CHECK_STATES = ['passed', 'failed', 'pending'] as const
+export type CheckState = (typeof CHECK_STATES)[number]
+
+/** One check (a CI run or a commit status) on a pull request. Its name was written by the repository. */
+export interface PullCheck {
+  /** What to hand back to ask for a task about it: `run:<id>` or `status:<name>`. */
+  ref: string
+  name: string
+  state: CheckState
+  /** The check's page on GitHub, made from the repository and its number; null for a plain status. */
+  url: string | null
+}
+
+/** A reviewer who asked for changes. */
+export interface PullReviewNote {
+  /** The review's number, as text. */
+  ref: string
+  author: string
+}
+
+/** Where a pull request Shokuba opened stands on GitHub. Read only. */
+export interface PullStatus {
+  missionId: string
+  number: number
+  url: string
+  state: 'open' | 'closed' | 'merged'
+  draft: boolean
+  checks: { overall: 'passing' | 'failing' | 'pending' | 'none'; items: PullCheck[] }
+  /** Reviewers whose latest decision is "changes requested". */
+  changesRequested: PullReviewNote[]
+  approvedBy: string[]
+  checkedAt: string
+}
+
+export const PullStatusRequestSchema = z.strictObject({
+  missionId: z.string().min(1).max(200),
+})
+export type PullStatusRequest = z.input<typeof PullStatusRequestSchema>
+
+/** `run:<number>` or `status:<name>`: which check a task is wanted for. */
+export const CHECK_REF_PATTERN = /^(?:run:[0-9]{1,15}|status:[^\n\r]{1,200})$/
+
+export const PullFollowUpRequestSchema = z.discriminatedUnion('kind', [
+  z.strictObject({
+    missionId: z.string().min(1).max(200),
+    kind: z.literal('check'),
+    ref: z.string().regex(CHECK_REF_PATTERN),
+  }),
+  z.strictObject({
+    missionId: z.string().min(1).max(200),
+    kind: z.literal('review'),
+    ref: z.string().regex(/^[0-9]{1,15}$/),
+  }),
+])
+export type PullFollowUpRequest = z.input<typeof PullFollowUpRequestSchema>
+
+export interface PullFollowUpResult {
+  taskId: string
+  /** The mission had finished, and was reopened (paused) so the task can be worked on. */
+  reopened: boolean
+}
+
 export const PullPreviewRequestSchema = z.strictObject({
   missionId: z.string().min(1).max(200),
 })

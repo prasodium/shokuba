@@ -1885,3 +1885,38 @@ h4 {
   padding-top: 10px;
   background: var(--surface);
 }
+
+/* Following the pull request. */
+.pull-follow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+.pull-follow-head {
+  margin: 0;
+  font-size: 13px;
+}
+.pull-follow-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pull-follow-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  font-size: 13px;
+}
+.pull-follow-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

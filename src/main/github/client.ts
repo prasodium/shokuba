@@ -1,6 +1,8 @@
 import { z } from 'zod'
 import {
   BRANCH_NAME_PATTERN,
+  type CheckState,
+  type PullCheck,
   MAX_ISSUE_BODY,
   MAX_ISSUE_TITLE,
   MAX_LABEL,
@@ -31,6 +33,18 @@ export const LOGIN_FIELD = '.login // empty'
 export const DEFAULT_BRANCH_FIELD = '.default_branch // empty'
 export const OPEN_PULLS_FIELD = '[.[] | {number, draft: (.draft == true)}]'
 export const CREATED_PULL_FIELD = '{number}'
+export const PULL_FIELDS =
+  '{state, merged: (.merged_at != null), draft: (.draft == true), head: .head.sha}'
+export const CHECK_RUNS_FIELDS = '[.check_runs[] | {id, name, status, conclusion}]'
+export const STATUSES_FIELDS = '[.statuses[] | {context, state}]'
+export const CHECK_RUN_FIELDS = '{name, conclusion, title: .output.title, summary: .output.summary}'
+export const REVIEWS_FIELDS = '[.[] | {id, user: .user.login, state, body}]'
+export const REVIEW_FIELDS = '{id, user: .user.login, state, body}'
+export const REVIEW_COMMENTS_FIELDS = '[.[] | {path, line: (.line // .original_line), body}]'
+/** The most of a check's output, a review's text or an inline comment that is kept. */
+export const MAX_FEEDBACK = 4_000
+export const MAX_REVIEW_COMMENTS = 20
+const COMMIT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/
 /** The most GitHub accepts in a pull request's title and text. */
 export const MAX_PULL_TITLE = 256
 export const MAX_PULL_BODY = 60_000
@@ -91,9 +105,44 @@ function parseJson(text: string): unknown {
   }
 }
 
+/** A login as GitHub allows it (an app's login ends in `[bot]`). */
+const LOGIN_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(?:\[bot\])?$/
+
+function assertNumber(number: number): void {
+  if (!Number.isInteger(number) || number < 1) throw new GhError('failed', 'That is not a number.')
+}
+
 function assertRepo(repo: RepoRef): void {
   // The names go into a request path, so they are checked again here, whoever passed them.
   if (!isRepoRef(repo)) throw new GhError('failed', 'That is not a GitHub repository name.')
+}
+
+/** How a CI run stands, from the two words GitHub gives it. */
+export function runState(status: unknown, conclusion: unknown): CheckState {
+  if (status !== 'completed') return 'pending'
+  if (conclusion === 'success' || conclusion === 'neutral' || conclusion === 'skipped')
+    return 'passed'
+  const failed = [
+    'failure',
+    'timed_out',
+    'cancelled',
+    'action_required',
+    'startup_failure',
+    'stale',
+  ]
+  return typeof conclusion === 'string' && failed.includes(conclusion) ? 'failed' : 'pending'
+}
+
+/** How a commit status stands. */
+export function statusState(state: unknown): CheckState {
+  if (state === 'success') return 'passed'
+  if (state === 'failure' || state === 'error') return 'failed'
+  return 'pending'
+}
+
+/** The address of a check's page, made from the repository and its number. */
+export function checkUrl(repo: RepoRef, id: number): string {
+  return `https://github.com/${repo.owner}/${repo.repo}/runs/${id}`
 }
 
 /** The address of a pull request, made from the repository and number. */
@@ -291,6 +340,230 @@ export class GitHubClient {
       throw new GhError('bad-response', 'GitHub answered with something Shokuba could not read.')
     }
     return { number: made.data.number, url: pullUrl(repo, made.data.number) }
+  }
+
+  /** Where a pull request stands: open, closed, or merged; whether it is a draft; the commit it is at. */
+  async getPull(
+    repo: RepoRef,
+    number: number,
+  ): Promise<{ state: 'open' | 'closed' | 'merged'; draft: boolean; head: string }> {
+    assertRepo(repo)
+    assertNumber(number)
+    const text = await this.gh.run([
+      ...API,
+      '-X',
+      'GET',
+      '--jq',
+      PULL_FIELDS,
+      `repos/${repo.owner}/${repo.repo}/pulls/${number}`,
+    ])
+    const one = z
+      .object({
+        state: z.enum(['open', 'closed']),
+        merged: z.unknown().optional(),
+        draft: z.unknown().optional(),
+        head: z.string().regex(COMMIT_ID),
+      })
+      .safeParse(parseJson(text))
+    if (!one.success) {
+      throw new GhError('bad-response', 'GitHub answered with something Shokuba could not read.')
+    }
+    return {
+      state: one.data.merged === true ? 'merged' : one.data.state,
+      draft: one.data.draft === true,
+      head: one.data.head,
+    }
+  }
+
+  /** The checks on a commit: CI runs and commit statuses. Names were written by the repository. */
+  async listChecks(repo: RepoRef, commit: string): Promise<PullCheck[]> {
+    assertRepo(repo)
+    if (!COMMIT_ID.test(commit)) throw new GhError('failed', 'That is not a commit id.')
+    const base = `repos/${repo.owner}/${repo.repo}/commits/${commit}`
+    const runs = parseJson(
+      await this.gh.run([
+        ...API,
+        '-X',
+        'GET',
+        '--jq',
+        CHECK_RUNS_FIELDS,
+        `${base}/check-runs`,
+        '-f',
+        'per_page=100',
+      ]),
+    )
+    const statuses = parseJson(
+      await this.gh.run([
+        ...API,
+        '-X',
+        'GET',
+        '--jq',
+        STATUSES_FIELDS,
+        `${base}/status`,
+        '-f',
+        'per_page=100',
+      ]),
+    )
+    if (!Array.isArray(runs) || !Array.isArray(statuses)) {
+      throw new GhError('bad-response', 'GitHub answered with something Shokuba could not read.')
+    }
+    const items: PullCheck[] = []
+    for (const item of runs) {
+      const one = z
+        .object({
+          id: z.number().int().min(1),
+          name: z.unknown().optional(),
+          status: z.unknown().optional(),
+          conclusion: z.unknown().optional(),
+        })
+        .safeParse(item)
+      if (!one.success) continue
+      const name = cleanLine(one.data.name, 120)
+      items.push({
+        ref: `run:${one.data.id}`,
+        name: name.length > 0 ? name : `check ${one.data.id}`,
+        state: runState(one.data.status, one.data.conclusion),
+        url: checkUrl(repo, one.data.id),
+      })
+    }
+    for (const item of statuses) {
+      const one = z
+        .object({ context: z.unknown().optional(), state: z.unknown().optional() })
+        .safeParse(item)
+      if (!one.success) continue
+      const name = cleanLine(one.data.context, 120)
+      if (name.length === 0) continue
+      items.push({ ref: `status:${name}`, name, state: statusState(one.data.state), url: null })
+    }
+    return items
+  }
+
+  /** What one CI run reported, for a task about it. Written by the repository's workflow: untrusted. */
+  async checkOutput(
+    repo: RepoRef,
+    id: number,
+  ): Promise<{ name: string; conclusion: string; title: string; summary: string }> {
+    assertRepo(repo)
+    assertNumber(id)
+    const text = await this.gh.run([
+      ...API,
+      '-X',
+      'GET',
+      '--jq',
+      CHECK_RUN_FIELDS,
+      `repos/${repo.owner}/${repo.repo}/check-runs/${id}`,
+    ])
+    const one = z
+      .object({
+        name: z.unknown().optional(),
+        conclusion: z.unknown().optional(),
+        title: z.unknown().optional(),
+        summary: z.unknown().optional(),
+      })
+      .safeParse(parseJson(text))
+    if (!one.success) {
+      throw new GhError('bad-response', 'GitHub answered with something Shokuba could not read.')
+    }
+    return {
+      name: cleanLine(one.data.name, 120),
+      conclusion: cleanLine(one.data.conclusion, 40),
+      title: cleanLine(one.data.title, 200),
+      summary: cleanText(one.data.summary, MAX_FEEDBACK),
+    }
+  }
+
+  /** The reviews on a pull request, oldest first. What reviewers wrote is untrusted. */
+  async listReviews(
+    repo: RepoRef,
+    number: number,
+  ): Promise<Array<{ id: number; author: string; state: string; body: string }>> {
+    assertRepo(repo)
+    assertNumber(number)
+    const data = parseJson(
+      await this.gh.run([
+        ...API,
+        '-X',
+        'GET',
+        '--jq',
+        REVIEWS_FIELDS,
+        `repos/${repo.owner}/${repo.repo}/pulls/${number}/reviews`,
+        '-f',
+        'per_page=100',
+      ]),
+    )
+    if (!Array.isArray(data)) {
+      throw new GhError('bad-response', 'GitHub answered with something Shokuba could not read.')
+    }
+    const reviews: Array<{ id: number; author: string; state: string; body: string }> = []
+    for (const item of data) {
+      const one = z
+        .object({
+          id: z.number().int().min(1),
+          user: z.unknown().optional(),
+          state: z.unknown().optional(),
+          body: z.unknown().optional(),
+        })
+        .safeParse(item)
+      if (!one.success) continue
+      const author = cleanLine(one.data.user, 60)
+      if (!LOGIN_PATTERN.test(author)) continue
+      reviews.push({
+        id: one.data.id,
+        author,
+        state: cleanLine(one.data.state, 30).toUpperCase(),
+        body: cleanText(one.data.body, MAX_FEEDBACK),
+      })
+    }
+    return reviews
+  }
+
+  /** The inline comments of one review: which file and line, and what was said. Untrusted. */
+  async reviewComments(
+    repo: RepoRef,
+    number: number,
+    reviewId: number,
+  ): Promise<Array<{ path: string; line: number | null; body: string }>> {
+    assertRepo(repo)
+    assertNumber(number)
+    assertNumber(reviewId)
+    const data = parseJson(
+      await this.gh.run([
+        ...API,
+        '-X',
+        'GET',
+        '--jq',
+        REVIEW_COMMENTS_FIELDS,
+        `repos/${repo.owner}/${repo.repo}/pulls/${number}/reviews/${reviewId}/comments`,
+        '-f',
+        'per_page=100',
+      ]),
+    )
+    if (!Array.isArray(data)) {
+      throw new GhError('bad-response', 'GitHub answered with something Shokuba could not read.')
+    }
+    const comments: Array<{ path: string; line: number | null; body: string }> = []
+    for (const item of data) {
+      const one = z
+        .object({
+          path: z.unknown().optional(),
+          line: z.unknown().optional(),
+          body: z.unknown().optional(),
+        })
+        .safeParse(item)
+      if (!one.success) continue
+      const body = cleanText(one.data.body, 1_000)
+      if (body.length === 0) continue
+      comments.push({
+        path: cleanLine(one.data.path, 200),
+        line:
+          typeof one.data.line === 'number' && Number.isInteger(one.data.line) && one.data.line > 0
+            ? one.data.line
+            : null,
+        body,
+      })
+      if (comments.length >= MAX_REVIEW_COMMENTS) break
+    }
+    return comments
   }
 
   async getIssue(repo: RepoRef, number: number): Promise<IssueDetail> {
