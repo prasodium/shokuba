@@ -377,6 +377,15 @@ The office has thirteen desks (twelve open and one in the cabin); more employees
 
 **What handoffs claim, and do not.** Every flight, card and lit screen is a picture of something in the record, and says only that: a card in your inbox means the task is `submitted`, a green screen means the project's checks passed on the work waiting for you, a reviewer at a reading desk means a review is in progress. None of it is marked `inferred`, because none of it is guessed (the reviewer's bubble still carries the label of their agent's own state). Shokuba's own checks and an agent's own test run look different on purpose: the bench lights up and its tag says _checks_ for the first; a person walks to it and their bubble says `inferred` for the second. A green card is not a verdict on the work: an independent review is advice and only you accept a task.
 
+**Office life (slice 6a).** The one thing the office shows that is not a picture of something recorded, so it is fenced in, in a small pure module and three thin connections.
+
+- `life.ts` decides who is on a tea or snack break, from what the director already sees (each employee's state and when it began) plus whether they are already at the counter and how many spots are free. Time and chance are passed in (a clock and a die), so every rule is tested with a fake clock and a scripted die. The rules: only while the agent's state is `idle` or `waiting` and nothing real gives them somewhere to be; idle for a minute, then a wait drawn once and up to two and a half minutes longer; at most a third of the team away at once (always at least one may go); tea or coffee for six in ten, else a snack, and the other counter if theirs is full; a stay of 20 to 35 seconds that starts on arriving; the break is over when the stay is, when their agent starts working, when they are given a review, or if they have not got there in 45 seconds; and two and a half minutes before the same person can go again. Switching it off drops every break and every cooldown.
+- The director gets it through the same **errand** mechanism a review uses (a reason to be at a kind of place, with no state to wait on), so the spot, the walking and the way home are the ones already built and tested. The scene passes it the number of free spots at each counter and who is standing at theirs, and remembers nothing about breaks itself.
+- The bubble knows three kinds of trip: our reading of what an agent is doing (`inferred`), a recorded fact (a review), and **simulated**. A simulated trip is never marked `inferred`, because it is not a reading of the agent at all; it carries its own note, next to the state's own label. Someone at a counter holds a cup or a snack, and carries it back to their desk.
+- The switch is the **Office life** button in the office toolbar. It is on unless turned off, and remembered in this window's own store: a convenience, never something the app depends on, so a store that cannot be read or written leaves it on. There is no database table, no event and no IPC call behind it.
+
+**What office life claims, and does not.** A person at the tea counter means nothing about their agent except that it was idle or waiting. It is never recorded, never appears in the event log or the evidence pack, and nothing is ever sent to any agent because of it. It never runs while an agent is working, it stops the moment one is, and it says **simulated** every time.
+
 ## Planned
 
 ### More providers
@@ -385,4 +394,4 @@ Codex, Gemini CLI and a generic CLI. They implement the same `ProviderAdapter`; 
 
 ### The living office
 
-Pathfinding, walking employees and visible handoffs are built (Phase 5). Life simulation (coffee, breaks, naps) is Phase 6: it only runs while an agent is idle or waiting, is switchable, always labelled as simulation, and never sends anything to an agent.
+Pathfinding, walking employees, visible handoffs (Phase 5) and simulated tea and snack breaks (Phase 6, slice 6a) are built. Chats at the pantry table and real messages shown with their subject are next (6b). Simulated life only runs while an agent is idle or waiting, is switchable, is always labelled as simulation, and never sends anything to an agent.

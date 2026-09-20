@@ -336,3 +336,44 @@ describe('errands', () => {
     expect(targetOf(d, 'ada')).toBeNull()
   })
 })
+
+describe('the spots that are free', () => {
+  const tea = places.find((p) => p.kind === 'tea') as Place
+  const asks = (id: string): Subject => ({ id, state: 'idle', since: T0, errand: 'tea' })
+
+  it('is every spot of that kind before anyone has one, and none for a kind that is not there', () => {
+    const director = new Director(places)
+    expect(director.openSpots('tea')).toBe(tea.slots.length)
+    expect(director.openSpots('qa')).toBe(
+      places.filter((p) => p.kind === 'qa').reduce((n, p) => n + p.slots.length, 0),
+    )
+    expect(new Director(places.filter((p) => p.kind !== 'tea')).openSpots('tea')).toBe(0)
+  })
+
+  it('goes down by one for each person given a spot, and back up when they leave', () => {
+    const director = new Director(places)
+    director.update(T0, [asks('a'), asks('b')])
+    expect(director.openSpots('tea')).toBe(tea.slots.length - 2)
+    // Other kinds are not touched.
+    expect(director.openSpots('snacks')).toBe(
+      places.filter((p) => p.kind === 'snacks').reduce((n, p) => n + p.slots.length, 0),
+    )
+    director.update(T0 + 1, [{ id: 'a', state: 'idle', since: T0 }, asks('b')])
+    expect(director.openSpots('tea')).toBe(tea.slots.length - 1)
+  })
+
+  it('counts spots across every place of the kind', () => {
+    const second: Place = { ...tea, id: 'tea-2' }
+    const director = new Director([...places, second])
+    expect(director.openSpots('tea')).toBe(tea.slots.length * 2)
+  })
+
+  it('is never more than there is, however many ask', () => {
+    const director = new Director(places)
+    director.update(
+      T0,
+      Array.from({ length: 10 }, (_, i) => asks(`e${i}`)),
+    )
+    expect(director.openSpots('tea')).toBe(0)
+  })
+})

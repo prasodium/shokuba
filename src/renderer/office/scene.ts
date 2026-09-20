@@ -2,7 +2,7 @@
 import 'pixi.js/unsafe-eval'
 import { Application, Container, Graphics, Polygon, Text, type TextOptions } from 'pixi.js'
 import type { AgentView } from '@shared/agents/view'
-import { bubbleFor, type BubbleModel } from './bubble'
+import { bubbleFor, type BubbleModel, type Trip } from './bubble'
 import { Director, type Assignment, type Subject } from './director'
 import {
   actionForKey,
@@ -46,6 +46,7 @@ import {
   snackShelfBoxes,
   teaCounterBoxes,
   walkerBoxes,
+  type Held,
 } from './furniture'
 import { FlightQueue, flightPoint, type Endpoint, type Flight, type Point3 } from './handoffs'
 import {
@@ -78,6 +79,7 @@ import {
   type RoomKind,
 } from './map'
 import { buildNavGrid, reachableFrom, seatExit, type NavGrid } from './nav'
+import { BREAK_KINDS, Life, type BreakKind } from './life'
 import { LED_COLORS, poseFor, type Pose } from './pose'
 import {
   advance,
@@ -341,6 +343,7 @@ class Bubble {
       model.tone,
       model.provenance,
       model.caution,
+      model.simulated,
       dot,
     ])
     if (key === this.key) return
@@ -350,9 +353,11 @@ class Bubble {
     this.label.text = model.label
     this.detail.text = model.detail ?? ''
     this.detail.visible = model.detail !== null
-    // Small notes on the state: a restriction from the circuit breaker, and whether the state
-    // is our inference or demo data. Both can apply.
-    const notes = [model.caution, model.provenance].filter((note) => note !== null)
+    // Small notes on the state: a restriction from the circuit breaker, whether the state is our
+    // inference or demo data, and whether they are away for simulated office life. Any can apply.
+    const notes = [model.caution, model.provenance, model.simulated ? 'simulated' : null].filter(
+      (note) => note !== null,
+    )
     this.tag.text = notes.join(' · ')
     this.tag.visible = notes.length > 0
 
@@ -415,8 +420,8 @@ class Desk {
   private awayAt: PlaceKind | null = null
   /** Where their head is while they are away, so the bubble goes with them. */
   private headAt: { x: number; y: number; z: number } | null = null
-  /** Their trip is a recorded fact, not our reading of what their agent is doing. */
-  private recorded = false
+  /** Why they are away: our reading of their agent, a recorded fact, or simulated office life. */
+  private trip: Trip = 'inferred'
   /** A paper on the desk, while they have a task in hand. */
   private paper = false
 
@@ -479,12 +484,12 @@ class Desk {
     away: boolean
     at: PlaceKind | null
     head: { x: number; y: number; z: number } | null
-    recorded: boolean
+    trip: Trip
   }): void {
     this.away = travel.away
     this.awayAt = travel.at
     this.headAt = travel.head
-    this.recorded = travel.recorded
+    this.trip = travel.trip
   }
 
   /** The desk, with a paper on it while their owner has a task in hand. */
@@ -545,7 +550,7 @@ class Desk {
     }
     drawBox(this.fx, { ...led, color: ledColor })
 
-    const model = bubbleFor(this.view, this.awayAt, this.recorded)
+    const model = bubbleFor(this.view, this.awayAt, this.trip)
     this.bubble.update(model, LED_COLORS[poseFor(state, 0).led])
     this.bubble.tick(time)
   }
@@ -623,7 +628,7 @@ class WalkerView {
     this.g.on('pointertap', () => onSelect(id))
   }
 
-  draw(walker: Walker): void {
+  draw(walker: Walker, holding: Held | null): void {
     const away = walker.mode !== 'seated'
     this.g.visible = away
     if (!away) return
@@ -637,6 +642,7 @@ class WalkerView {
       gaitPhase(walker),
       walker.mode === 'walking',
       this.shirt,
+      holding,
     )
     for (const box of boxes) drawBox(this.g, box)
   }
@@ -658,8 +664,10 @@ interface Traveller {
   target: Assignment | null
   /** The reading desk they are going to sit at (or are sitting at), if that is where they were sent. */
   chair: { placeId: string; slot: DeskSlot; home: Home } | null
-  /** Where they are going is a recorded fact (a review), not our reading of their agent. */
-  recorded: boolean
+  /** Why they are where they are going: our reading of their agent, a recorded fact, or simulated life. */
+  trip: Trip
+  /** What they carry back from the pantry, until they are back at their desk. */
+  holding: Held | null
 }
 
 /** The colours the bench's screens light up with while the checks run, and after. */
@@ -695,6 +703,10 @@ export class OfficeScene {
   private signals: OfficeSignals = EMPTY_SIGNALS
   private readingDesks = new Map<string, ReadingDesk>()
   private readonly flightQueue = new FlightQueue()
+  /** The simulated life of the office (tea and snack breaks), and whether it is switched on. */
+  private readonly life = new Life()
+  private lifeOn = true
+  private onBreak = new Map<string, BreakKind>()
   /** Where each flight in the air is going, fixed when it takes off. */
   private readonly routes = new Map<string, { from: Point3; to: Point3 }>()
   private map: OfficeMap = buildOffice()
@@ -887,6 +899,14 @@ export class OfficeScene {
     // With reduced motion nothing crosses the room: the places already show where the work is.
     if (this.reducedMotion || this.destroyed) return
     this.flightQueue.push(flight, performance.now())
+  }
+
+  /**
+   * Switch the office's simulated life (tea and snack breaks while an agent is idle) on or off.
+   * Off calls everyone on a break back to their desk.
+   */
+  setLife(on: boolean): void {
+    this.lifeOn = on
   }
 
   /** A click on a desk selects it, unless the press was really a drag of the camera. */
@@ -1314,7 +1334,8 @@ export class OfficeScene {
         commanded: 'desk',
         target: null,
         chair: null,
-        recorded: false,
+        trip: 'inferred',
+        holding: null,
       })
     }
   }
@@ -1389,18 +1410,39 @@ export class OfficeScene {
   private moveEveryone(dt: number): void {
     const now = Date.now()
     const reviewing = new Set(this.signals.reviewing)
-    const subjects: Subject[] = []
-    for (const id of this.deskViews.keys()) {
+    const people = [...this.deskViews.keys()].map((id) => {
       const view = this.views[id]
       const since = view ? Date.parse(view.since) : NaN
-      subjects.push({
+      return {
         id,
-        state: view?.state ?? 'offline',
+        state: view?.state ?? ('offline' as const),
         since: Number.isFinite(since) ? since : now,
-        // Doing an independent review is a recorded fact, and it is done at a reading desk.
-        ...(reviewing.has(id) ? { errand: 'reading' as const } : {}),
-      })
+      }
+    })
+
+    // Simulated life: who is on a tea or snack break, decided from the same states the director sees.
+    // It never applies while their agent is working or they have a review to do, and not at all with
+    // reduced motion or when it is switched off.
+    const arrived = new Set<string>()
+    for (const [id, traveller] of this.travellers) {
+      const kind = traveller.target?.kind
+      if (traveller.walker.mode === 'standing' && kind && BREAK_KINDS.some((b) => b === kind)) {
+        arrived.add(id)
+      }
     }
+    this.onBreak = this.life.update({
+      now,
+      enabled: this.lifeOn && !this.reducedMotion,
+      subjects: people.map((p) => ({ ...p, busy: reviewing.has(p.id) })),
+      arrived,
+      open: { tea: this.director.openSpots('tea'), snacks: this.director.openSpots('snacks') },
+    })
+
+    const subjects: Subject[] = people.map((p) => {
+      // Doing an independent review is a recorded fact, and it is done at a reading desk.
+      const errand = reviewing.has(p.id) ? ('reading' as const) : this.onBreak.get(p.id)
+      return { ...p, ...(errand ? { errand } : {}) }
+    })
     const decisions = this.director.update(now, subjects, { reducedMotion: this.reducedMotion })
 
     const sitters = new Map<string, { shirt: number; pose: Pose }>()
@@ -1416,8 +1458,21 @@ export class OfficeScene {
       }
       // Never more than a moment's worth, so coming back to a hidden window does not make anyone leap.
       traveller.walker = advance(traveller.walker, Math.min(dt, 0.25))
-      traveller.view.draw(traveller.walker)
-      traveller.recorded = decision.target?.kind === 'reading' && reviewing.has(id)
+
+      // Someone at the tea counter holds a cup, at the snack shelf a snack, and carries it back.
+      const kind = traveller.target?.kind
+      if (traveller.walker.mode === 'seated') traveller.holding = null
+      else if (traveller.walker.mode === 'standing' && kind === 'tea') traveller.holding = 'cup'
+      else if (traveller.walker.mode === 'standing' && kind === 'snacks')
+        traveller.holding = 'snack'
+      traveller.view.draw(traveller.walker, traveller.holding)
+
+      traveller.trip =
+        kind === 'reading' && reviewing.has(id)
+          ? 'recorded'
+          : kind && this.onBreak.get(id) === kind
+            ? 'simulated'
+            : 'inferred'
 
       const seat = traveller.walker.mode === 'seated' ? traveller.chair : null
       if (seat) {
@@ -1435,7 +1490,7 @@ export class OfficeScene {
           : seat
             ? { x: seat.slot.x + HEAD_ANCHOR.x, y: seat.slot.y + HEAD_ANCHOR.y, z: HEAD_ANCHOR.z }
             : null,
-        recorded: traveller.recorded,
+        trip: traveller.trip,
       })
     }
     for (const [placeId, reading] of this.readingDesks)

@@ -158,14 +158,48 @@ describe('someone who is away from their desk', () => {
   it('carries only the state’s own label when the trip is a recorded fact, like a review', () => {
     const reviewing = (source: 'reported' | 'inferred' | 'simulated' | 'system') =>
       view({ state: 'thinking', stateSource: source, activity: null })
-    const away = bubbleFor(reviewing('reported'), 'reading', true)
+    const away = bubbleFor(reviewing('reported'), 'reading', 'recorded')
     expect(away.detail).toBe('in the reading room')
     expect(away.provenance).toBeNull()
+    expect(away.simulated).toBe(false)
     // The state's own label still shows, and a demo is still a demo.
-    expect(bubbleFor(reviewing('inferred'), 'reading', true).provenance).toBe('inferred')
-    expect(bubbleFor(reviewing('simulated'), 'reading', true).provenance).toBe('demo')
-    // Not recorded (the default) is our reading, as before.
-    expect(bubbleFor(reviewing('reported'), 'reading', false).provenance).toBe('inferred')
+    expect(bubbleFor(reviewing('inferred'), 'reading', 'recorded').provenance).toBe('inferred')
+    expect(bubbleFor(reviewing('simulated'), 'reading', 'recorded').provenance).toBe('demo')
+    // Our reading (the default) is marked, as before.
+    expect(bubbleFor(reviewing('reported'), 'reading', 'inferred').provenance).toBe('inferred')
+    expect(bubbleFor(reviewing('reported'), 'reading').provenance).toBe('inferred')
+  })
+
+  describe('on a simulated break', () => {
+    const idle = (source: 'reported' | 'inferred' | 'simulated' | 'system') =>
+      view({ state: 'idle', stateSource: source, activity: null })
+
+    it('says where they are and that it is simulated, and nothing about what their agent is doing', () => {
+      const tea = bubbleFor(idle('reported'), 'tea', 'simulated')
+      expect(tea.detail).toBe('at the tea corner')
+      expect(tea.label).toBe('Idle')
+      expect(tea.simulated).toBe(true)
+      // The trip is not our reading of the agent, so it is not marked inferred.
+      expect(tea.provenance).toBeNull()
+      expect(bubbleFor(idle('reported'), 'snacks', 'simulated').detail).toBe('at the snack corner')
+    })
+
+    it('keeps the state’s own label as well, so a demo agent is still a demo', () => {
+      const demo = bubbleFor(idle('simulated'), 'tea', 'simulated')
+      expect(demo).toMatchObject({ provenance: 'demo', simulated: true })
+    })
+
+    it('is marked only while they are away', () => {
+      expect(bubbleFor(idle('reported'), null, 'simulated').simulated).toBe(false)
+      expect(bubbleFor(idle('reported')).simulated).toBe(false)
+      expect(bubbleFor(undefined, 'tea', 'simulated').simulated).toBe(false)
+    })
+
+    it('is never claimed for a trip that is not simulated', () => {
+      for (const trip of ['inferred', 'recorded'] as const) {
+        expect(bubbleFor(idle('reported'), 'tea', trip).simulated, trip).toBe(false)
+      }
+    })
   })
 
   it('does not mark someone at their desk any differently than before', () => {

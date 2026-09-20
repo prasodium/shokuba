@@ -58,6 +58,13 @@ export const BREAKER_HELP: Record<Exclude<BreakerLevel, 'normal'>, string> = {
 /** Provenance of a state as the UI should label it; null when it needs no label. */
 export type Provenance = 'inferred' | 'demo' | null
 
+/**
+ * Why someone is away from their desk, which decides how the bubble labels it: our reading of what
+ * their agent is doing (`inferred`), a recorded fact such as a review they were given (`recorded`),
+ * or the office's own simulated life (`simulated`), which is never a fact about the agent.
+ */
+export type Trip = 'inferred' | 'recorded' | 'simulated'
+
 export function provenance(source: EventSource): Provenance {
   if (source === 'simulated') return 'demo'
   if (source === 'inferred') return 'inferred'
@@ -73,6 +80,8 @@ export interface BubbleModel {
   provenance: Provenance
   /** Set when the circuit breaker is restraining the agent, so the office shows it at a glance. */
   caution: 'limited' | 'paused' | null
+  /** Set when where they are is simulated office life, and not anything their agent did. */
+  simulated: boolean
   /** Whether the bubble should be drawn at all. */
   visible: boolean
 }
@@ -97,13 +106,13 @@ export const AWAY_NOTES: Record<PlaceKind, string> = {
 
 /**
  * What the status bubble above an employee says, from their current view. `awayAt` is the kind of
- * place they have gone to, if they are not at their desk. `recorded` says the trip is a recorded
- * fact (a review Shokuba handed them) and not our reading of what their agent is doing.
+ * place they have gone to, if they are not at their desk, and `trip` says why: our reading of what
+ * their agent is doing, a recorded fact (a review Shokuba handed them), or simulated office life.
  */
 export function bubbleFor(
   view: AgentView | undefined,
   awayAt: PlaceKind | null = null,
-  recorded = false,
+  trip: Trip = 'inferred',
 ): BubbleModel {
   if (!view) {
     return {
@@ -112,6 +121,7 @@ export function bubbleFor(
       tone: 'off',
       provenance: null,
       caution: null,
+      simulated: false,
       visible: true,
     }
   }
@@ -135,9 +145,10 @@ export function bubbleFor(
 
   // Going somewhere because of what an agent is doing is our reading of it, never something the agent
   // said, so someone who is away for that is marked as such (a demo stays a demo). A trip that is a
-  // recorded fact carries only the state's own label.
+  // recorded fact, or the office's own simulated life, carries only the state's own label (the second
+  // has a note of its own).
   const provenanceNow: Provenance =
-    awayAt && !recorded
+    awayAt && trip === 'inferred'
       ? view.stateSource === 'simulated'
         ? 'demo'
         : 'inferred'
@@ -150,6 +161,7 @@ export function bubbleFor(
     tone: caution && tone !== 'error' ? 'wait' : tone,
     provenance: provenanceNow,
     caution,
+    simulated: awayAt !== null && trip === 'simulated',
     visible: true,
   }
 }

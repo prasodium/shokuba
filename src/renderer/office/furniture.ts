@@ -424,6 +424,27 @@ function turnBox(b: Box, turns: number): Box {
   }
 }
 
+/** What someone carries back from the pantry. */
+export type Held = 'cup' | 'snack'
+
+/** In front of the right hand, in the same local frame as the person: facing +y, about the origin. */
+function heldBoxes(holding: Held | null): Box[] {
+  if (holding === 'cup') {
+    return [
+      box(0.19, 0.06, 0.56, 0.13, 0.13, 0.15, 0xf2efe6),
+      // the tea or coffee, a little below the rim
+      box(0.205, 0.075, 0.69, 0.1, 0.1, 0.02, 0x7a4b2c),
+    ]
+  }
+  if (holding === 'snack') {
+    return [
+      box(0.17, 0.06, 0.56, 0.17, 0.08, 0.2, 0xd9705f),
+      box(0.17, 0.06, 0.64, 0.17, 0.085, 0.05, 0xf0b350),
+    ]
+  }
+  return []
+}
+
 /**
  * A person standing or walking, centred on `at` on the floor. `phase` is how far through a stride
  * they are (0 to 1); legs and arms swing opposite to each other while `walking`, and hang still
@@ -435,6 +456,7 @@ export function walkerBoxes(
   phase: number,
   walking: boolean,
   shirt: number,
+  holding: Held | null = null,
 ): Box[] {
   const swing = walking ? Math.sin(phase * Math.PI * 2) : 0
   const sleeve = shade(shirt, 0.85)
@@ -454,6 +476,7 @@ export function walkerBoxes(
     box(-0.19, -0.18, 1.12, 0.38, 0.06, 0.24, HAIR),
     box(-0.09, 0.16, 1.24, 0.06, 0.01, 0.06, HAIR),
     box(0.05, 0.16, 1.24, 0.06, 0.01, 0.06, HAIR),
+    ...heldBoxes(holding),
   ]
   const placed = local.map((b) => {
     const t = turnBox(b, facing)

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ZOOM_STEP } from '../office/camera'
 import { flightFor } from '../office/handoffs'
+import { readLifeSetting, writeLifeSetting } from '../office/lifeSetting'
 import { MAX_VISIBLE_EMPLOYEES } from '../office/map'
 import { OfficeScene, type CameraState, type SceneEmployee } from '../office/scene'
 import { onLiveEvent } from '../store/live'
@@ -8,12 +9,31 @@ import { useMissions } from '../store/missions'
 import { useOffice } from '../store/office'
 import { useOfficeSignals } from '../store/work'
 
-/** The isometric voxel office. It only *displays* what the event stream says. */
+/** This window's own store, or nothing if the browser will not give it out. */
+function browserStorage(): Storage | undefined {
+  try {
+    return window.localStorage
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The isometric voxel office. It only *displays* what the event stream says, with one labelled
+ * exception: simulated office life (tea and snack breaks while an agent is idle), which has its own
+ * switch.
+ */
 export function OfficeView({ onNew }: { onNew(): void }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const [scene, setScene] = useState<OfficeScene | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
   const [camera, setCamera] = useState<CameraState | null>(null)
+  const [life, setLife] = useState(() => readLifeSetting(browserStorage()))
+  // With the system's reduced-motion setting nobody walks, so there is no office life to switch.
+  const reducedMotion = useMemo(
+    () => window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+    [],
+  )
 
   const employees = useOffice((s) => s.employees)
   const views = useOffice((s) => s.views)
@@ -64,6 +84,7 @@ export function OfficeView({ onNew }: { onNew(): void }) {
   useEffect(() => scene?.setViews(views), [scene, views])
   useEffect(() => scene?.setSelected(selectedId), [scene, selectedId])
   useEffect(() => scene?.setSignals(signals), [scene, signals])
+  useEffect(() => scene?.setLife(life), [scene, life])
 
   // Work changing hands is drawn as it happens. Only news counts: opening the office never replays
   // what was recorded before.
@@ -136,6 +157,23 @@ export function OfficeView({ onNew }: { onNew(): void }) {
             onClick={() => scene?.setFollow(camera?.following !== true)}
           >
             Follow
+          </button>
+          <button
+            type="button"
+            className="office-control"
+            aria-pressed={life && !reducedMotion}
+            title={
+              reducedMotion
+                ? 'Off, because your system asks for reduced motion: nobody walks.'
+                : 'Employees take tea and snack breaks while their agent is idle. This is simulated, it is marked as simulated, and nothing is ever sent to an agent.'
+            }
+            disabled={!scene || reducedMotion}
+            onClick={() => {
+              writeLifeSetting(browserStorage(), !life)
+              setLife(!life)
+            }}
+          >
+            Office life
           </button>
         </div>
       )}

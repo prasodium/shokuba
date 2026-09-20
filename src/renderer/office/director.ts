@@ -105,6 +105,19 @@ export class Director {
     return this.rules.find((rule) => rule.state === subject.state)
   }
 
+  /** How many spots are free across the places of `kind`. */
+  openSpots(kind: PlaceKind): number {
+    const taken = this.taken()
+    let free = 0
+    for (const place of this.places) {
+      if (place.kind !== kind) continue
+      for (let slot = 0; slot < place.slots.length; slot += 1) {
+        if (!taken.has(`${place.id}:${slot}`)) free += 1
+      }
+    }
+    return free
+  }
+
   /** The first free spot at any place of `kind`, or null if they are all taken. */
   private freeSpot(kind: PlaceKind): Assignment | null {
     const taken = this.taken()

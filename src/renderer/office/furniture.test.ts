@@ -210,6 +210,62 @@ describe('a person on their feet', () => {
     expect(a).toEqual(b)
   })
 
+  describe('carrying something from the pantry', () => {
+    const empty = (facing: 0 | 1 | 2 | 3) => walkerBoxes(here, facing, 0, false, 0x336699)
+    const carrying = (facing: 0 | 1 | 2 | 3, held: 'cup' | 'snack') =>
+      walkerBoxes(here, facing, 0, false, 0x336699, held)
+    /** What they carry: the boxes that are not part of the empty-handed person. */
+    const extra = (facing: 0 | 1 | 2 | 3, held: 'cup' | 'snack') =>
+      carrying(facing, held).filter(
+        (b) => !empty(facing).some((e) => JSON.stringify(e) === JSON.stringify(b)),
+      )
+
+    it('is nothing at all when they carry nothing', () => {
+      for (const facing of [0, 1, 2, 3] as const) {
+        expect(walkerBoxes(here, facing, 0, false, 0x336699, null)).toEqual(empty(facing))
+      }
+    })
+
+    it('adds a few boxes for a cup and for a snack, and they look different', () => {
+      for (const facing of [0, 1, 2, 3] as const) {
+        const cup = extra(facing, 'cup')
+        const snack = extra(facing, 'snack')
+        expect(cup.length).toBeGreaterThan(0)
+        expect(snack.length).toBeGreaterThan(0)
+        expect(cup.map((b) => b.color)).not.toEqual(snack.map((b) => b.color))
+        // Nothing else about the person changes.
+        expect(carrying(facing, 'cup')).toHaveLength(empty(facing).length + cup.length)
+      }
+    })
+
+    it('holds it out in front, at about the height of the hand, and small', () => {
+      for (const held of ['cup', 'snack'] as const) {
+        for (const b of extra(0, held)) {
+          expect(b.y).toBeGreaterThan(here.y)
+          expect(b.z).toBeGreaterThan(0.4)
+          expect(b.z + b.h).toBeLessThan(1)
+          expect(b.w).toBeLessThan(0.25)
+        }
+      }
+    })
+
+    it('turns with them, always in front of whichever way they face', () => {
+      for (const held of ['cup', 'snack'] as const) {
+        expect(extra(2, held).every((b) => b.y + b.d < here.y)).toBe(true)
+        expect(extra(1, held).every((b) => b.x > here.x)).toBe(true)
+        expect(extra(3, held).every((b) => b.x + b.w < here.x)).toBe(true)
+      }
+    })
+
+    it('stays inside the space a person takes, so it never collides with more than they do', () => {
+      for (const held of ['cup', 'snack'] as const) {
+        for (const b of carrying(1, held)) {
+          expect(Math.hypot(b.x - here.x, b.y - here.y)).toBeLessThan(0.6)
+        }
+      }
+    })
+  })
+
   it('is drawn farthest part first, so nothing is hidden the wrong way round', () => {
     for (const facing of [0, 1, 2, 3] as const) {
       const boxes = walkerBoxes(here, facing, 0.3, true, 0x336699)
