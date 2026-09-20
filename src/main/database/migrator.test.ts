@@ -261,3 +261,40 @@ describe('the GitHub links migration', () => {
     expect(() => link(db, 'm2')).not.toThrow()
   })
 })
+
+describe('the mission planner migration', () => {
+  const employee = (db: Db, id: string): void => {
+    db.prepare(
+      `INSERT INTO employees (id, name, role, provider_id, working_directory, created_at, updated_at)
+       VALUES (?, 'n', 'r', 'mock', '/w', 't', 't')`,
+    ).run(id)
+  }
+
+  it('gives every mission made before it no planner', () => {
+    const db = memory()
+    migrate(db, MIGRATIONS.slice(0, 15))
+    db.prepare(
+      "INSERT INTO missions (id, title, created_at, updated_at) VALUES ('m1', 'm', 't', 't')",
+    ).run()
+    expect(migrate(db, MIGRATIONS.slice(0, 16)).applied).toEqual([16])
+    expect(db.prepare('SELECT planner_id AS p FROM missions WHERE id = ?').get('m1')).toEqual({
+      p: null,
+    })
+  })
+
+  it('will only name an employee who exists', () => {
+    const db = memory()
+    migrate(db, MIGRATIONS)
+    db.pragma('foreign_keys = ON')
+    employee(db, 'e1')
+    db.prepare(
+      "INSERT INTO missions (id, title, created_at, updated_at) VALUES ('m1', 'm', 't', 't')",
+    ).run()
+    expect(() =>
+      db.prepare("UPDATE missions SET planner_id = 'e1' WHERE id = 'm1'").run(),
+    ).not.toThrow()
+    expect(() =>
+      db.prepare("UPDATE missions SET planner_id = 'nobody' WHERE id = 'm1'").run(),
+    ).toThrow()
+  })
+})

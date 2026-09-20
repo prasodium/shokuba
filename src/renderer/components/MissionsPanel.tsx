@@ -6,6 +6,7 @@ import { selectedMission, useMissions } from '../store/missions'
 import { useGitHub } from '../store/github'
 import { useOffice } from '../store/office'
 import { GitHubDialog } from './GitHubDialog'
+import { IssueSource } from './IssueSource'
 import { MissionBranchView } from './MissionBranchView'
 import { MissionDialog } from './MissionDialog'
 import { TaskDetail } from './TaskDetail'
@@ -168,11 +169,7 @@ export function MissionsPanel() {
               {authorNote(mission, names)}
             </p>
           )}
-          {githubLink && (
-            <p className="mission-source" role="note" title={githubLink.issueUrl}>
-              From GitHub issue #{githubLink.issueNumber} in {githubLink.repo}
-            </p>
-          )}
+          {githubLink && <IssueSource link={githubLink} mission={mission} />}
           {mission.description && (
             <p className="muted mission-description">{mission.description}</p>
           )}

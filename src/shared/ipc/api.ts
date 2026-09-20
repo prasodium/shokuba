@@ -304,6 +304,13 @@ export interface ShokubaApi {
     importIssue(input: IssueImportRequest): Promise<GitHubLink>
     /** Every mission that came from an issue. */
     links(): Promise<GitHubLink[]>
+    /**
+     * Hand an imported draft to a manager to plan, and send them one message about it. The manager
+     * may then add and remove its tasks until it is run; nothing is sent to anyone else.
+     */
+    askToPlan(missionId: string, managerId: string): Promise<void>
+    /** Take the draft back from the manager it was handed to. */
+    takeBackPlan(missionId: string): Promise<void>
   }
   messages: {
     /** Recent conversations, newest first. */

@@ -31,6 +31,8 @@ const api = (over: Partial<GitHubApi> = {}): GitHubApi => ({
   issues: async () => [issue(1), issue(2)],
   importIssue: async ({ number }) => link(number),
   links: async () => [],
+  askToPlan: async () => undefined,
+  takeBackPlan: async () => undefined,
   ...over,
 })
 
@@ -335,5 +337,56 @@ describe('refreshLinks', () => {
     fail = true
     await store.getState().refreshLinks()
     expect(store.getState().links).toEqual([link(1)])
+  })
+})
+
+describe('askToPlan and takeBackPlan', () => {
+  it('hand a draft to a manager, sending the mission and the manager', async () => {
+    const sent: unknown[] = []
+    const store = createGitHubStore(
+      api({
+        askToPlan: async (missionId, managerId) => {
+          sent.push({ missionId, managerId })
+        },
+      }),
+    )
+    expect(await store.getState().askToPlan('m1', 'mira')).toEqual({ ok: true, value: undefined })
+    expect(sent).toEqual([{ missionId: 'm1', managerId: 'mira' }])
+  })
+
+  it('say why it was refused, without the wrapper Electron adds', async () => {
+    const store = createGitHubStore(
+      api({
+        askToPlan: async () => {
+          throw new Error(
+            "Error invoking remote method 'x': GitHubError: Only a manager can be asked to plan",
+          )
+        },
+        takeBackPlan: async () => {
+          throw new Error('There is no such mission')
+        },
+      }),
+    )
+    expect(await store.getState().askToPlan('m1', 'ren')).toEqual({
+      ok: false,
+      error: 'Only a manager can be asked to plan',
+    })
+    expect(await store.getState().takeBackPlan('nope')).toEqual({
+      ok: false,
+      error: 'There is no such mission',
+    })
+  })
+
+  it('take a draft back', async () => {
+    const taken: string[] = []
+    const store = createGitHubStore(
+      api({
+        takeBackPlan: async (missionId) => {
+          taken.push(missionId)
+        },
+      }),
+    )
+    expect(await store.getState().takeBackPlan('m1')).toEqual({ ok: true, value: undefined })
+    expect(taken).toEqual(['m1'])
   })
 })

@@ -117,6 +117,8 @@ export interface Mission {
   priority: Priority
   /** The manager whose agent drafted this mission, or null if a person created it. */
   createdBy: string | null
+  /** The manager a person handed this draft to for planning, or null. */
+  plannerId: string | null
   createdAt: string
   updatedAt: string
 }

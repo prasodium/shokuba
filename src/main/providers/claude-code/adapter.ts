@@ -1,6 +1,7 @@
 import { PERMISSION_MODES, type Employee } from '@shared/employees'
 import {
   AGENT_TOOL_PERMISSIONS,
+  ISSUE_TOOL_PERMISSIONS,
   MANAGER_TOOL_PERMISSIONS,
   REVIEW_TOOL_PERMISSIONS,
   SHOKUBA_MCP_SERVER,
@@ -163,6 +164,8 @@ export function createClaudeCodeAdapter(deps: DetectDeps = {}): ProviderAdapter 
           ...AGENT_TOOL_PERMISSIONS,
           // Anyone may be asked to review someone's work; the tools are only offered while they are.
           ...REVIEW_TOOL_PERMISSIONS,
+          // Read-only, and only offered to someone who has a GitHub issue they may read.
+          ...ISSUE_TOOL_PERMISSIONS,
           ...(employee.isManager ? MANAGER_TOOL_PERMISSIONS : []),
         ].join(','),
         '--append-system-prompt',

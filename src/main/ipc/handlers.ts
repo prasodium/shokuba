@@ -33,7 +33,12 @@ import {
   type TerminalChunk,
 } from '@shared/ipc/api'
 import { BreakerActionRequestSchema } from '@shared/breaker'
-import { IssueImportRequestSchema, IssuesRequestSchema } from '@shared/github'
+import {
+  IssueImportRequestSchema,
+  IssuesRequestSchema,
+  PlanAskRequestSchema,
+  PlanTakeBackRequestSchema,
+} from '@shared/github'
 import { ReviewSettingsSaveSchema } from '@shared/reviews'
 import { CheckSettingsSaveSchema } from '@shared/verification'
 import { IPC } from '@shared/ipc/channels'
@@ -263,6 +268,13 @@ export function registerIpc(
     agents.github.importIssue(input),
   )
   handle(IPC.githubLinks, z.undefined(), trusted, () => agents.github.links())
+  // Handing a draft to a manager is the person's decision, and only ever this one thing.
+  handle(IPC.githubPlanAsk, PlanAskRequestSchema, trusted, ({ missionId, managerId }) => {
+    agents.issuePlanning.ask(missionId, managerId)
+  })
+  handle(IPC.githubPlanTakeBack, PlanTakeBackRequestSchema, trusted, ({ missionId }) => {
+    agents.issuePlanning.takeBack(missionId)
+  })
   handle(IPC.tasksRemove, TaskIdRequestSchema, trusted, ({ taskId }) => {
     agents.missions.removeTask(taskId)
   })

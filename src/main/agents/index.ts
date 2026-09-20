@@ -6,6 +6,8 @@ import { GitError } from '../git/runner'
 import { GitService } from '../git/service'
 import { GitHubClient } from '../github/client'
 import { GhCli, type GhRunner } from '../github/gh'
+import { IssueReader } from '../github/issue-brief'
+import { IssuePlanning } from '../github/planning'
 import { GitHubService } from '../github/service'
 import type { PermissionMode } from '@shared/employees'
 import { createAgentTools, SHOKUBA_MCP_INSTRUCTIONS } from '../mcp/agent-tools'
@@ -99,6 +101,8 @@ export interface AgentServices {
   evidence: EvidenceService
   /** Which projects are on GitHub, their issues, and missions made from them. */
   github: GitHubService
+  /** Handing an imported draft to a manager to plan, and taking it back. */
+  issuePlanning: IssuePlanning
   views: AgentViews
   /** Stops every running agent, then closes the report listener. */
   close(): Promise<void>
@@ -149,6 +153,11 @@ export async function createAgentServices(
     db: services.db,
     events: services.events,
     employeeExists: (id: string): boolean => employees.get(id) !== undefined,
+    // The issue a mission came from: only its number and repository, for the briefing.
+    sourceOf: (missionId: string) => {
+      const link = github.link(missionId)
+      return link ? { number: link.issueNumber, repo: link.repo } : null
+    },
   })
   const team = (): Array<{
     id: string
@@ -204,6 +213,11 @@ export async function createAgentServices(
         messageBlocker: (id: string) => breaker.messageBlocker(id),
       },
       {
+        // Who may read which GitHub issue, and what they are shown of it.
+        issues: {
+          available: (id: string) => issueReader.available(id),
+          read: (id: string, missionId?: string) => issueReader.read(id, missionId),
+        },
         // The agent is saying it is done: save what is in its working folder as a commit first.
         beforeSubmit: async (task) => {
           await workspaces.commit(task)
@@ -399,6 +413,15 @@ export async function createAgentServices(
     workingDirectories: () => employees.list().map((employee) => employee.workingDirectory),
   })
 
+  const issueReader = new IssueReader({ missions, link: (id: string) => github.link(id) })
+  const issuePlanning = new IssuePlanning({
+    missions,
+    link: (id: string) => github.link(id),
+    team: { list: team },
+    messages,
+    audit: services.audit,
+  })
+
   const dispatcher = new Dispatcher({
     missions,
     delivery,
@@ -445,6 +468,7 @@ export async function createAgentServices(
     reviews,
     evidence,
     github,
+    issuePlanning,
     views,
     async close() {
       reviewCleaner.stop()

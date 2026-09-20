@@ -51,6 +51,7 @@ const mission = (tasks: Task[], status: MissionStatus = 'running'): MissionDetai
     status,
     priority: 'normal',
     createdBy: null,
+    plannerId: null,
     createdAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-01T00:00:00Z',
   },

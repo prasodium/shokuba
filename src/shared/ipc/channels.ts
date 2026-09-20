@@ -64,6 +64,8 @@ export const IPC = {
   githubIssues: 'shokuba:github:issues',
   githubImport: 'shokuba:github:import',
   githubLinks: 'shokuba:github:links',
+  githubPlanAsk: 'shokuba:github:plan-ask',
+  githubPlanTakeBack: 'shokuba:github:plan-take-back',
 
   messagesList: 'shokuba:messages:list',
   messagesSend: 'shokuba:messages:send',

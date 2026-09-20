@@ -5,7 +5,7 @@ import type { ShokubaEvent } from '@shared/events/schema'
 import { createServices, type Services } from '../bootstrap'
 import { createLogger } from '../logging/logger'
 import { toPlatformId } from '../platform'
-import { MissionService } from './service'
+import { MissionService, type MissionServiceDeps } from './service'
 
 /**
  * A real database with a mission service on top, for tests. Employees are inserted
@@ -34,7 +34,9 @@ export interface TeamPlace {
   reportsTo?: string | null
 }
 
-export function createMissionFixture(): MissionFixture {
+export function createMissionFixture(
+  options: { sourceOf?: MissionServiceDeps['sourceOf'] } = {},
+): MissionFixture {
   const dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'shokuba-missions-')))
   const services = createServices({
     dataDir: dir,
@@ -53,6 +55,7 @@ export function createMissionFixture(): MissionFixture {
     db: services.db,
     events: services.events,
     employeeExists: (id) => employees.has(id),
+    ...(options.sourceOf && { sourceOf: options.sourceOf }),
     newId: () => `id-${++counter}`,
     now: () => new Date(Date.UTC(2026, 0, 1, 0, 0, ++tick)),
   })

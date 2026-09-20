@@ -96,6 +96,11 @@ Shokuba is being built in the open, in small, tested increments. Here is exactly
 <p align="center"><sub>Making a mission from a GitHub issue (an animation, with a <b>stand-in</b> for the GitHub tool, so nothing here touches a real account). Shokuba reads GitHub through the <code>gh</code> tool you are already signed in with: it never sees a token or password, and it writes nothing to GitHub. What an issue says was written by other people, so it is shown as plain text and never followed.</sub></p>
 
 <p align="center">
+  <img src="docs/assets/github-plan-demo.gif" alt="An animation of the whole app with a demo manager, Mira, and an engineer, Ren, who reports to Mira: an issue is made into a mission, What the issue says is opened and shows its text as plain text, Ask Mira to plan hands the draft to Mira, two tasks appear in the mission a moment later, the mission is run, and Ren starts working on the first task" width="100%">
+</p>
+<p align="center"><sub>Planning from an issue (an animation, with <b>demo</b> agents and the stand-in GitHub tool). You hand the draft to a manager; they read the issue through a read-only tool that marks it as <b>untrusted</b>, and add tasks to that one draft. Nothing runs until you press <b>Run mission</b>, and nothing the issue says is ever typed into an agent's terminal. The demo manager plans two generic tasks: it does not understand the issue.</sub></p>
+
+<p align="center">
   <img src="docs/assets/missions-demo.png" alt="The Missions tab: a task graph where the first task is done and the two tasks that depended on it are now in progress with two employees, the third waiting on both" width="100%">
 </p>
 <p align="center"><sub>A mission: <i>Design the API</i> was accepted, so <i>Build the API</i> and <i>Write the docs</i> were handed to two agents at once; <i>Review everything</i> waits for both. (Demo agents.)</sub></p>

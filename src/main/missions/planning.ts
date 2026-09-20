@@ -22,8 +22,9 @@ export interface PlanTeam {
 /**
  * What a manager's agent may do about work: draft missions and tasks for its own team, and
  * look at how the team is doing. It never runs, pauses or cancels a mission, never accepts or
- * changes anything a person or another manager created, and never assigns work outside its
- * team, so a plan only ever becomes real when a person reads it and presses Run.
+ * changes anything a person or another manager created (except a draft the person has handed to
+ * it to plan), and never assigns work outside its team, so a plan only ever becomes real when a
+ * person reads it and presses Run.
  *
  * These are the rules; the tools in `mcp/agent-tools.ts` only translate to and from text.
  */
@@ -117,11 +118,15 @@ export class ManagerPlanning {
   describeDraft(managerId: string, missionId: string | undefined): string {
     this.requireManager(managerId)
     if (missionId === undefined) {
-      const open = this.openDrafts(managerId)
+      const open = this.myDrafts(managerId)
       if (open.length === 0) return 'You have no drafts waiting.'
       return [
         'Your drafts:',
-        ...open.map((m) => `- "${m.title}" — id ${m.id} — ${this.tasksOf(m.id).length} tasks`),
+        ...open.map(
+          (m) =>
+            `- "${m.title}" — id ${m.id} — ${this.tasksOf(m.id).length} tasks` +
+            (m.createdBy === managerId ? '' : ' — handed to you by the person to plan'),
+        ),
       ].join('\n')
     }
     const mission = this.mission(managerId, missionId)
@@ -163,6 +168,7 @@ export class ManagerPlanning {
     }
   }
 
+  /** The drafts this manager wrote: the ones that count toward how many they may have open. */
   private openDrafts(managerId: string): Mission[] {
     return this.missions
       .listMissions()
@@ -170,17 +176,32 @@ export class ManagerPlanning {
       .filter((mission) => mission.createdBy === managerId && mission.status === 'draft')
   }
 
-  /** A mission this manager wrote, in any state. */
+  /** The drafts this manager may work on: their own, and any the person handed to them. */
+  private myDrafts(managerId: string): Mission[] {
+    return this.missions
+      .listMissions()
+      .map((detail) => detail.mission)
+      .filter(
+        (mission) =>
+          mission.status === 'draft' &&
+          (mission.createdBy === managerId || mission.plannerId === managerId),
+      )
+  }
+
+  /** A mission this manager wrote, or that the person handed to them to plan, in any state. */
   private mission(managerId: string, missionId: string): Mission {
     const mission = this.missions.getMission(missionId)
     if (!mission) throw new MissionError('not-found', 'There is no such mission.')
-    if (mission.createdBy !== managerId) {
-      throw new MissionError('forbidden', 'You can only work on missions you drafted yourself.')
+    if (mission.createdBy !== managerId && mission.plannerId !== managerId) {
+      throw new MissionError(
+        'forbidden',
+        'You can only work on missions you drafted yourself, or that the person handed to you to plan.',
+      )
     }
     return mission
   }
 
-  /** A mission this manager wrote that has not been run: the only thing they may change. */
+  /** A draft this manager wrote or was handed that has not been run: the only thing they may change. */
   private ownDraft(managerId: string, missionId: string): Mission {
     this.requireManager(managerId)
     const mission = this.mission(managerId, missionId)

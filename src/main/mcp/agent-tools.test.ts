@@ -1,12 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { MAX_QUEUED_PER_RECIPIENT } from '@shared/messages'
+import type { GitHubLink } from '@shared/github'
 import type { Mission } from '@shared/missions'
 import type { Review, ReviewSubmit } from '@shared/reviews'
+import { IssueReader } from '../github/issue-brief'
 import { createMissionFixture, type MissionFixture } from '../missions/fixtures'
 import {
   AGENT_TOOL_NAMES,
   AGENT_TOOL_PERMISSIONS,
   MANAGER_TOOL_NAMES,
+  ISSUE_TOOL_NAMES,
+  ISSUE_TOOL_PERMISSIONS,
   MANAGER_TOOL_PERMISSIONS,
   REVIEW_TOOL_NAMES,
   REVIEW_TOOL_PERMISSIONS,
@@ -87,13 +91,20 @@ describe('agent tools', () => {
     expect(MANAGER_TOOL_PERMISSIONS).toEqual(MANAGER_TOOL_NAMES.map((n) => `mcp__shokuba__${n}`))
     const names = tools().map((tool) => tool.name)
     expect(REVIEW_TOOL_PERMISSIONS).toEqual(REVIEW_TOOL_NAMES.map((n) => `mcp__shokuba__${n}`))
-    expect(names).toEqual([...AGENT_TOOL_NAMES, ...MANAGER_TOOL_NAMES, ...REVIEW_TOOL_NAMES])
+    expect(ISSUE_TOOL_PERMISSIONS).toEqual(ISSUE_TOOL_NAMES.map((n) => `mcp__shokuba__${n}`))
+    expect(names).toEqual([
+      ...AGENT_TOOL_NAMES,
+      ...MANAGER_TOOL_NAMES,
+      ...ISSUE_TOOL_NAMES,
+      ...REVIEW_TOOL_NAMES,
+    ])
   })
 
   it("offer the manager's and the reviewer's tools only to those they are for: each is gated, and no other is", () => {
     for (const tool of tools()) {
       const gated =
         (MANAGER_TOOL_NAMES as readonly string[]).includes(tool.name) ||
+        (ISSUE_TOOL_NAMES as readonly string[]).includes(tool.name) ||
         (REVIEW_TOOL_NAMES as readonly string[]).includes(tool.name)
       expect(typeof tool.visibleTo === 'function', tool.name).toBe(gated)
     }
@@ -783,5 +794,104 @@ describe("a reviewer's tools", () => {
       createAgentTools(fx.missions, messages, team),
     )
     expect(await toolsFor('mika')).toEqual([...AGENT_TOOL_NAMES])
+  })
+})
+
+describe('the tool that reads a GitHub issue', () => {
+  let links: Map<string, GitHubLink>
+  let issueMission: Mission
+  const withManager = {
+    list: () => [
+      ...team.list(),
+      { id: 'mira', name: 'mira', role: 'Manager', isManager: true, reportsTo: null },
+    ],
+    isRunning: team.isRunning,
+  }
+
+  const toolsFor = async (employeeId: string): Promise<string[]> => {
+    const reply = await mcp.handle(
+      { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+      { employeeId, source: 'reported' },
+    )
+    return (reply?.result as { tools: Array<{ name: string }> }).tools.map((t) => t.name)
+  }
+
+  beforeEach(() => {
+    fx.addEmployee('mira', 'mira', 'Manager', { isManager: true })
+    links = new Map()
+    issueMission = fx.missions.createMission({ title: '#42 issue' })
+    links.set(issueMission.id, {
+      missionId: issueMission.id,
+      repo: 'acme/widgets',
+      repoRoot: '/w',
+      issueNumber: 42,
+      issueTitle: 'Login form accepts an empty password',
+      issueUrl: 'https://github.com/acme/widgets/issues/42',
+      issueAuthor: 'ada',
+      issueBody: 'It signs in with no password.',
+      importedAt: 't',
+    })
+    const reader = new IssueReader({ missions: fx.missions, link: (id) => links.get(id) })
+    mcp = new McpEndpoint(
+      { name: 'shokuba', version: 't' },
+      createAgentTools(fx.missions, messages, withManager, { issues: reader }),
+    )
+  })
+
+  it('is offered to nobody who has no issue to read, and refused by name', async () => {
+    for (const who of ['mira', 'mika', 'ren']) {
+      expect(await toolsFor(who), who).not.toContain('read_issue')
+      const reply = await mcp.handle(
+        {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: { name: 'read_issue', arguments: {} },
+        },
+        { employeeId: who, source: 'reported' },
+      )
+      expect(reply?.error?.message, who).toBe('Unknown tool "read_issue"')
+    }
+  })
+
+  it('is offered to the manager a draft was handed to, who reads the issue framed as untrusted', async () => {
+    fx.missions.setPlanner(issueMission.id, 'mira')
+    expect(await toolsFor('mira')).toContain('read_issue')
+    expect(await toolsFor('mika')).not.toContain('read_issue')
+    const { text, isError } = await callTool('mira', 'read_issue')
+    expect(isError).toBe(false)
+    expect(text.startsWith('[Shokuba: GitHub issue — UNTRUSTED]')).toBe(true)
+    expect(text).toContain('| Title: Login form accepts an empty password')
+    expect(text).toContain('| It signs in with no password.')
+  })
+
+  it('is offered to whoever is working on a task of the mission, while they are', async () => {
+    const task = fx.missions.createTask({
+      missionId: issueMission.id,
+      title: 'Fix it',
+      assigneeId: 'mika',
+    })
+    fx.missions.missionAction(issueMission.id, 'run')
+    expect(await toolsFor('mika')).not.toContain('read_issue')
+    fx.missions.markDispatched(task.id)
+    expect(await toolsFor('mika')).toContain('read_issue')
+    expect((await callTool('mika', 'read_issue')).text).toContain('issue #42 of acme/widgets')
+    expect(await toolsFor('ren')).not.toContain('read_issue')
+  })
+
+  it('refuses a mission that is not theirs, with what they may read, as an error the model can act on', async () => {
+    fx.missions.setPlanner(issueMission.id, 'mira')
+    const { text, isError } = await callTool('mira', 'read_issue', { missionId: mission.id })
+    expect(isError).toBe(true)
+    expect(text).toMatch(/only read the issue of a draft you were handed/)
+  })
+
+  it('is never offered when GitHub is not there at all', async () => {
+    mcp = new McpEndpoint(
+      { name: 'shokuba', version: 't' },
+      createAgentTools(fx.missions, messages, withManager),
+    )
+    fx.missions.setPlanner(issueMission.id, 'mira')
+    expect(await toolsFor('mira')).not.toContain('read_issue')
   })
 })

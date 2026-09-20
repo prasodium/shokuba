@@ -17,6 +17,8 @@ export interface GitHubApi {
   issues(input: IssuesRequest): Promise<IssueSummary[]>
   importIssue(input: IssueImportRequest): Promise<GitHubLink>
   links(): Promise<GitHubLink[]>
+  askToPlan(missionId: string, managerId: string): Promise<void>
+  takeBackPlan(missionId: string): Promise<void>
 }
 
 export type IssueState = 'open' | 'closed' | 'all'
@@ -39,6 +41,10 @@ export interface GitHubState {
   loadIssues(repoRoot: string, state: IssueState): Promise<void>
   importIssue(repoRoot: string, number: number): Promise<Outcome<GitHubLink>>
   refreshLinks(): Promise<void>
+  /** Hand an imported draft to a manager to plan. */
+  askToPlan(missionId: string, managerId: string): Promise<Outcome>
+  /** Take it back from them. */
+  takeBackPlan(missionId: string): Promise<Outcome>
 }
 
 /** Made from an `api` so it can be tested without a window; the app's own is in `github.ts`. */
@@ -98,6 +104,24 @@ export function createGitHubStore(api: GitHubApi) {
           const link = await api.importIssue({ repoRoot, number })
           await get().refreshLinks()
           return { ok: true, value: link }
+        } catch (error) {
+          return { ok: false, error: errorMessage(error) }
+        }
+      },
+
+      async askToPlan(missionId, managerId) {
+        try {
+          await api.askToPlan(missionId, managerId)
+          return { ok: true, value: undefined }
+        } catch (error) {
+          return { ok: false, error: errorMessage(error) }
+        }
+      },
+
+      async takeBackPlan(missionId) {
+        try {
+          await api.takeBackPlan(missionId)
+          return { ok: true, value: undefined }
         } catch (error) {
           return { ok: false, error: errorMessage(error) }
         }

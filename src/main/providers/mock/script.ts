@@ -15,7 +15,9 @@
  * circuit breaker refuses it (and then stop, as a sensible agent would); "stubborn" keeps
  * trying regardless, until it is interrupted. "test" runs a test command for a good while (ten steps'
  * worth), long enough for the office to send them to the QA bench. "plan" makes a demo manager draft a small mission
- * for the first person who reports to them, using the manager's planning tools. Asked to review
+ * for the first person who reports to them, using the manager's planning tools. Asked by the person
+ * to plan a GitHub issue, it reads the issue with the read-only issue tool and adds two generic
+ * tasks to the draft it was handed (the demo does not understand the issue). Asked to review
  * someone's work it reads the request back and hands in a small review. When Shokuba refuses a call it does not make it,
  * and reports nothing more about it, exactly as Claude Code does. Plain CommonJS so it runs
  * under Node and Electron-as-Node alike.
@@ -112,6 +114,12 @@ let aborted = false
 async function handleMessage(text) {
   say('[demo] received a message')
   await sleep(stepMs)
+  // The person handed over a draft made from a GitHub issue to plan.
+  const handed = /mission with id (\S+) to plan/.exec(text)
+  if (handed && text.indexOf('read_issue') >= 0) {
+    await runPlanIssue(handed[1])
+    return
+  }
   if (!chatty) return
   const from = /^From: (.+?) \(/m.exec(text)
   let to = from ? from[1] : null
@@ -178,6 +186,21 @@ async function runPlan() {
   say('[demo] ' + (await useShokubaTool('add_task', build)))
   say('[demo] ' + (await useShokubaTool('add_task', { missionId: made[1], title: 'Review the login form', dependsOn: ['Build the login form'] })))
   say('[demo] the draft is ready for the person to review')
+}
+
+// Planning a GitHub issue: read it with the read-only tool the way a model would, then add tasks to
+// the draft that was handed over. The demo does not understand the issue, so the tasks are generic.
+async function runPlanIssue(missionId) {
+  say('[demo] reading the issue...')
+  const issue = await useShokubaTool('read_issue', { missionId: missionId })
+  say('[demo] ' + issue.split('\n')[0])
+  const status = await useShokubaTool('team_status', {})
+  const first = /^- (.+?) \(/m.exec(status)
+  const build = { missionId: missionId, title: 'Reproduce and fix the problem' }
+  if (first) build.assignee = first[1]
+  say('[demo] ' + (await useShokubaTool('add_task', build)))
+  say('[demo] ' + (await useShokubaTool('add_task', { missionId: missionId, title: 'Add a test that covers it', dependsOn: ['Reproduce and fix the problem'] })))
+  say('[demo] the plan is ready for the person to review')
 }
 
 // A review: read the request back the way a reviewer would, then hand in what was found.

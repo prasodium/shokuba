@@ -82,6 +82,17 @@ export const IssuesRequestSchema = z.strictObject({
 })
 export type IssuesRequest = z.input<typeof IssuesRequestSchema>
 
+export const PlanAskRequestSchema = z.strictObject({
+  missionId: z.string().min(1).max(200),
+  managerId: z.string().min(1).max(200),
+})
+export type PlanAskRequest = z.input<typeof PlanAskRequestSchema>
+
+export const PlanTakeBackRequestSchema = z.strictObject({
+  missionId: z.string().min(1).max(200),
+})
+export type PlanTakeBackRequest = z.input<typeof PlanTakeBackRequestSchema>
+
 export const IssueImportRequestSchema = z.strictObject({
   repoRoot: z.string().min(1).max(1024),
   number: z.number().int().min(1).max(2_000_000_000),

@@ -43,6 +43,7 @@ interface MissionRow {
   status: string
   priority: string
   created_by: string | null
+  planner_id: string | null
   created_at: string
   updated_at: string
 }
@@ -93,6 +94,8 @@ export interface MissionServiceDeps {
   events: EventStore
   /** Is this an existing, not-removed employee? */
   employeeExists: (employeeId: string) => boolean
+  /** The GitHub issue a mission came from, if it did: only its number and repository. */
+  sourceOf?: (missionId: string) => { number: number; repo: string } | null | undefined
   now?: () => Date
   newId?: () => string
 }
@@ -182,6 +185,35 @@ export class MissionService {
       const mission = this.mustMission(id)
       within?.(mission)
       return mission
+    })
+  }
+
+  /**
+   * Hand a draft to a manager to plan, or take it back (`null`). Only a draft can be handed over,
+   * and only to someone who exists; that they are a manager is the caller's rule. Nothing else
+   * about the mission changes.
+   */
+  setPlanner(id: string, employeeId: string | null, actor: Actor = USER): Mission {
+    const mission = this.mustMission(id)
+    if (mission.plannerId === employeeId) return mission
+    if (mission.status !== 'draft') {
+      throw new MissionError('state', 'Only a draft can be handed to someone to plan')
+    }
+    if (employeeId !== null && !this.deps.employeeExists(employeeId)) {
+      throw new MissionError('unknown-employee', 'That employee does not exist')
+    }
+    return this.transact((out) => {
+      this.deps.db
+        .prepare('UPDATE missions SET planner_id = @planner, updated_at = @ts WHERE id = @id')
+        .run({ id, planner: employeeId, ts: this.stamp() })
+      out.push({
+        type: 'mission.updated',
+        source: actor.source,
+        ...(actor.employeeId && { actorId: actor.employeeId }),
+        missionId: id,
+        payload: { missionId: id, fields: ['planner'] },
+      })
+      return this.mustMission(id)
     })
   }
 
@@ -510,7 +542,9 @@ export class MissionService {
     const task = this.mustTask(taskId)
     const mission = this.mustMission(task.missionId)
     const siblings = this.loadTasks(task.missionId)
+    const issue = this.deps.sourceOf?.(mission.id)
     return buildBriefing({
+      ...(issue && { issue }),
       missionTitle: mission.title,
       taskId: task.id,
       title: task.title,
@@ -856,6 +890,7 @@ function toMission(row: MissionRow): Mission {
     status: row.status as MissionStatus,
     priority: row.priority as Priority,
     createdBy: row.created_by,
+    plannerId: row.planner_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }

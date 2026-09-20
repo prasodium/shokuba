@@ -249,3 +249,93 @@ describe('reading', () => {
     expect(plan.teamStatus('lonely')).toBe('Nobody reports to you yet.')
   })
 })
+
+describe('a draft the person handed over to plan', () => {
+  const handed = () => {
+    const mission = fx.missions.createMission({ title: 'From an issue' })
+    fx.missions.setPlanner(mission.id, 'mira')
+    return mission
+  }
+
+  it('lets that manager add tasks, assign their team, and remove them, as for a draft of their own', () => {
+    const mission = handed()
+    add(mission.id, 'Write the fix', { assignee: 'Ren' })
+    const second = add(mission.id, 'Test it', { assignee: 'Sora', dependsOn: ['Write the fix'] })
+    const tasks = () =>
+      fx.missions.listMissions().find((d) => d.mission.id === mission.id)?.tasks ?? []
+    expect(tasks()).toHaveLength(2)
+    plan.removeTask('mira', second.task.id, 'reported')
+    expect(tasks().map((t) => t.title)).toEqual(['Write the fix'])
+  })
+
+  it('records what they did as reported by them, though the mission is the person’s', () => {
+    const mission = handed()
+    const { task } = add(mission.id, 'Write the fix')
+    expect(fx.eventsOf('task.created').find((e) => e.taskId === task.id)).toMatchObject({
+      source: 'reported',
+      actorId: 'mira',
+    })
+    expect(fx.missions.getMission(mission.id)?.createdBy).toBeNull()
+  })
+
+  it('shows it among their drafts, and says it was handed to them', () => {
+    const mission = handed()
+    const own = draft('Their own')
+    const list = plan.describeDraft('mira', undefined)
+    expect(list).toContain(`id ${mission.id}`)
+    expect(list).toContain('handed to you by the person to plan')
+    expect(list).toContain(`id ${own.id}`)
+    expect(list.split('\n').find((l) => l.includes(own.id))).not.toContain('handed to you')
+    expect(plan.describeDraft('mira', mission.id)).toContain('From an issue')
+  })
+
+  it('does not count toward how many drafts they may start', () => {
+    handed()
+    for (let i = 0; i < MAX_OPEN_DRAFTS; i += 1) draft(`Own ${i}`)
+    expect(refusal(() => draft('One too many')).message).toMatch(/already have/)
+  })
+
+  it('is still capped at the most tasks in a draft', () => {
+    const mission = handed()
+    for (let i = 0; i < MAX_TASKS_PER_DRAFT; i += 1) add(mission.id, `Task ${i}`)
+    expect(refusal(() => add(mission.id, 'One too many')).message).toMatch(/at most/)
+  })
+
+  it('is only that manager’s: another manager, and anyone else, is refused', () => {
+    const mission = handed()
+    expect(refusal(() => add(mission.id, 'Sneak in', {}, 'kai')).code).toBe('forbidden')
+    expect(refusal(() => add(mission.id, 'Sneak in', {}, 'sora')).code).toBe('forbidden')
+    expect(refusal(() => plan.describeDraft('kai', mission.id)).message).toMatch(
+      /handed to you to plan/,
+    )
+    expect(plan.describeDraft('kai', undefined)).toBe('You have no drafts waiting.')
+  })
+
+  it('is out of their hands the moment the person takes it back', () => {
+    const mission = handed()
+    const { task } = add(mission.id, 'Write the fix')
+    fx.missions.setPlanner(mission.id, null)
+    expect(refusal(() => add(mission.id, 'More')).code).toBe('forbidden')
+    expect(refusal(() => plan.removeTask('mira', task.id, 'reported')).code).toBe('forbidden')
+  })
+
+  it('is out of their hands once the person runs it, like any draft', () => {
+    const mission = handed()
+    add(mission.id, 'Write the fix')
+    fx.missions.missionAction(mission.id, 'run')
+    expect(refusal(() => add(mission.id, 'More')).message).toMatch(/only a draft can be changed/)
+  })
+
+  it('does not let them run, pause, cancel or archive it: those are not tools they have', () => {
+    const mission = handed()
+    expect(fx.missions.getMission(mission.id)?.status).toBe('draft')
+    expect(typeof (plan as unknown as Record<string, unknown>)['runMission']).toBe('undefined')
+  })
+
+  it('can be handed on to another manager, who then has it and the first does not', () => {
+    const mission = handed()
+    fx.missions.setPlanner(mission.id, 'kai')
+    expect(refusal(() => add(mission.id, 'Old planner')).code).toBe('forbidden')
+    expect(add(mission.id, 'New planner', {}, 'kai').task.title).toBe('New planner')
+  })
+})
