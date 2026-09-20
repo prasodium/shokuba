@@ -79,7 +79,7 @@ import {
   type RoomKind,
 } from './map'
 import { buildNavGrid, reachableFrom, seatExit, type NavGrid } from './nav'
-import { BREAK_KINDS, Life, type BreakKind } from './life'
+import { LIFE_KINDS, Life, speaker, type Outing } from './life'
 import { NoteBoard, type Note } from './talk'
 import { LED_COLORS, poseFor, type Pose } from './pose'
 import {
@@ -493,6 +493,8 @@ class Desk {
   private headAt: { x: number; y: number; z: number } | null = null
   /** Why they are away: our reading of their agent, a recorded fact, or simulated office life. */
   private trip: Trip = 'inferred'
+  /** They are in a chat or meeting that has begun, so their bubble need not say where. */
+  private brief = false
   /** A paper on the desk, while they have a task in hand. */
   private paper = false
 
@@ -557,11 +559,13 @@ class Desk {
     at: PlaceKind | null
     head: { x: number; y: number; z: number } | null
     trip: Trip
+    brief: boolean
   }): void {
     this.away = travel.away
     this.awayAt = travel.at
     this.headAt = travel.head
     this.trip = travel.trip
+    this.brief = travel.brief
   }
 
   /** The desk, with a paper on it while their owner has a task in hand. */
@@ -628,7 +632,7 @@ class Desk {
     }
     drawBox(this.fx, { ...led, color: ledColor })
 
-    const model = bubbleFor(this.view, this.awayAt, this.trip)
+    const model = bubbleFor(this.view, this.awayAt, this.trip, this.brief)
     this.bubble.update(model, LED_COLORS[poseFor(state, 0).led])
     this.bubble.tick(time)
   }
@@ -786,7 +790,7 @@ export class OfficeScene {
   /** The simulated life of the office (tea and snack breaks), and whether it is switched on. */
   private readonly life = new Life()
   private lifeOn = true
-  private onBreak = new Map<string, BreakKind>()
+  private onBreak = new Map<string, Outing>()
   /** Where each flight in the air is going, fixed when it takes off. */
   private readonly routes = new Map<string, { from: Point3; to: Point3 }>()
   private map: OfficeMap = buildOffice()
@@ -867,10 +871,19 @@ export class OfficeScene {
         this.benchGfx.alpha =
           this.signals.bench === 'running' ? 0.72 + 0.28 * Math.sin(this.time * 6) : 1
       }
-      const said = this.noteBoard.active(Date.now())
+      const nowMs = Date.now()
+      const said = this.noteBoard.active(nowMs)
       for (const [id, desk] of this.deskViews) {
         const text = said.get(id)
-        desk.setNote(text === undefined ? null : { text, simulated: false })
+        if (text !== undefined) {
+          // A real message's subject is what is on show: it comes before anything simulated.
+          desk.setNote({ text, simulated: false })
+          continue
+        }
+        // In a simulated chat or meeting, whoever's turn it is has the empty "…" bubble, and only they.
+        const outing = this.onBreak.get(id)
+        const talking = this.inGathering(id) && speaker(outing?.members ?? [], nowMs) === id
+        desk.setNote(talking ? { text: '…', simulated: true } : null)
       }
       for (const desk of this.deskViews.values()) desk.tick(this.time)
       this.followSelected(dt)
@@ -1496,6 +1509,12 @@ export class OfficeScene {
         : seatedAt(traveller.home.seat)
   }
 
+  /** In a simulated chat or meeting that has begun. */
+  private inGathering(id: string): boolean {
+    const outing = this.onBreak.get(id)
+    return outing?.together === true && (outing.kind === 'chat' || outing.kind === 'meeting')
+  }
+
   /** Ask the director who should be where, send people that way, and move them on. */
   private moveEveryone(dt: number): void {
     const now = Date.now()
@@ -1516,7 +1535,7 @@ export class OfficeScene {
     const arrived = new Set<string>()
     for (const [id, traveller] of this.travellers) {
       const kind = traveller.target?.kind
-      if (traveller.walker.mode === 'standing' && kind && BREAK_KINDS.some((b) => b === kind)) {
+      if (traveller.walker.mode === 'standing' && kind && LIFE_KINDS.some((b) => b === kind)) {
         arrived.add(id)
       }
     }
@@ -1525,12 +1544,17 @@ export class OfficeScene {
       enabled: this.lifeOn && !this.reducedMotion,
       subjects: people.map((p) => ({ ...p, busy: reviewing.has(p.id) })),
       arrived,
-      open: { tea: this.director.openSpots('tea'), snacks: this.director.openSpots('snacks') },
+      open: {
+        tea: this.director.openSpots('tea'),
+        snacks: this.director.openSpots('snacks'),
+        chat: this.director.openSpots('chat'),
+        meeting: this.director.openSpots('meeting'),
+      },
     })
 
     const subjects: Subject[] = people.map((p) => {
       // Doing an independent review is a recorded fact, and it is done at a reading desk.
-      const errand = reviewing.has(p.id) ? ('reading' as const) : this.onBreak.get(p.id)
+      const errand = reviewing.has(p.id) ? ('reading' as const) : this.onBreak.get(p.id)?.kind
       return { ...p, ...(errand ? { errand } : {}) }
     })
     const decisions = this.director.update(now, subjects, { reducedMotion: this.reducedMotion })
@@ -1560,7 +1584,7 @@ export class OfficeScene {
       traveller.trip =
         kind === 'reading' && reviewing.has(id)
           ? 'recorded'
-          : kind && this.onBreak.get(id) === kind
+          : kind && this.onBreak.get(id)?.kind === kind
             ? 'simulated'
             : 'inferred'
 
@@ -1581,6 +1605,7 @@ export class OfficeScene {
             ? { x: seat.slot.x + HEAD_ANCHOR.x, y: seat.slot.y + HEAD_ANCHOR.y, z: HEAD_ANCHOR.z }
             : null,
         trip: traveller.trip,
+        brief: this.inGathering(id),
       })
     }
     for (const [placeId, reading] of this.readingDesks)

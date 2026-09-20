@@ -108,11 +108,14 @@ export const AWAY_NOTES: Record<PlaceKind, string> = {
  * What the status bubble above an employee says, from their current view. `awayAt` is the kind of
  * place they have gone to, if they are not at their desk, and `trip` says why: our reading of what
  * their agent is doing, a recorded fact (a review Shokuba handed them), or simulated office life.
+ * `brief` leaves out where they are, for a group that is already together (five bubbles all saying
+ * "in the meeting room" would bury the room); the label and every mark stay.
  */
 export function bubbleFor(
   view: AgentView | undefined,
   awayAt: PlaceKind | null = null,
   trip: Trip = 'inferred',
+  brief = false,
 ): BubbleModel {
   if (!view) {
     return {
@@ -156,7 +159,7 @@ export function bubbleFor(
 
   return {
     label: STATE_LABELS[view.state],
-    detail: awayAt ? AWAY_NOTES[awayAt] : detail ? clip(detail, MAX_DETAIL) : null,
+    detail: awayAt ? (brief ? null : AWAY_NOTES[awayAt]) : detail ? clip(detail, MAX_DETAIL) : null,
     // Amber, like anything else that needs a person's eye; a real error stays red.
     tone: caution && tone !== 'error' ? 'wait' : tone,
     provenance: provenanceNow,

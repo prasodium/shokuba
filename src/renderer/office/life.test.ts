@@ -1,10 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import type { RuntimeState } from '@shared/types/agent'
-import { BREAK_KINDS, Life, PACE, type BreakKind, type LifeInput, type LifeSubject } from './life'
+import {
+  LIFE_KINDS,
+  Life,
+  PACE,
+  TURN_MS,
+  speaker,
+  type LifeInput,
+  type LifeKind,
+  type LifeSubject,
+} from './life'
 
 const T0 = 1_000_000
 const NONE = new Set<string>()
-const ROOMY = { tea: 3, snacks: 2 } as const
+const ROOMY = { tea: 3, snacks: 2, chat: 4, meeting: 6 } as const
+const NO_ROOM = { tea: 0, snacks: 0, chat: 0, meeting: 0 } as const
 
 /** A die that rolls these values in turn. */
 const dice = (...values: number[]) => {
@@ -30,7 +40,7 @@ const input = (patch: Partial<LifeInput> & { subjects: readonly LifeSubject[] })
   ...patch,
 })
 
-const kindOf = (on: Map<string, BreakKind>, id: string) => on.get(id)
+const kindOf = (on: Map<string, { kind: LifeKind }>, id: string) => on.get(id)?.kind
 
 describe('when someone takes a break', () => {
   it('waits until their agent has been idle long enough', () => {
@@ -116,21 +126,37 @@ describe('when someone takes a break', () => {
 describe('where they go', () => {
   it('goes for tea or coffee on a low roll and a snack on a high one', () => {
     // roll 1: the wait; roll 2: what they fancy.
-    const tea = new Life(dice(0, PACE.teaShare - 0.01))
+    const tea = new Life(dice(0, PACE.mix.tea - 0.01))
     expect(kindOf(tea.update(input({ subjects: [idle('ada')] })), 'ada')).toBe('tea')
-    const snack = new Life(dice(0, PACE.teaShare))
+    const snack = new Life(dice(0, PACE.mix.tea))
     expect(kindOf(snack.update(input({ subjects: [idle('ada')] })), 'ada')).toBe('snacks')
+  })
+
+  it('goes for a chat at the roll where snacks end, and a meeting at the roll where chats end', () => {
+    const team6 = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => idle(id))
+    const chat = new Life(dice(0, 0, 0, 0, 0, 0, PACE.mix.snacks, 0.9))
+    expect(kindOf(chat.update(input({ subjects: team6 })), 'a')).toBe('chat')
+    const meeting = new Life(dice(0, 0, 0, 0, 0, 0, PACE.mix.chat, 0))
+    expect(kindOf(meeting.update(input({ subjects: team6 })), 'a')).toBe('meeting')
+    // A hair below each is the one before.
+    const snack = new Life(dice(0, 0, 0, 0, 0, 0, PACE.mix.snacks - 0.01))
+    expect(kindOf(snack.update(input({ subjects: team6 })), 'a')).toBe('snacks')
+    const talk = new Life(dice(0, 0, 0, 0, 0, 0, PACE.mix.chat - 0.01, 0.9))
+    expect(kindOf(talk.update(input({ subjects: team6 })), 'a')).toBe('chat')
   })
 
   it('goes to the other counter when the one they fancied is full', () => {
     const wantsTea = () => new Life(dice(0, 0))
     expect(
-      kindOf(wantsTea().update(input({ open: { tea: 0, snacks: 1 }, subjects: [idle('a')] })), 'a'),
+      kindOf(
+        wantsTea().update(input({ open: { ...NO_ROOM, snacks: 1 }, subjects: [idle('a')] })),
+        'a',
+      ),
     ).toBe('snacks')
-    const wantsSnack = () => new Life(dice(0, 0.99))
+    const wantsSnack = () => new Life(dice(0, 0.5))
     expect(
       kindOf(
-        wantsSnack().update(input({ open: { tea: 1, snacks: 0 }, subjects: [idle('a')] })),
+        wantsSnack().update(input({ open: { ...NO_ROOM, tea: 1 }, subjects: [idle('a')] })),
         'a',
       ),
     ).toBe('tea')
@@ -138,7 +164,7 @@ describe('where they go', () => {
 
   it('stays at their desk when both counters are full, and tries again later without waiting anew', () => {
     const life = new Life(dice(0, 0))
-    expect(life.update(input({ open: { tea: 0, snacks: 0 }, subjects: [idle('a')] })).size).toBe(0)
+    expect(life.update(input({ open: NO_ROOM, subjects: [idle('a')] })).size).toBe(0)
     expect(life.update(input({ now: ready + 1_000, subjects: [idle('a')] })).size).toBe(1)
   })
 
@@ -146,15 +172,15 @@ describe('where they go', () => {
     // Six people, so two may be away, and both fancy tea, but there is one place at the tea counter.
     const life = new Life(dice(0))
     const team = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => idle(id))
-    const on = life.update(input({ open: { tea: 1, snacks: 0 }, subjects: team }))
-    expect([...on.values()]).toEqual(['tea'])
+    const on = life.update(input({ open: { ...NO_ROOM, tea: 1 }, subjects: team }))
+    expect([...on.values()].map((o) => o.kind)).toEqual(['tea'])
   })
 
   it('gives the second person the other counter when the first took the last place at theirs', () => {
     const life = new Life(dice(0))
     const team = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => idle(id))
-    const on = life.update(input({ open: { tea: 1, snacks: 1 }, subjects: team }))
-    expect([...on.values()].sort()).toEqual(['snacks', 'tea'])
+    const on = life.update(input({ open: { ...NO_ROOM, tea: 1, snacks: 1 }, subjects: team }))
+    expect([...on.values()].map((o) => o.kind).sort()).toEqual(['snacks', 'tea'])
   })
 
   it('only ever names a counter that exists', () => {
@@ -162,7 +188,7 @@ describe('where they go', () => {
     const on = life.update(
       input({ subjects: [idle('a'), idle('b'), idle('c'), idle('d'), idle('e'), idle('f')] }),
     )
-    for (const kind of on.values()) expect(BREAK_KINDS).toContain(kind)
+    for (const outing of on.values()) expect(LIFE_KINDS).toContain(outing.kind)
   })
 })
 
@@ -194,7 +220,7 @@ describe('how many are away at once', () => {
     const there = new Set([first])
     life.update(input({ now: ready + 7_000, subjects, arrived: there }))
     const later = life.update(
-      input({ now: ready + 7_000 + PACE.stayMaxMs, subjects, arrived: there }),
+      input({ now: ready + 7_000 + PACE.stayMs.tea[1], subjects, arrived: there }),
     )
     expect(later.has(first)).toBe(false)
     // In that same moment the next in line goes, so it is still one at a time.
@@ -224,10 +250,11 @@ describe('the end of a break', () => {
     const arrivedAt = ready + 10_000
     expect(life.update(input({ now: arrivedAt, subjects, arrived: there })).size).toBe(1)
     expect(
-      life.update(input({ now: arrivedAt + PACE.stayMinMs - 1, subjects, arrived: there })).size,
+      life.update(input({ now: arrivedAt + PACE.stayMs.tea[0] - 1, subjects, arrived: there }))
+        .size,
     ).toBe(1)
     expect(
-      life.update(input({ now: arrivedAt + PACE.stayMinMs, subjects, arrived: there })).size,
+      life.update(input({ now: arrivedAt + PACE.stayMs.tea[0], subjects, arrived: there })).size,
     ).toBe(0)
   })
 
@@ -238,11 +265,11 @@ describe('the end of a break', () => {
     const there = new Set(['a'])
     life.update(input({ now: ready, subjects, arrived: there }))
     expect(
-      life.update(input({ now: ready + PACE.stayMinMs + 1, subjects, arrived: there })).size,
+      life.update(input({ now: ready + PACE.stayMs.tea[0] + 1, subjects, arrived: there })).size,
     ).toBe(1)
-    expect(life.update(input({ now: ready + PACE.stayMaxMs, subjects, arrived: there })).size).toBe(
-      0,
-    )
+    expect(
+      life.update(input({ now: ready + PACE.stayMs.tea[1], subjects, arrived: there })).size,
+    ).toBe(0)
   })
 
   it('does not start the stay until they are there', () => {
@@ -297,7 +324,7 @@ describe('the next break', () => {
     life.update(input({ subjects }))
     const there = new Set([subjects[0]?.id ?? ''])
     life.update(input({ now: ready + 1_000, subjects, arrived: there }))
-    const over = ready + 1_000 + PACE.stayMinMs
+    const over = ready + 1_000 + PACE.stayMs.tea[0]
     expect(life.update(input({ now: over, subjects, arrived: there })).size).toBe(0)
     return over
   }
@@ -372,6 +399,305 @@ describe('chance', () => {
   })
 })
 
+describe('chats and meetings', () => {
+  const zeros = (n: number) => Array.from({ length: n }, () => 0)
+  const team = (n: number, patch: Partial<LifeSubject> = {}) =>
+    Array.from({ length: n }, (_, i) => ({ ...idle(`e${i}`), ...patch }))
+  /**
+   * A die for a team of `n` all due at once: each one's wait (none), then what the first fancies, then
+   * whatever else the rules roll (the size of a chat, who goes along), then zeros.
+   */
+  const roll = (n: number, ...after: number[]) => dice(...zeros(n), ...after, 0, 0, 0, 0, 0, 0)
+  const groupOf = (on: Map<string, { members: readonly string[] }>, id: string) =>
+    on.get(id)?.members
+
+  describe('a chat', () => {
+    const CHAT = 0.7
+
+    it('takes two people to the pantry table together, each knowing who is with them', () => {
+      const life = new Life(roll(2, CHAT, 0.9))
+      const on = life.update(input({ subjects: team(2) }))
+      expect(on.get('e0')).toMatchObject({ kind: 'chat', together: false })
+      expect(on.get('e1')).toMatchObject({ kind: 'chat', together: false })
+      expect(groupOf(on, 'e0')).toEqual(['e0', 'e1'])
+      expect(groupOf(on, 'e1')).toEqual(['e0', 'e1'])
+    })
+
+    it('is three people below the chance of three and two at it', () => {
+      const three = new Life(roll(6, CHAT, PACE.chatOfThree - 0.01))
+      expect(groupOf(three.update(input({ subjects: team(6) })), 'e0')).toHaveLength(3)
+      const two = new Life(roll(6, CHAT, PACE.chatOfThree))
+      expect(groupOf(two.update(input({ subjects: team(6) })), 'e0')).toHaveLength(2)
+    })
+
+    it('keeps the partner in the chat, who is also due, from going off on their own', () => {
+      // Twelve people, so plenty of room for others to go too; the partner must still be in the chat.
+      const life = new Life(roll(12, CHAT, 0.9))
+      const on = life.update(input({ subjects: team(12) }))
+      const members = groupOf(on, 'e0') as readonly string[]
+      expect(members).toHaveLength(2)
+      for (const id of members) {
+        expect(on.get(id), id).toMatchObject({ kind: 'chat', members })
+      }
+    })
+
+    it('is what someone who fancied tea does when both counters are full', () => {
+      // e0's moment has come and they fancy tea; e1 is ready but their own moment has not come, so
+      // e1 goes only if e0 asks them along.
+      const life = new Life(dice(0, 0.9, 0, 0.9, 0, 0))
+      const on = life.update(input({ open: { ...ROOMY, tea: 0, snacks: 0 }, subjects: team(2) }))
+      expect(kindOf(on, 'e0')).toBe('chat')
+      expect(kindOf(on, 'e1')).toBe('chat')
+    })
+
+    it('is three people on a low roll, if the team is big enough to spare them', () => {
+      const life = new Life(roll(6, CHAT, 0.1))
+      const on = life.update(input({ subjects: team(6) }))
+      expect(groupOf(on, 'e0')).toHaveLength(3)
+      // Three of six is half the team: the most that ever goes together.
+      expect(on.size).toBe(3)
+    })
+
+    it('is only ever two in a small team, however the roll falls', () => {
+      for (const n of [2, 3, 4]) {
+        const life = new Life(roll(n, CHAT, 0.1))
+        const on = life.update(input({ subjects: team(n) }))
+        expect(on.size, `${n}`).toBe(2)
+      }
+    })
+
+    it('needs somebody else who is ready, and otherwise goes for tea or a snack', () => {
+      // The other is not idle for long enough yet.
+      const soon = [idle('a'), idle('b', ready - 1_000)]
+      const alone = new Life(roll(1, CHAT))
+      const on = alone.update(input({ subjects: soon }))
+      expect(on.get('a')).toMatchObject({ kind: 'tea', members: ['a'] })
+      expect(on.has('b')).toBe(false)
+    })
+
+    it('needs them to be free: someone whose agent is working is not asked along', () => {
+      for (const state of ['coding', 'thinking', 'testing', 'error', 'offline'] as const) {
+        const life = new Life(roll(1, CHAT))
+        const on = life.update(input({ subjects: [idle('a'), idle('b', T0, state)] }))
+        expect(kindOf(on, 'a'), state).toBe('tea')
+        expect(on.has('b'), state).toBe(false)
+      }
+    })
+
+    it('does not ask along someone who has somewhere real to be', () => {
+      const busy: LifeSubject = { ...idle('b'), busy: true }
+      const on = new Life(roll(1, CHAT)).update(input({ subjects: [idle('a'), busy] }))
+      expect(kindOf(on, 'a')).toBe('tea')
+      expect(on.has('b')).toBe(false)
+    })
+
+    it('does not ask along someone who has only just been out', () => {
+      // b goes for tea alone, is back after the shortest stay, and a comes along a moment later.
+      const life = new Life(dice(0, 0, 0, 0, CHAT))
+      life.update(input({ subjects: [idle('b')] }))
+      const there = new Set(['b'])
+      life.update(input({ now: ready + 1_000, subjects: [idle('b')], arrived: there }))
+      const over = ready + 1_000 + PACE.stayMs.tea[0]
+      expect(life.update(input({ now: over, subjects: [idle('b')], arrived: there })).size).toBe(0)
+      const on = life.update(input({ now: over + 1_000, subjects: [idle('a'), idle('b')] }))
+      // a wants a chat but b is not ready, so a has tea.
+      expect(on.get('a')).toMatchObject({ kind: 'tea', members: ['a'] })
+      expect(on.has('b')).toBe(false)
+    })
+
+    it('needs room at the table for them all, and otherwise goes for tea', () => {
+      const life = new Life(roll(2, CHAT, 0.9))
+      const on = life.update(input({ open: { ...ROOMY, chat: 1 }, subjects: team(2) }))
+      expect(kindOf(on, 'e0')).toBe('tea')
+      expect(on.size).toBe(1)
+    })
+
+    it('makes way for others: a chat is more than a third of a small team only when nobody else is out', () => {
+      // Three people, so one may be away; a chat of two is let through because nobody else is out.
+      const life = new Life(roll(3, CHAT, 0.9))
+      const on = life.update(input({ subjects: team(3) }))
+      expect(on.size).toBe(2)
+      // The third is due too, but two are already away and that is all that may be.
+      expect(on.has('e2')).toBe(false)
+    })
+
+    it('does not go over the limit when somebody else is already out: they have tea instead', () => {
+      // Six people, so two may be away. e0 goes for tea; e1 fancies a chat, but a chat of two
+      // would make three, so e1 has tea as well.
+      const life = new Life(roll(6, 0, CHAT, 0.9))
+      const on = life.update(input({ subjects: team(6) }))
+      expect([...on.values()].map((o) => o.kind)).toEqual(['tea', 'tea'])
+    })
+  })
+
+  describe('a meeting', () => {
+    const MEETING = 0.95
+
+    it('takes three people to the meeting room together, in a team of six or more', () => {
+      const life = new Life(roll(6, MEETING, 0, 0, 0))
+      const on = life.update(input({ subjects: team(6) }))
+      expect(on.get('e0')).toMatchObject({ kind: 'meeting', together: false })
+      expect(groupOf(on, 'e0')).toHaveLength(3)
+      expect(on.size).toBe(3)
+    })
+
+    it('is up to five in a team of ten or more, and never more than half the team', () => {
+      const life = new Life(roll(12, MEETING, 0.99, 0, 0, 0, 0))
+      const on = life.update(input({ subjects: team(12) }))
+      expect(groupOf(on, 'e0')).toHaveLength(5)
+      const small = new Life(roll(8, MEETING, 0.99, 0, 0, 0, 0))
+      expect(groupOf(small.update(input({ subjects: team(8) })), 'e0')).toHaveLength(4)
+    })
+
+    it('needs a team of six, so it never takes more than half of them; a smaller one has a chat instead', () => {
+      const life = new Life(roll(5, MEETING, 0.9))
+      const on = life.update(input({ subjects: team(5) }))
+      expect(on.get('e0')).toMatchObject({ kind: 'chat' })
+    })
+
+    it('needs enough others who are ready, and otherwise has a chat', () => {
+      // Six people, but only one other is free.
+      const subjects = [
+        idle('a'),
+        idle('b'),
+        ...team(4, { state: 'coding' }).map((p, i) => ({ ...p, id: `w${i}` })),
+      ]
+      const life = new Life(roll(2, MEETING, 0.9))
+      const on = life.update(input({ subjects }))
+      expect(on.get('a')).toMatchObject({ kind: 'chat' })
+    })
+
+    it('needs room in the meeting room for them all', () => {
+      const life = new Life(roll(6, MEETING, 0, 0))
+      const on = life.update(input({ open: { ...ROOMY, meeting: 2 }, subjects: team(6) }))
+      expect(on.get('e0')?.kind).not.toBe('meeting')
+    })
+  })
+
+  describe('together', () => {
+    const CHAT = 0.7
+    const start = () => {
+      // Waits, fancy a chat, a pair, the first partner, then the shortest stay.
+      const life = new Life(dice(0, 0, CHAT, 0.9, 0, 0))
+      life.update(input({ subjects: team(2) }))
+      return life
+    }
+
+    it('begins only when they are all there', () => {
+      const life = start()
+      const one = life.update(
+        input({ now: ready + 5_000, subjects: team(2), arrived: new Set(['e0']) }),
+      )
+      expect(one.get('e0')?.together).toBe(false)
+      const both = life.update(
+        input({ now: ready + 6_000, subjects: team(2), arrived: new Set(['e0', 'e1']) }),
+      )
+      expect(both.get('e0')?.together).toBe(true)
+      expect(both.get('e1')?.together).toBe(true)
+    })
+
+    it('does not start the stay for the first to arrive, only once all are there', () => {
+      const life = start()
+      const there = new Set(['e0'])
+      // e0 waits at the table for a long time; e1 arrives late but in time.
+      life.update(input({ now: ready + 30_000, subjects: team(2), arrived: there }))
+      const late = ready + 40_000
+      const both = new Set(['e0', 'e1'])
+      expect(life.update(input({ now: late, subjects: team(2), arrived: both })).size).toBe(2)
+      const stay = PACE.stayMs.chat[0]
+      expect(
+        life.update(input({ now: late + stay - 1, subjects: team(2), arrived: both })).size,
+      ).toBe(2)
+      expect(life.update(input({ now: late + stay, subjects: team(2), arrived: both })).size).toBe(
+        0,
+      )
+    })
+
+    it('ends for everyone at once, and each has to wait before going again', () => {
+      const life = start()
+      const both = new Set(['e0', 'e1'])
+      life.update(input({ now: ready + 1_000, subjects: team(2), arrived: both }))
+      const over = ready + 1_000 + PACE.stayMs.chat[0]
+      expect(life.update(input({ now: over, subjects: team(2), arrived: both })).size).toBe(0)
+      expect(life.update(input({ now: over + 1_000, subjects: team(2) })).size).toBe(0)
+    })
+
+    it('stays longer for a chat than for a cup of tea, and longer still for a meeting', () => {
+      expect(PACE.stayMs.chat[0]).toBeGreaterThan(PACE.stayMs.tea[0])
+      expect(PACE.stayMs.meeting[0]).toBeGreaterThan(PACE.stayMs.chat[0])
+      expect(PACE.stayMs.meeting[1]).toBeGreaterThan(PACE.stayMs.chat[1])
+    })
+
+    it('is given up if they do not all get there in time, for everyone', () => {
+      const life = start()
+      const only = new Set(['e0'])
+      expect(
+        life.update(input({ now: ready + PACE.travelMs - 1, subjects: team(2), arrived: only }))
+          .size,
+      ).toBe(2)
+      expect(
+        life.update(input({ now: ready + PACE.travelMs, subjects: team(2), arrived: only })).size,
+      ).toBe(0)
+    })
+
+    it('is over for both when one of two goes back to work', () => {
+      const life = start()
+      const both = new Set(['e0', 'e1'])
+      life.update(input({ now: ready + 1_000, subjects: team(2), arrived: both }))
+      const busy = [idle('e0'), idle('e1', ready + 2_000, 'coding')]
+      expect(life.update(input({ now: ready + 2_000, subjects: busy, arrived: both })).size).toBe(0)
+    })
+
+    it('goes on with those who are left when one of three goes back to work', () => {
+      const life = new Life(roll(6, CHAT, 0.1))
+      life.update(input({ subjects: team(6) }))
+      const three = new Set(['e0', 'e1', 'e2'])
+      const subjects = team(6)
+      const leaves = [
+        subjects[0],
+        { ...(subjects[1] as LifeSubject), state: 'coding' as const },
+        ...subjects.slice(2),
+      ] as LifeSubject[]
+      const on = life.update(input({ now: ready + 1_000, subjects: leaves, arrived: three }))
+      const members = [...on.keys()].sort()
+      expect(members).toHaveLength(2)
+      expect(on.get(members[0] as string)?.members).toHaveLength(2)
+    })
+
+    it('calls everyone back at once when it is switched off', () => {
+      const life = start()
+      expect(
+        life.update(input({ now: ready + 1_000, subjects: team(2), enabled: false })).size,
+      ).toBe(0)
+    })
+  })
+})
+
+describe('speaker', () => {
+  const members = ['a', 'b', 'c']
+
+  it('gives each their turn in order, and starts over', () => {
+    expect(speaker(members, 0)).toBe('a')
+    expect(speaker(members, TURN_MS - 1)).toBe('a')
+    expect(speaker(members, TURN_MS)).toBe('b')
+    expect(speaker(members, 2 * TURN_MS)).toBe('c')
+    expect(speaker(members, 3 * TURN_MS)).toBe('a')
+  })
+
+  it('is always the one person when there is only one', () => {
+    for (const now of [0, TURN_MS, 5 * TURN_MS + 3]) expect(speaker(['a'], now)).toBe('a')
+  })
+
+  it('is nobody when nobody is there', () => {
+    expect(speaker([], 12345)).toBeUndefined()
+  })
+
+  it('is a few seconds a turn', () => {
+    expect(TURN_MS).toBeGreaterThan(1_000)
+    expect(TURN_MS).toBeLessThan(6_000)
+  })
+})
+
 describe('a whole quiet day', () => {
   /** A small seeded die, so the day is the same every time. */
   function seeded(seed: number): () => number {
@@ -384,31 +710,61 @@ describe('a whole quiet day', () => {
     }
   }
 
-  /** Six people idle all day; whoever is on a break reaches the counter eight seconds after setting off. */
-  function day(seed: number, minutes: number) {
+  /** Six people idle all day; whoever is out reaches their place eight seconds after setting off. */
+  function day(seed: number, minutes: number, team = 6) {
     const life = new Life(seeded(seed))
-    const subjects = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => idle(id))
+    const ids = Array.from({ length: team }, (_, i) => `e${i}`)
+    const subjects = ids.map((id) => idle(id))
     const started = new Map<string, number[]>()
+    const kinds = new Map<LifeKind, number>()
     const away = new Map<string, number>()
     let most = 0
+    /** Moments when more than a third were out and it was not one outing on its own. */
+    let overCap = 0
+    const cap = Math.max(1, Math.floor(team / 3))
     for (let ms = 0; ms <= minutes * 60_000; ms += 1_000) {
       const now = T0 + ms
       const there = new Set([...away].filter(([, since]) => now - since >= 8_000).map(([id]) => id))
       const on = life.update(input({ now, subjects, arrived: there }))
       for (const id of away.keys()) if (!on.has(id)) away.delete(id)
-      for (const id of on.keys()) {
+      for (const [id, outing] of on) {
         if (!away.has(id)) {
           away.set(id, now)
           started.set(id, [...(started.get(id) ?? []), now])
+          kinds.set(outing.kind, (kinds.get(outing.kind) ?? 0) + 1)
         }
       }
+      const groups = new Set([...on.values()].map((o) => o.members.join()))
+      if (on.size > cap && groups.size > 1) overCap += 1
       most = Math.max(most, on.size)
     }
-    return { started, most }
+    return { started, most, overCap, kinds }
   }
 
-  it('never has more than a third of the team away at once', () => {
-    for (const seed of [1, 2, 3, 4, 5]) expect(day(seed, 30).most, `${seed}`).toBeLessThanOrEqual(2)
+  it('never has more than a third of the team away at once, except one chat or meeting on its own', () => {
+    for (const seed of [1, 2, 3, 4, 5]) {
+      expect(day(seed, 30).overCap, `${seed}`).toBe(0)
+    }
+  })
+
+  it('never takes more than half the team to one chat or meeting', () => {
+    for (const team of [2, 3, 4, 6, 9, 12]) {
+      for (const seed of [1, 2, 3]) {
+        expect(day(seed, 20, team).most, `${team} people, seed ${seed}`).toBeLessThanOrEqual(
+          Math.max(2, Math.floor(team / 2), Math.floor(team / 3)),
+        )
+      }
+    }
+  })
+
+  it('has every kind of outing in a day, and chats more often than meetings', () => {
+    const total = new Map<LifeKind, number>()
+    for (const seed of [1, 2, 3, 4]) {
+      for (const [kind, n] of day(seed, 60, 12).kinds) total.set(kind, (total.get(kind) ?? 0) + n)
+    }
+    for (const kind of LIFE_KINDS) expect(total.get(kind), kind).toBeGreaterThan(0)
+    expect(total.get('chat') ?? 0).toBeGreaterThan(total.get('meeting') ?? 0)
+    expect(total.get('tea') ?? 0).toBeGreaterThan(total.get('chat') ?? 0)
   })
 
   it('gives everyone a turn, but not two turns close together', () => {

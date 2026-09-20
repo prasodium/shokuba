@@ -189,6 +189,21 @@ describe('someone who is away from their desk', () => {
       expect(demo).toMatchObject({ provenance: 'demo', simulated: true })
     })
 
+    it('can leave out where they are for a group already together, and keeps every mark', () => {
+      const brief = bubbleFor(idle('reported'), 'meeting', 'simulated', true)
+      expect(brief.detail).toBeNull()
+      expect(brief).toMatchObject({ label: 'Idle', simulated: true })
+      // Not brief (the default) says where, as before.
+      expect(bubbleFor(idle('reported'), 'meeting', 'simulated').detail).toBe('in the meeting room')
+      // Brief changes nothing for someone at their desk, whose bubble says what they are doing.
+      const working = view({
+        state: 'coding',
+        stateSource: 'reported',
+        activity: { toolName: 'Edit', summary: 'src/a.ts' },
+      })
+      expect(bubbleFor(working, null, 'inferred', true).detail).toBe('src/a.ts')
+    })
+
     it('is marked only while they are away', () => {
       expect(bubbleFor(idle('reported'), null, 'simulated').simulated).toBe(false)
       expect(bubbleFor(idle('reported')).simulated).toBe(false)

@@ -193,7 +193,7 @@ export function OfficeView({ onNew }: { onNew(): void }) {
             title={
               reducedMotion
                 ? 'Off, because your system asks for reduced motion: nobody walks.'
-                : 'Employees take tea and snack breaks while their agent is idle. This is simulated, it is marked as simulated, and nothing is ever sent to an agent.'
+                : 'Employees take tea and snack breaks, chat at the pantry table and meet in the meeting room while their agent is idle. This is simulated, it is marked as simulated, and nothing is ever sent to an agent.'
             }
             disabled={!scene || reducedMotion}
             onClick={() => {
