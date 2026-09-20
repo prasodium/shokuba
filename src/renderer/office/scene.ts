@@ -80,6 +80,7 @@ import {
 } from './map'
 import { buildNavGrid, reachableFrom, seatExit, type NavGrid } from './nav'
 import { BREAK_KINDS, Life, type BreakKind } from './life'
+import { NoteBoard, type Note } from './talk'
 import { LED_COLORS, poseFor, type Pose } from './pose'
 import {
   advance,
@@ -323,6 +324,8 @@ class Bubble {
   private key = ''
   private pulse = false
   private base = 1
+  /** How far it reaches above the head, unscaled, including its tail. */
+  extent = 0
 
   constructor(private readonly resolution: number) {
     this.view.addChild(this.bg, this.label, this.detail, this.tag)
@@ -368,6 +371,7 @@ class Bubble {
     const width = Math.max(row1, model.detail ? this.detail.width : 0) + padX * 2
     const height = padY * 2 + 16 + (model.detail ? 15 : 0)
     const tail = 7
+    this.extent = height + tail
     const tone: Record<BubbleModel['tone'], number> = {
       off: 0x6f675e,
       idle: 0x8ab4e8,
@@ -400,10 +404,77 @@ class Bubble {
   }
 }
 
+/** What a note chip shows: text, and whether it is simulated (the empty "…" of a chat). */
+interface ChipModel {
+  text: string
+  simulated: boolean
+}
+
+/**
+ * A small note above an employee's status bubble: the real subject of a message they are part of,
+ * or the empty "…" of simulated chat, which is marked as simulated and never has words in it.
+ */
+class NoteChip {
+  readonly view = new Container()
+  private readonly bg = new Graphics()
+  private readonly label: Text
+  private readonly tag: Text
+  private key = ''
+
+  constructor(resolution: number) {
+    this.label = new Text({
+      text: '',
+      style: { fontFamily: FONT, fontSize: 11.5, fill: 0xf3ead8, fontWeight: '600' },
+      resolution,
+    })
+    this.tag = new Text({
+      text: 'simulated',
+      style: { fontFamily: FONT, fontSize: 9.5, fill: ACCENT, fontWeight: '600' },
+      resolution,
+    })
+    this.view.addChild(this.bg, this.label, this.tag)
+    this.view.eventMode = 'none'
+    this.view.visible = false
+  }
+
+  set(model: ChipModel | null): void {
+    if (!model) {
+      this.view.visible = false
+      this.key = ''
+      return
+    }
+    this.view.visible = true
+    const key = `${model.simulated}|${model.text}`
+    if (key === this.key) return
+    this.key = key
+
+    const padX = 9
+    const height = 22
+    const tail = 6
+    this.label.text = model.text
+    this.label.style.fontSize = model.simulated ? 17 : 11.5
+    this.label.style.fill = model.simulated ? 0x2b2622 : 0xf3ead8
+    this.tag.visible = model.simulated
+    const width = padX * 2 + this.label.width + (model.simulated ? 6 + this.tag.width : 0)
+
+    this.bg.clear()
+    this.bg
+      .roundRect(-width / 2, -height - tail, width, height, 9)
+      .fill({ color: model.simulated ? 0xf3ead8 : SURFACE, alpha: 0.95 })
+      .stroke({ width: 1.5, color: model.simulated ? ACCENT : 0x8ab4e8, alpha: 0.8 })
+    this.bg
+      .poly([-5, -tail, 5, -tail, 0, 0])
+      .fill({ color: model.simulated ? 0xf3ead8 : SURFACE, alpha: 0.95 })
+    this.label.position.set(-width / 2 + padX, -height - tail + (model.simulated ? -1 : 3.5))
+    this.tag.position.set(width / 2 - padX - this.tag.width, -height - tail + 6)
+  }
+}
+
 /** One employee's workstation and the little person at it. */
 class Desk {
   readonly container = new Container()
   readonly bubble: Bubble
+  readonly chip: NoteChip
   readonly nameLabel: Text
   readonly roleLabel: Text
   private readonly selection = new Graphics()
@@ -447,6 +518,7 @@ class Desk {
     this.drawFront()
 
     this.bubble = new Bubble(resolution)
+    this.chip = new NoteChip(resolution)
     this.nameLabel = new Text({
       text: employee.name,
       style: { fontFamily: FONT, fontSize: 13, fill: 0xf3ead8, fontWeight: '700' },
@@ -505,10 +577,16 @@ class Desk {
     this.drawFront()
   }
 
+  /** The note over their status bubble, or nothing. */
+  setNote(model: ChipModel | null): void {
+    this.chip.set(model)
+  }
+
   /** Release everything this desk created, including the labels that live in the overlay. */
   dispose(): void {
     this.container.destroy({ children: true })
     this.bubble.view.destroy({ children: true })
+    this.chip.view.destroy({ children: true })
     this.nameLabel.destroy()
     this.roleLabel.destroy()
   }
@@ -703,6 +781,8 @@ export class OfficeScene {
   private signals: OfficeSignals = EMPTY_SIGNALS
   private readingDesks = new Map<string, ReadingDesk>()
   private readonly flightQueue = new FlightQueue()
+  /** Real messages, shown for a few seconds over the employees they are between. */
+  private readonly noteBoard = new NoteBoard()
   /** The simulated life of the office (tea and snack breaks), and whether it is switched on. */
   private readonly life = new Life()
   private lifeOn = true
@@ -787,6 +867,11 @@ export class OfficeScene {
         this.benchGfx.alpha =
           this.signals.bench === 'running' ? 0.72 + 0.28 * Math.sin(this.time * 6) : 1
       }
+      const said = this.noteBoard.active(Date.now())
+      for (const [id, desk] of this.deskViews) {
+        const text = said.get(id)
+        desk.setNote(text === undefined ? null : { text, simulated: false })
+      }
       for (const desk of this.deskViews.values()) desk.tick(this.time)
       this.followSelected(dt)
       this.placeOverlay()
@@ -842,7 +927,7 @@ export class OfficeScene {
       desk.setPaper(this.signals.holding.includes(employee.id))
       this.deskViews.set(employee.id, desk)
       this.items.addChild(desk.container)
-      for (const view of [desk.nameLabel, desk.roleLabel, desk.bubble.view]) {
+      for (const view of [desk.nameLabel, desk.roleLabel, desk.bubble.view, desk.chip.view]) {
         view.zIndex = 10 + depthOf(stationRect(slot))
         this.overlay.addChild(view)
       }
@@ -892,6 +977,11 @@ export class OfficeScene {
     this.drawSignals()
     const holding = new Set(signals.holding)
     for (const [id, desk] of this.deskViews) desk.setPaper(holding.has(id))
+  }
+
+  /** Show these notes (the real subject of a message that has just been sent) over their employees. */
+  say(notes: readonly Note[]): void {
+    this.noteBoard.say(notes, Date.now())
   }
 
   /** Send a card or an envelope across the office, for a handoff that has just happened. */
@@ -1533,6 +1623,8 @@ export class OfficeScene {
       const head = place(desk.headScreen())
       desk.bubble.view.position.set(head.x, head.y)
       desk.bubble.setScale(k)
+      desk.chip.view.position.set(head.x, head.y - (desk.bubble.extent + 4) * k)
+      desk.chip.view.scale.set(k)
       const name = place(desk.nameScreen())
       desk.nameLabel.position.set(name.x, name.y)
       desk.nameLabel.scale.set(k)

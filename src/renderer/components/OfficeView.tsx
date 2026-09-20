@@ -4,10 +4,31 @@ import { flightFor } from '../office/handoffs'
 import { readLifeSetting, writeLifeSetting } from '../office/lifeSetting'
 import { MAX_VISIBLE_EMPLOYEES } from '../office/map'
 import { OfficeScene, type CameraState, type SceneEmployee } from '../office/scene'
+import { notesFor } from '../office/talk'
+import { useEvents } from '../store/events'
 import { onLiveEvent } from '../store/live'
+import { useMessages } from '../store/messages'
 import { useMissions } from '../store/missions'
 import { useOffice } from '../store/office'
 import { useOfficeSignals } from '../store/work'
+
+/**
+ * The subject of a conversation, as recorded: from its `conversation.created` event if that is
+ * still among the events the window keeps, otherwise from the conversations it has loaded.
+ */
+function subjectOfConversation(conversationId: string): string | null {
+  const events = useEvents.getState().events
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    if (event?.type === 'conversation.created' && event.payload.conversationId === conversationId) {
+      return event.payload.subject
+    }
+  }
+  const known = useMessages
+    .getState()
+    .conversations.find((c) => c.conversation.id === conversationId)
+  return known?.conversation.subject ?? null
+}
 
 /** This window's own store, or nothing if the browser will not give it out. */
 function browserStorage(): Storage | undefined {
@@ -99,6 +120,13 @@ export function OfficeView({ onNew }: { onNew(): void }) {
             .find((task) => task.id === taskId)?.assigneeId ?? null,
       })
       if (flight) scene.fly(flight)
+      // A real message also shows its real subject over the people it is between.
+      scene.say(
+        notesFor(event, {
+          subjectOf: subjectOfConversation,
+          nameOf: (id) => useOffice.getState().employees.find((e) => e.id === id)?.name ?? null,
+        }),
+      )
     })
   }, [scene])
 
