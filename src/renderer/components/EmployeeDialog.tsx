@@ -5,8 +5,10 @@ import {
   type Employee,
   type PermissionMode,
 } from '@shared/employees'
+import { DEFAULT_APPEARANCE, type Appearance } from '@shared/appearance'
 import { ROLE_TEMPLATES, roleTemplate } from '@shared/roles'
 import { useOffice } from '../store/office'
+import { CharacterEditor } from './CharacterEditor'
 
 const COLORS = ['#e8893a', '#6f9a5b', '#5b8fc7', '#c76b8f', '#8f7bd1', '#d1b34a']
 const NAMES = ['Mika', 'Ren', 'Sora', 'Aiko', 'Haru', 'Yui', 'Kaito', 'Nao']
@@ -45,6 +47,7 @@ export function EmployeeDialog({ open, editing, onClose }: Props) {
   const [model, setModel] = useState('')
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('default')
   const [color, setColor] = useState(COLORS[0] as string)
+  const [appearance, setAppearance] = useState<Appearance>(DEFAULT_APPEARANCE)
   const [isManager, setIsManager] = useState(false)
   const [reportsTo, setReportsTo] = useState('')
   const [instructions, setInstructions] = useState('')
@@ -74,6 +77,7 @@ export function EmployeeDialog({ open, editing, onClose }: Props) {
       setModel(editing.model ?? '')
       setPermissionMode(editing.permissionMode)
       setColor(editing.color)
+      setAppearance(editing.appearance)
       setIsManager(editing.isManager)
       setReportsTo(editing.reportsTo ?? '')
       setInstructions(editing.instructions ?? '')
@@ -84,6 +88,7 @@ export function EmployeeDialog({ open, editing, onClose }: Props) {
       setModel('')
       setPermissionMode('default')
       setColor(COLORS[employees.length % COLORS.length] as string)
+      setAppearance(DEFAULT_APPEARANCE)
       setIsManager(false)
       setReportsTo('')
       setInstructions('')
@@ -133,6 +138,7 @@ export function EmployeeDialog({ open, editing, onClose }: Props) {
       name,
       role,
       color,
+      appearance,
       isManager,
       // A manager reports to no one.
       reportsTo: isManager ? null : reportsTo || null,
@@ -389,6 +395,8 @@ export function EmployeeDialog({ open, editing, onClose }: Props) {
             ))}
           </div>
         </fieldset>
+
+        <CharacterEditor value={appearance} shirt={color} onChange={setAppearance} />
 
         {launchLocked && (
           <p className="muted">

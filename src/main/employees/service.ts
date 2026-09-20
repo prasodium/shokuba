@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
+import { parseAppearance } from '@shared/appearance'
 import {
   EmployeeInputSchema,
   EmployeeUpdateSchema,
@@ -40,6 +41,7 @@ interface Row {
   model: string | null
   permission_mode: string
   color: string
+  appearance: string
   is_manager: number
   reports_to: string | null
   instructions: string | null
@@ -58,6 +60,7 @@ const COLUMNS: Record<keyof EmployeeUpdate, string> = {
   model: 'model',
   permissionMode: 'permission_mode',
   color: 'color',
+  appearance: 'appearance',
   isManager: 'is_manager',
   reportsTo: 'reports_to',
   instructions: 'instructions',
@@ -114,9 +117,9 @@ export class EmployeeService {
       .prepare(
         `INSERT INTO employees
            (id, name, role, provider_id, working_directory, model, permission_mode, color,
-            is_manager, reports_to, instructions, created_at, updated_at)
+            appearance, is_manager, reports_to, instructions, created_at, updated_at)
          VALUES (@id, @name, @role, @providerId, @workingDirectory, @model, @permissionMode, @color,
-                 @isManager, @reportsTo, @instructions, @ts, @ts)`,
+                 @appearance, @isManager, @reportsTo, @instructions, @ts, @ts)`,
       )
       .run({
         id,
@@ -127,6 +130,7 @@ export class EmployeeService {
         model: input.model ?? null,
         permissionMode: input.permissionMode,
         color: input.color,
+        appearance: JSON.stringify(input.appearance),
         isManager: input.isManager ? 1 : 0,
         reportsTo,
         instructions: input.instructions || null,
@@ -184,7 +188,16 @@ export class EmployeeService {
     const sets = changed.map((key) => {
       const value = patch[key]
       params[key] =
-        typeof value === 'boolean' ? (value ? 1 : 0) : typeof value === 'string' ? value : null
+        typeof value === 'boolean'
+          ? value
+            ? 1
+            : 0
+          : typeof value === 'string'
+            ? value
+            : // The look is stored as JSON; everything else that is not text is cleared.
+              key === 'appearance' && value !== null && typeof value === 'object'
+              ? JSON.stringify(value)
+              : null
       return `${COLUMNS[key]} = @${key}`
     })
     this.deps.db
@@ -328,6 +341,7 @@ function toEmployee(row: Row): Employee {
     model: row.model,
     permissionMode: row.permission_mode as PermissionMode,
     color: row.color,
+    appearance: parseAppearance(row.appearance),
     isManager: row.is_manager === 1,
     reportsTo: row.reports_to,
     instructions: row.instructions,

@@ -9,6 +9,7 @@ import { workspaces } from './0007_workspaces'
 import { workspaceRemoval } from './0008_workspace_removal'
 import { checks } from './0009_checks'
 import { reviews } from './0010_reviews'
+import { appearance } from './0011_appearance'
 
 /** Ordered list of every migration. Append new ones; never edit or reorder old ones. */
 export const MIGRATIONS: readonly Migration[] = [
@@ -22,4 +23,5 @@ export const MIGRATIONS: readonly Migration[] = [
   workspaceRemoval,
   checks,
   reviews,
+  appearance,
 ]

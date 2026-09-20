@@ -366,3 +366,111 @@ describe('listing', () => {
     expect(frozen.list().map((e) => e.id)).toEqual(ids)
   })
 })
+
+describe('appearance', () => {
+  const look = { skin: 'umber', hair: 'blue', style: 'bun', accessory: 'glasses' } as const
+
+  it('is the look everyone had before, until it is changed', async () => {
+    const employee = await service.create(valid())
+    expect(employee.appearance).toEqual({
+      skin: 'sand',
+      hair: 'black',
+      style: 'short',
+      accessory: 'none',
+    })
+  })
+
+  it('is kept when given at hiring, and listed', async () => {
+    const employee = await service.create({ ...valid(), appearance: look })
+    expect(employee.appearance).toEqual(look)
+    expect(service.get(employee.id)?.appearance).toEqual(look)
+    expect(service.list()[0]?.appearance).toEqual(look)
+  })
+
+  it('is refused if it is not one of the choices, including a free colour', async () => {
+    for (const bad of [
+      { ...look, skin: '#ff0000' },
+      { ...look, hair: 'purple' },
+      { ...look, style: 'mohawk' },
+      { ...look, accessory: 'monocle' },
+      { skin: 'sand' },
+    ]) {
+      const error = await rejection(
+        service.create({ ...valid(), appearance: bad as unknown as typeof look }),
+      )
+      expect(error.code, JSON.stringify(bad)).toBe('invalid')
+    }
+    expect(service.list()).toEqual([])
+  })
+
+  it('changes as a whole when edited, records that it did, and touches nothing else', async () => {
+    const employee = await service.create({ ...valid(), color: '#5b8fc7' })
+    const updated = await service.update(employee.id, { appearance: look })
+    expect(updated.appearance).toEqual(look)
+    expect(updated).toEqual({ ...employee, appearance: look, updatedAt: updated.updatedAt })
+    const [event] = services.events.log.list({ type: 'employee.updated' })
+    expect(event).toMatchObject({
+      source: 'user',
+      actorId: employee.id,
+      payload: { employeeId: employee.id, fields: ['appearance'] },
+    })
+  })
+
+  it('is refused if only part of it is given when editing', async () => {
+    const employee = await service.create(valid())
+    const error = await rejection(
+      service.update(employee.id, { appearance: { skin: 'ebony' } as unknown as typeof look }),
+    )
+    expect(error.code).toBe('invalid')
+    expect(service.get(employee.id)?.appearance.skin).toBe('sand')
+  })
+
+  it('is left alone when an unrelated field is edited', async () => {
+    const employee = await service.create({ ...valid(), appearance: look })
+    const renamed = await service.update(employee.id, { name: 'Ren' })
+    expect(renamed.appearance).toEqual(look)
+  })
+
+  it('can change while the agent is running, since it is not a launch setting', async () => {
+    const employee = await service.create(valid())
+    running.add(employee.id)
+    const updated = await service.update(employee.id, { appearance: look })
+    expect(updated.appearance).toEqual(look)
+  })
+
+  it('shows the default, and does not break, if what is stored cannot be read', async () => {
+    const employee = await service.create({ ...valid(), appearance: look })
+    for (const stored of ['not json', '{}', '{"skin":"purple"}', '[]']) {
+      services.db
+        .prepare('UPDATE employees SET appearance = ? WHERE id = ?')
+        .run(stored, employee.id)
+      expect(service.get(employee.id)?.appearance, stored).toEqual({
+        skin: 'sand',
+        hair: 'black',
+        style: 'short',
+        accessory: 'none',
+      })
+      expect(service.list()).toHaveLength(1)
+    }
+  })
+
+  it('survives a restart', async () => {
+    const employee = await service.create({ ...valid(), appearance: look })
+    services.close()
+    const reopened = createServices({
+      dataDir: join(dir, 'data'),
+      version: 'test',
+      platform: toPlatformId(),
+      logger: createLogger(() => {}),
+    })
+    const again = new EmployeeService({
+      db: reopened.db,
+      events: reopened.events,
+      providers: new ProviderRegistry([createMockAdapter()]),
+      platform: toPlatformId(),
+      isRunning: () => false,
+    })
+    expect(again.get(employee.id)?.appearance).toEqual(look)
+    services = reopened
+  })
+})

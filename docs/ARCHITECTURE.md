@@ -390,6 +390,12 @@ The office has thirteen desks (twelve open and one in the cabin); more employees
 
 **What office life claims, and does not.** A person at the tea counter, the pantry table or the meeting table means nothing about their agent except that it was idle or waiting, and an empty **…** means nothing was said. It is never recorded, never appears in the event log or the evidence pack, and nothing is ever sent to any agent because of it. It never runs while an agent is working, it stops the moment one is, and it says **simulated** every time.
 
+### Customisation
+
+Phase 7 makes the office yours. Everything customised is a choice from a fixed set that Shokuba can draw and check, stored as data, and validated on the way in and tolerantly on the way out.
+
+**Appearance (slice 7a).** `shared/appearance.ts` defines the choices: six skin tones, eight hair colours, four hair styles and four things to wear, each named by an id. `AppearanceSchema` accepts only those ids (never a free colour or text) and requires every part, so a look is always replaced as a whole. An employee's appearance is one JSON column added by a migration whose default is the look everyone had before, so nobody changes until edited. Reading it never throws: anything that cannot be understood shows the default. It rides on the existing `employees.create` and `employees.update` calls and the existing `employee.updated` event (with `appearance` among the fields), and it can change while an agent is running because it is not a launch setting. The geometry lives in one `headBoxes` function that the seated person and the walking person share, so a look is the same in both, and long hair is painted before the body so the body covers it. The employee form's preview is `preview.ts`, which turns the same boxes into polygons with the office's own projection and shading; a small canvas component fills them.
+
 ## Planned
 
 ### More providers

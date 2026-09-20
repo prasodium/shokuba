@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
+  ACCESSORIES,
+  DEFAULT_APPEARANCE,
+  HAIR_COLORS,
+  HAIR_STYLES,
+  SKIN_TONES,
+  hairColor,
+  skinColor,
+  type Appearance,
+} from '@shared/appearance'
+import {
   BOARD_COLUMNS,
   BOARD_ROWS,
   STATION_DEPTH,
@@ -28,7 +38,7 @@ import {
   teaCounterBoxes,
   walkerBoxes,
 } from './furniture'
-import type { Box } from './iso'
+import { shade, type Box } from './iso'
 import { GLASS_HEIGHT, PARTITION_HEIGHT, buildOffice, type Point2, type Rect } from './map'
 import { poseFor } from './pose'
 
@@ -531,5 +541,151 @@ describe('work on the floor', () => {
     it('are told from each other', () => {
       expect(flyingBoxes('card', at, 'plain')).not.toEqual(flyingBoxes('envelope', at, 'plain'))
     })
+  })
+})
+
+describe('how someone looks', () => {
+  const shirt = 0x336699
+  const seated = (look: Partial<Appearance>) =>
+    personBoxes(poseFor('idle', 0), shirt, { ...DEFAULT_APPEARANCE, ...look })
+  const standing = (look: Partial<Appearance>, facing: 0 | 1 | 2 | 3 = 0) =>
+    walkerBoxes({ x: 10, y: 6 }, facing, 0, false, shirt, null, { ...DEFAULT_APPEARANCE, ...look })
+  const colored = (boxes: Box[], color: number) => boxes.filter((b) => b.color === color)
+  const combos = HAIR_STYLES.flatMap((style) =>
+    ACCESSORIES.map((accessory) => ({ style: style.id, accessory: accessory.id })),
+  )
+
+  it('is, by default, exactly the look everyone had before', () => {
+    expect(personBoxes(poseFor('idle', 0), shirt)).toEqual(seated({}))
+    expect(walkerBoxes({ x: 10, y: 6 }, 0, 0, false, shirt)).toEqual(standing({}))
+    expect(colored(seated({}), 0xe7b48c).length).toBeGreaterThan(0)
+    expect(colored(seated({}), 0x2b2118).length).toBeGreaterThan(0)
+  })
+
+  it('keeps every part inside the workstation for every style and accessory', () => {
+    for (const combo of combos) {
+      for (const b of seated(combo)) {
+        expect(b.w, JSON.stringify(combo)).toBeGreaterThan(0)
+        expect(b.x).toBeGreaterThanOrEqual(-0.2)
+        expect(b.y).toBeGreaterThanOrEqual(-0.2)
+        expect(b.x + b.w).toBeLessThanOrEqual(STATION_WIDTH + 0.2)
+        expect(b.y + b.d).toBeLessThanOrEqual(STATION_DEPTH + 0.3)
+        expect(b.z).toBeGreaterThanOrEqual(0)
+      }
+    }
+  })
+
+  it('keeps every part of a walking person within a person’s space, and the same parts whichever way they face', () => {
+    for (const combo of combos) {
+      const counts = new Set<number>()
+      for (const facing of [0, 1, 2, 3] as const) {
+        const boxes = standing(combo, facing)
+        counts.add(boxes.length)
+        for (const b of boxes) {
+          expect(b.x, JSON.stringify(combo)).toBeGreaterThan(10 - 0.6)
+          expect(b.x + b.w).toBeLessThan(10 + 0.6)
+          expect(b.y).toBeGreaterThan(6 - 0.6)
+          expect(b.y + b.d).toBeLessThan(6 + 0.6)
+          expect(Math.max(...boxes.map((c) => c.z + c.h))).toBeLessThan(1.9)
+        }
+      }
+      expect(counts.size, JSON.stringify(combo)).toBe(1)
+    }
+  })
+
+  it('draws the chosen skin on the head and hands, and never anywhere else', () => {
+    for (const tone of SKIN_TONES) {
+      const color = skinColor(tone.id)
+      const boxes = seated({ skin: tone.id })
+      // the head and two hands
+      expect(colored(boxes, color)).toHaveLength(3)
+      expect(colored(standing({ skin: tone.id }), color)).toHaveLength(1)
+    }
+  })
+
+  it('draws the chosen hair colour on the hair, and only there', () => {
+    for (const shade of HAIR_COLORS) {
+      const color = hairColor(shade.id)
+      expect(colored(seated({ hair: shade.id }), color).length).toBeGreaterThanOrEqual(2)
+      expect(colored(standing({ hair: shade.id }), color).length).toBeGreaterThanOrEqual(2)
+    }
+  })
+
+  it('keeps the eyes dark whatever the hair colour', () => {
+    const eyes = (boxes: Box[]) => boxes.filter((b) => b.h === 0.06 && b.d === 0.01)
+    for (const shade of HAIR_COLORS) {
+      const found = eyes(seated({ hair: shade.id }))
+      expect(found).toHaveLength(2)
+      for (const eye of found) expect(eye.color).toBe(0x2b2118)
+    }
+  })
+
+  it('is bald with no hair at all', () => {
+    // Not black, which is also the colour of the eyes.
+    const hair = hairColor('blonde')
+    expect(colored(seated({ style: 'bald', hair: 'blonde' }), hair)).toHaveLength(0)
+    expect(colored(standing({ style: 'bald', hair: 'blonde' }), hair)).toHaveLength(0)
+    expect(colored(seated({ style: 'short', hair: 'blonde' }), hair).length).toBeGreaterThan(0)
+  })
+
+  it('gives long hair behind the body and a bun on top, and no more than short hair otherwise', () => {
+    const short = seated({ style: 'short' })
+    const long = seated({ style: 'long' })
+    const bun = seated({ style: 'bun' })
+    expect(long).toHaveLength(short.length + 1)
+    expect(bun).toHaveLength(short.length + 1)
+    const hair = hairColor('black')
+    // The long hair is painted first, behind everything, so the body covers it.
+    const torso = long.findIndex((b) => b.color === shirt)
+    const behind = long.findIndex((b) => b.color === hair)
+    expect(behind).toBeGreaterThanOrEqual(0)
+    expect(behind).toBeLessThan(torso)
+    // The bun sits above the top of the hair.
+    const topOf = (boxes: Box[]) => Math.max(...colored(boxes, hair).map((b) => b.z + b.h))
+    expect(topOf(bun)).toBeGreaterThan(topOf(short))
+    expect(topOf(long)).toBeCloseTo(topOf(short))
+  })
+
+  it('shows glasses as two lenses you can see through, headphones as a band and two cups, a cap as a crown and a peak', () => {
+    const base = seated({}).length
+    const glasses = seated({ accessory: 'glasses' })
+    expect(glasses.filter((b) => (b.alpha ?? 1) < 1)).toHaveLength(2)
+    expect(glasses.length).toBeGreaterThan(base)
+    const phones = seated({ accessory: 'headphones' })
+    expect(phones.length).toBe(base + 5)
+    expect(phones.filter((b) => b.color === 0xe8893a)).toHaveLength(2)
+    const cap = seated({ accessory: 'cap' })
+    // A cap replaces the top of the hair with a crown, and adds a peak.
+    expect(cap.length).toBe(base + 1)
+    expect(cap.some((b) => b.color === shade(shirt, 0.8))).toBe(true)
+    expect(seated({ accessory: 'none' })).toHaveLength(base)
+  })
+
+  it('hides the top of the hair, and a bun, under a cap', () => {
+    const hair = hairColor('black')
+    const topHair = (boxes: Box[]) => boxes.filter((b) => b.color === hair && b.h === 0.12)
+    expect(topHair(seated({}))).toHaveLength(1)
+    expect(topHair(seated({ accessory: 'cap' }))).toHaveLength(0)
+    expect(colored(seated({ style: 'bun', accessory: 'cap' }), hair)).toHaveLength(
+      colored(seated({ style: 'short', accessory: 'cap' }), hair).length,
+    )
+  })
+
+  it('changes nothing about the body', () => {
+    const body = (boxes: Box[]) =>
+      boxes.filter((b) => b.color === shirt || b.color === shade(shirt, 0.85))
+    for (const combo of combos) expect(body(seated(combo))).toEqual(body(seated({})))
+  })
+
+  it('makes every look different from every other in what is drawn, except a bun under a cap, which cannot be seen', () => {
+    const seen = new Set<string>()
+    for (const combo of combos) {
+      if (combo.style === 'bun' && combo.accessory === 'cap') continue
+      seen.add(JSON.stringify(seated(combo)))
+    }
+    expect(seen.size).toBe(combos.length - 1)
+    expect(seated({ style: 'bun', accessory: 'cap' })).toEqual(
+      seated({ style: 'short', accessory: 'cap' }),
+    )
   })
 })

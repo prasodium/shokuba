@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { DEFAULT_APPEARANCE } from '@shared/appearance'
 import type { Employee } from '@shared/employees'
 import { orderTeam } from './team'
 
@@ -11,6 +12,7 @@ const person = (id: string, extra: Partial<Employee> = {}): Employee => ({
   model: null,
   permissionMode: 'default',
   color: '#e8893a',
+  appearance: DEFAULT_APPEARANCE,
   isManager: false,
   reportsTo: null,
   instructions: null,

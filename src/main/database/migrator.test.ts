@@ -117,3 +117,24 @@ describe('the real migration set', () => {
     expect(() => db.prepare(`DELETE FROM ${table}`).run()).toThrow(/append-only/)
   })
 })
+
+describe('the appearance migration', () => {
+  it('gives an employee hired before it the look everyone had, and adds nothing else', () => {
+    const db = memory()
+    migrate(db, MIGRATIONS.slice(0, 10))
+    db.prepare(
+      `INSERT INTO employees (id, name, role, provider_id, working_directory, created_at, updated_at)
+       VALUES ('e1', 'Ada', 'Engineer', 'mock', '/w', 't', 't')`,
+    ).run()
+    expect(migrate(db, MIGRATIONS).applied).toEqual([11])
+    const row = db.prepare('SELECT appearance FROM employees WHERE id = ?').get('e1') as {
+      appearance: string
+    }
+    expect(JSON.parse(row.appearance)).toEqual({
+      skin: 'sand',
+      hair: 'black',
+      style: 'short',
+      accessory: 'none',
+    })
+  })
+})

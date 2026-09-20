@@ -95,6 +95,7 @@ export function OfficeView({ onNew }: { onNew(): void }) {
         name: e.name,
         role: e.role,
         color: e.color,
+        appearance: e.appearance,
         isManager: e.isManager,
         reportsTo: e.reportsTo,
       })),

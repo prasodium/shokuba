@@ -1,3 +1,4 @@
+import { DEFAULT_APPEARANCE, hairColor, skinColor, type Appearance } from '@shared/appearance'
 import type { Tint } from './handoffs'
 import { shade, sortByDepth, type Box } from './iso'
 import { GLASS_HEIGHT, PARTITION_HEIGHT, type Point2, type Rect } from './map'
@@ -17,8 +18,9 @@ import type { Facing } from './walker'
 export const STATION_WIDTH = 1.8
 export const STATION_DEPTH = 1.7
 
-const SKIN = 0xe7b48c
-const HAIR = 0x2b2118
+const EYE = 0x2b2118
+const LENS = 0xbfe3f0
+const CUPS = 0xe8893a
 const PANTS = 0x3b4a63
 const WOOD = 0xb8875a
 const WOOD_DARK = 0x8a6240
@@ -44,16 +46,73 @@ export function chairBoxes(): Box[] {
   ]
 }
 
-/** The seated person, posed. `shirt` is the employee's colour. */
-export function personBoxes(pose: Pose, shirt: number): Box[] {
+/**
+ * A head, from its low corner, facing +y: the head itself, its hair in the chosen style, eyes, and
+ * whatever is worn. Seated and standing people share it, so a look is the same in both. `behind` is
+ * what falls behind the body (long hair) and must be painted before it; `front` goes after.
+ */
+function headBoxes(
+  look: Appearance,
+  shirt: number,
+  x: number,
+  y: number,
+  z: number,
+): { behind: Box[]; front: Box[] } {
+  const skin = skinColor(look.skin)
+  const hair = hairColor(look.hair)
+  const capped = look.accessory === 'cap'
+  const cap = shade(shirt, 0.8)
+
+  const behind: Box[] =
+    look.style === 'long' ? [box(x - 0.02, y - 0.14, z - 0.32, 0.38, 0.12, 0.6, hair)] : []
+
+  const front: Box[] = [box(x, y, z, 0.34, 0.32, 0.32, skin)]
+  // A cap covers the top of the head, whatever the hair.
+  if (capped) front.push(box(x - 0.02, y - 0.02, z + 0.26, 0.38, 0.36, 0.12, cap))
+  else if (look.style !== 'bald')
+    front.push(box(x - 0.02, y - 0.02, z + 0.26, 0.38, 0.36, 0.12, hair))
+  if (look.style !== 'bald') front.push(box(x - 0.02, y - 0.04, z + 0.04, 0.38, 0.06, 0.24, hair))
+  if (look.style === 'bun' && !capped)
+    front.push(box(x + 0.09, y + 0.05, z + 0.38, 0.16, 0.16, 0.14, hair))
+  // eyes on the +y face of the head
+  front.push(box(x + 0.06, y + 0.32, z + 0.15, 0.06, 0.01, 0.06, EYE))
+  front.push(box(x + 0.22, y + 0.32, z + 0.15, 0.06, 0.01, 0.06, EYE))
+
+  if (look.accessory === 'glasses') {
+    front.push({ ...box(x + 0.03, y + 0.325, z + 0.13, 0.12, 0.01, 0.09, LENS), alpha: 0.6 })
+    front.push({ ...box(x + 0.19, y + 0.325, z + 0.13, 0.12, 0.01, 0.09, LENS), alpha: 0.6 })
+    front.push(box(x + 0.02, y + 0.33, z + 0.215, 0.14, 0.01, 0.02, METAL))
+    front.push(box(x + 0.18, y + 0.33, z + 0.215, 0.14, 0.01, 0.02, METAL))
+    front.push(box(x + 0.15, y + 0.33, z + 0.17, 0.04, 0.01, 0.025, METAL))
+  } else if (look.accessory === 'headphones') {
+    front.push(box(x - 0.03, y + 0.05, z + 0.38, 0.4, 0.06, 0.05, METAL))
+    front.push(box(x - 0.04, y + 0.08, z + 0.22, 0.03, 0.05, 0.17, METAL))
+    front.push(box(x + 0.35, y + 0.08, z + 0.22, 0.03, 0.05, 0.17, METAL))
+    front.push(box(x - 0.09, y + 0.06, z + 0.06, 0.06, 0.18, 0.18, CUPS))
+    front.push(box(x + 0.37, y + 0.06, z + 0.06, 0.06, 0.18, 0.18, CUPS))
+  } else if (capped) {
+    // the peak of the cap, out over the face
+    front.push(box(x - 0.03, y + 0.3, z + 0.27, 0.4, 0.14, 0.03, shade(cap, 0.85)))
+  }
+  return { behind, front }
+}
+
+/** The seated person, posed. `shirt` is the employee's colour and `look` how they look. */
+export function personBoxes(
+  pose: Pose,
+  shirt: number,
+  look: Appearance = DEFAULT_APPEARANCE,
+): Box[] {
   if (!pose.present) return []
   const sleeve = shade(shirt, 0.85)
-  const hx = pose.headDx
-  const hz = pose.headDz
+  const skin = skinColor(look.skin)
+  const head = headBoxes(look, shirt, 0.68 + pose.headDx, 0.28, 0.89 + pose.headDz)
 
   // Painter's order for a person facing +y: farther parts first. The left arm is on the far
   // (-x) side of the torso, so it goes before it; the right arm is on the near side, after.
   return [
+    // long hair falls behind the body
+    ...head.behind,
     // legs
     box(0.66, 0.62, 0.02, 0.14, 0.14, 0.26, PANTS),
     box(0.66, 0.32, 0.28, 0.14, 0.44, 0.13, PANTS),
@@ -61,19 +120,14 @@ export function personBoxes(pose: Pose, shirt: number): Box[] {
     box(0.92, 0.32, 0.28, 0.14, 0.44, 0.13, PANTS),
     // left arm, reaching toward the keyboard
     box(0.5, 0.3, 0.6 + pose.leftArmDz, 0.13, 0.42, 0.13, sleeve),
-    box(0.5, 0.7, 0.6 + pose.leftArmDz, 0.13, 0.1, 0.13, SKIN),
+    box(0.5, 0.7, 0.6 + pose.leftArmDz, 0.13, 0.1, 0.13, skin),
     // torso
     box(0.64, 0.26, 0.41, 0.4, 0.28, 0.48, shirt),
     // right arm, which can be raised to get attention
     box(1.04, 0.3, 0.6 + pose.rightArmDz + pose.waveDz, 0.13, 0.42, 0.13, sleeve),
-    box(1.04, 0.7, 0.6 + pose.rightArmDz + pose.waveDz, 0.13, 0.1, 0.13, SKIN),
-    // head
-    box(0.68 + hx, 0.28, 0.89 + hz, 0.34, 0.32, 0.32, SKIN),
-    box(0.66 + hx, 0.26, 1.15 + hz, 0.38, 0.36, 0.12, HAIR),
-    box(0.66 + hx, 0.24, 0.93 + hz, 0.38, 0.06, 0.24, HAIR),
-    // eyes on the +y face of the head
-    box(0.74 + hx, 0.6, 1.04 + hz, 0.06, 0.01, 0.06, HAIR),
-    box(0.9 + hx, 0.6, 1.04 + hz, 0.06, 0.01, 0.06, HAIR),
+    box(1.04, 0.7, 0.6 + pose.rightArmDz + pose.waveDz, 0.13, 0.1, 0.13, skin),
+    // head, hair, eyes and what is worn
+    ...head.front,
   ]
 }
 
@@ -457,9 +511,11 @@ export function walkerBoxes(
   walking: boolean,
   shirt: number,
   holding: Held | null = null,
+  look: Appearance = DEFAULT_APPEARANCE,
 ): Box[] {
   const swing = walking ? Math.sin(phase * Math.PI * 2) : 0
   const sleeve = shade(shirt, 0.85)
+  const head = headBoxes(look, shirt, -0.17, -0.16, 1.1)
   // Built facing +y, about the origin; turned and moved afterwards.
   const local: Box[] = [
     // legs, one stepping forward as the other goes back
@@ -470,12 +526,9 @@ export function walkerBoxes(
     box(0.21, -0.055 + 0.1 * swing, 0.6, 0.11, 0.11, 0.46, sleeve),
     // torso
     box(-0.2, -0.12, 0.58, 0.4, 0.24, 0.5, shirt),
-    // head, with hair over the top and back, and eyes on the face that looks the way they walk
-    box(-0.17, -0.16, 1.1, 0.34, 0.32, 0.32, SKIN),
-    box(-0.19, -0.18, 1.36, 0.38, 0.36, 0.12, HAIR),
-    box(-0.19, -0.18, 1.12, 0.38, 0.06, 0.24, HAIR),
-    box(-0.09, 0.16, 1.24, 0.06, 0.01, 0.06, HAIR),
-    box(0.05, 0.16, 1.24, 0.06, 0.01, 0.06, HAIR),
+    // head, with hair, eyes on the face that looks the way they walk, and what is worn
+    ...head.behind,
+    ...head.front,
     ...heldBoxes(holding),
   ]
   const placed = local.map((b) => {

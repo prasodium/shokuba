@@ -2,6 +2,7 @@
 import 'pixi.js/unsafe-eval'
 import { Application, Container, Graphics, Polygon, Text, type TextOptions } from 'pixi.js'
 import type { AgentView } from '@shared/agents/view'
+import { sameAppearance, type Appearance } from '@shared/appearance'
 import { bubbleFor, type BubbleModel, type Trip } from './bubble'
 import { Director, type Assignment, type Subject } from './director'
 import {
@@ -111,6 +112,8 @@ export interface SceneEmployee {
   role: string
   /** Shirt colour, #rrggbb. */
   color: string
+  /** How the little person looks: skin, hair, what they wear. */
+  appearance: Appearance
   /** Managers sit in a cabin, and their team sits together. */
   isManager?: boolean
   reportsTo?: string | null
@@ -618,7 +621,9 @@ class Desk {
     // Nobody is in the chair while they are away, and the monitor goes on showing the state.
     this.person.clear()
     if (!this.away) {
-      for (const box of personBoxes(pose, this.shirt)) drawBox(this.person, at(box, this.slot))
+      for (const box of personBoxes(pose, this.shirt, this.employee.appearance)) {
+        drawBox(this.person, at(box, this.slot))
+      }
     }
 
     this.fx.clear()
@@ -674,7 +679,7 @@ class ReadingDesk {
   }
 
   /** Who is sitting here, in what pose: nobody if null. The monitor's light shows their state. */
-  setSitter(sitter: { shirt: number; pose: Pose } | null): void {
+  setSitter(sitter: { shirt: number; look: Appearance; pose: Pose } | null): void {
     this.person.clear()
     this.fx.clear()
     const led = at(LED_BOX, this.slot)
@@ -682,7 +687,7 @@ class ReadingDesk {
       drawBox(this.fx, { ...led, color: LED_COLORS.off })
       return
     }
-    for (const box of personBoxes(sitter.pose, sitter.shirt)) {
+    for (const box of personBoxes(sitter.pose, sitter.shirt, sitter.look)) {
       drawBox(this.person, at(box, this.slot))
     }
     drawBox(this.fx, {
@@ -702,6 +707,7 @@ class WalkerView {
   constructor(
     id: string,
     private readonly shirt: number,
+    private readonly look: Appearance,
     onSelect: (id: string) => void,
   ) {
     this.g.visible = false
@@ -725,6 +731,7 @@ class WalkerView {
       walker.mode === 'walking',
       this.shirt,
       holding,
+      this.look,
     )
     for (const box of boxes) drawBox(this.g, box)
   }
@@ -740,6 +747,7 @@ interface Traveller {
   home: Home
   slot: DeskSlot
   color: string
+  look: Appearance
   view: WalkerView
   /** What they were last told: `desk`, or a place and spot. Only a change starts a new walk. */
   commanded: string
@@ -928,6 +936,7 @@ export class OfficeScene {
         existing.slot.x === slot.x &&
         existing.slot.y === slot.y &&
         existing.employee.color === employee.color &&
+        sameAppearance(existing.employee.appearance, employee.appearance) &&
         existing.employee.name === employee.name &&
         existing.employee.role === employee.role
       ) {
@@ -1418,7 +1427,8 @@ export class OfficeScene {
         existing &&
         existing.slot.x === desk.slot.x &&
         existing.slot.y === desk.slot.y &&
-        existing.color === desk.employee.color
+        existing.color === desk.employee.color &&
+        sameAppearance(existing.look, desk.employee.appearance)
       if (existing && sameDesk) {
         existing.home = home
         // The floor plan changed under them: think again about the way to where they are going.
@@ -1426,13 +1436,19 @@ export class OfficeScene {
         continue
       }
       existing?.view.dispose()
-      const view = new WalkerView(id, hexToNumber(desk.employee.color), (who) => this.select(who))
+      const view = new WalkerView(
+        id,
+        hexToNumber(desk.employee.color),
+        desk.employee.appearance,
+        (who) => this.select(who),
+      )
       this.items.addChild(view.g)
       this.travellers.set(id, {
         walker: seatedAt(home.seat),
         home,
         slot: desk.slot,
         color: desk.employee.color,
+        look: desk.employee.appearance,
         view,
         commanded: 'desk',
         target: null,
@@ -1559,7 +1575,7 @@ export class OfficeScene {
     })
     const decisions = this.director.update(now, subjects, { reducedMotion: this.reducedMotion })
 
-    const sitters = new Map<string, { shirt: number; pose: Pose }>()
+    const sitters = new Map<string, { shirt: number; look: Appearance; pose: Pose }>()
     for (const [id, decision] of decisions) {
       const traveller = this.travellers.get(id)
       const desk = this.deskViews.get(id)
@@ -1592,6 +1608,7 @@ export class OfficeScene {
       if (seat) {
         sitters.set(seat.placeId, {
           shirt: hexToNumber(traveller.color),
+          look: traveller.look,
           pose: poseFor(this.views[id]?.state ?? 'offline', this.time),
         })
       }

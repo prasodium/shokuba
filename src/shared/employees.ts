@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { AppearanceSchema, DEFAULT_APPEARANCE, type Appearance } from './appearance'
 
 /**
  * What an employee may be allowed to do without asking. `bypassPermissions` is
@@ -45,6 +46,8 @@ export const EmployeeInputSchema = z.strictObject({
     .string()
     .regex(/^#[0-9a-fA-F]{6}$/)
     .default('#e8893a'),
+  /** How the voxel character looks, apart from the shirt: skin, hair, what they wear. */
+  appearance: AppearanceSchema.default(DEFAULT_APPEARANCE),
   /** A manager leads a team and is the one who talks to the person. */
   isManager: z.boolean().default(false),
   /** The manager this employee reports to, or null. A manager reports to no one. */
@@ -63,6 +66,8 @@ export const EmployeeUpdateSchema = EmployeeInputSchema.partial().extend({
     .string()
     .regex(/^#[0-9a-fA-F]{6}$/)
     .optional(),
+  // The whole look is replaced at once; a part alone is never sent.
+  appearance: AppearanceSchema.optional(),
   isManager: z.boolean().optional(),
   // `null` clears them; `undefined` leaves them alone.
   reportsTo: z.string().min(1).max(100).nullable().optional(),
@@ -79,6 +84,7 @@ export interface Employee {
   model: string | null
   permissionMode: PermissionMode
   color: string
+  appearance: Appearance
   isManager: boolean
   /** The manager this employee reports to. Null for a manager, and for anyone not on a team. */
   reportsTo: string | null
