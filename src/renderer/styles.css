@@ -1574,3 +1574,60 @@ h4 {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+.dialog-wide {
+  width: min(880px, 94vw);
+}
+.roles-layout {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 16px;
+  align-items: start;
+}
+.roles-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.roles-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: inherit;
+  cursor: pointer;
+}
+.roles-item.is-selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.roles-item .tag {
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.roles-new {
+  border-style: dashed;
+}
+.roles-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+@media (max-width: 720px) {
+  .roles-layout {
+    grid-template-columns: 1fr;
+  }
+}

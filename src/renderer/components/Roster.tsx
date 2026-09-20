@@ -13,9 +13,10 @@ function folderName(path: string): string {
 interface Props {
   onNew(): void
   onEdit(employee: Employee): void
+  onRoles(): void
 }
 
-export function Roster({ onNew, onEdit }: Props) {
+export function Roster({ onNew, onEdit, onRoles }: Props) {
   const employees = useOffice((s) => s.employees)
   const views = useOffice((s) => s.views)
   const providers = useOffice((s) => s.providers)
@@ -31,9 +32,14 @@ export function Roster({ onNew, onEdit }: Props) {
     <section className="panel roster" aria-label="Employees">
       <div className="panel-head">
         <h2>Employees</h2>
-        <button type="button" className="btn btn-primary" onClick={onNew}>
-          + New employee
-        </button>
+        <div className="row">
+          <button type="button" className="btn" onClick={onRoles}>
+            Roles…
+          </button>
+          <button type="button" className="btn btn-primary" onClick={onNew}>
+            + New employee
+          </button>
+        </div>
       </div>
 
       {employees.length === 0 ? (

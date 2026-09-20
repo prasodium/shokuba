@@ -6,13 +6,12 @@ import {
   type PermissionMode,
 } from '@shared/employees'
 import { DEFAULT_APPEARANCE, type Appearance } from '@shared/appearance'
-import { ROLE_TEMPLATES, roleTemplate } from '@shared/roles'
 import { useOffice } from '../store/office'
+import { useRoles } from '../store/roles'
 import { CharacterEditor } from './CharacterEditor'
 
 const COLORS = ['#e8893a', '#6f9a5b', '#5b8fc7', '#c76b8f', '#8f7bd1', '#d1b34a']
 const NAMES = ['Mika', 'Ren', 'Sora', 'Aiko', 'Haru', 'Yui', 'Kaito', 'Nao']
-const ROLES = ['Manager', 'Engineer', 'Reviewer', 'QA', 'Architect', 'Designer', 'Researcher']
 const MODEL_HINTS = ['sonnet', 'opus', 'haiku']
 
 const PERMISSION_LABELS: Record<PermissionMode, string> = {
@@ -26,12 +25,15 @@ interface Props {
   /** The employee being edited, or null to create one. */
   editing: Employee | null
   onClose(): void
+  /** Open the roles editor, so a role can be changed or added without leaving the form. */
+  onEditRoles(): void
 }
 
 /** Create or edit an employee. Validation lives in main; its messages are shown here. */
-export function EmployeeDialog({ open, editing, onClose }: Props) {
+export function EmployeeDialog({ open, editing, onClose, onEditRoles }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const providers = useOffice((s) => s.providers)
+  const roles = useRoles((s) => s.roles)
   const employees = useOffice((s) => s.employees)
   const views = useOffice((s) => s.views)
   const info = useOffice((s) => s.info)
@@ -115,14 +117,24 @@ export function EmployeeDialog({ open, editing, onClose }: Props) {
     if (open && !editing && provider?.simulated && !folder && info) setFolder(info.homeDirectory)
   }, [open, editing, provider, folder, info])
 
-  /** Fill in the role, whether they lead a team, and what the role is for. Everything stays editable. */
-  function applyTemplate(id: string): void {
-    const template = roleTemplate(id)
-    if (!template) return
-    setRole(template.role)
-    setIsManager(template.isManager)
-    if (template.isManager) setReportsTo('')
-    setInstructions(template.instructions)
+  /**
+   * Fill in the role, whether they lead a team, what the role is for and the permissions they start
+   * with. Everything stays editable, and only what is saved belongs to the employee.
+   */
+  function applyRole(id: string): void {
+    const chosen = roles.find((r) => r.id === id)
+    if (!chosen) return
+    setRole(chosen.label)
+    setIsManager(chosen.isManager)
+    if (chosen.isManager) setReportsTo('')
+    setInstructions(chosen.instructions)
+    // Permissions are a launch setting, so a running agent's are left alone.
+    if (
+      !running &&
+      (provider?.permissionModes ?? [...PERMISSION_MODES]).includes(chosen.permissionMode)
+    ) {
+      setPermissionMode(chosen.permissionMode)
+    }
   }
 
   async function browse(): Promise<void> {
@@ -195,18 +207,23 @@ export function EmployeeDialog({ open, editing, onClose }: Props) {
         <h2 id="employee-dialog-title">{editing ? `Edit ${editing.name}` : 'New employee'}</h2>
 
         <label className="field">
-          <span>Start from a role template</span>
-          <select value="" onChange={(e) => applyTemplate(e.target.value)}>
-            <option value="">Choose one to fill in the role below…</option>
-            {ROLE_TEMPLATES.map((template) => (
-              <option key={template.id} value={template.id}>
-                {template.role}
-                {template.isManager ? ' (leads a team)' : ''}
-              </option>
-            ))}
-          </select>
+          <span>Start from a role</span>
+          <div className="row">
+            <select value="" onChange={(e) => applyRole(e.target.value)}>
+              <option value="">Choose one to fill in the role below…</option>
+              {roles.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.label}
+                  {r.isManager ? ' (leads a team)' : ''}
+                </option>
+              ))}
+            </select>
+            <button type="button" className="btn" onClick={onEditRoles}>
+              Edit roles…
+            </button>
+          </div>
           <small className="muted">
-            It only fills in the form. You can change anything, and changing a template later never
+            It only fills in the form. You can change anything, and changing a role later never
             changes anyone already hired.
           </small>
         </label>
@@ -232,8 +249,8 @@ export function EmployeeDialog({ open, editing, onClose }: Props) {
               required
             />
             <datalist id="roles">
-              {ROLES.map((r) => (
-                <option key={r} value={r} />
+              {roles.map((r) => (
+                <option key={r.id} value={r.label} />
               ))}
             </datalist>
           </label>

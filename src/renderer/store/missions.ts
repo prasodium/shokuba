@@ -11,9 +11,9 @@ import type {
   TaskUpdate,
 } from '@shared/missions'
 import { errorMessage } from '../lib/errors'
+import type { Outcome } from '../lib/outcome'
 
-/** Forms show these errors themselves, so mutations return them rather than throw. */
-export type Outcome<T = void> = { ok: true; value: T } | { ok: false; error: string }
+export type { Outcome }
 
 interface MissionsState {
   missions: MissionDetail[]

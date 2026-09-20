@@ -10,6 +10,13 @@ import {
   type PermissionMode,
 } from '../employees'
 import type { ShokubaEvent } from '../events/schema'
+import {
+  RoleInputSchema,
+  RoleUpdateSchema,
+  type Role,
+  type RoleInput,
+  type RoleUpdate,
+} from '../roles'
 import type { MissionBranchInfo, TaskChanges } from '../git'
 import type { EvidenceExportResult } from '../evidence'
 import type { ReviewSettings, ReviewSettingsSave, TaskReview } from '../reviews'
@@ -60,6 +67,10 @@ export const EmployeeUpdateRequestSchema = z.strictObject({
   employeeId,
   patch: EmployeeUpdateSchema,
 })
+const roleId = z.string().min(1).max(200)
+export const RoleIdRequestSchema = z.strictObject({ roleId })
+export const RoleCreateRequestSchema = RoleInputSchema
+export const RoleUpdateRequestSchema = z.strictObject({ roleId, patch: RoleUpdateSchema })
 export const TerminalWriteRequestSchema = z.strictObject({
   employeeId,
   // Keystrokes and pastes; a paste larger than this is chunked by the caller.
@@ -171,6 +182,18 @@ export interface ShokubaApi {
     create(input: EmployeeInput): Promise<Employee>
     update(employeeId: string, patch: EmployeeUpdate): Promise<Employee>
     archive(employeeId: string): Promise<void>
+  }
+  roles: {
+    /** Every role: Shokuba's own first, then yours. Starting points for hiring, never linked to anyone hired. */
+    list(): Promise<Role[]>
+    create(input: RoleInput): Promise<Role>
+    update(roleId: string, patch: RoleUpdate): Promise<Role>
+    /** A new role of your own, made from this one. */
+    duplicate(roleId: string): Promise<Role>
+    /** Remove one of your own. Shokuba's own cannot be removed. */
+    archive(roleId: string): Promise<void>
+    /** Put one of Shokuba's own back to what Shokuba wrote. */
+    reset(roleId: string): Promise<Role>
   }
   agents: {
     snapshot(): Promise<AgentSnapshot>

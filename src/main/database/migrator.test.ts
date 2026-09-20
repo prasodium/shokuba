@@ -126,7 +126,7 @@ describe('the appearance migration', () => {
       `INSERT INTO employees (id, name, role, provider_id, working_directory, created_at, updated_at)
        VALUES ('e1', 'Ada', 'Engineer', 'mock', '/w', 't', 't')`,
     ).run()
-    expect(migrate(db, MIGRATIONS).applied).toEqual([11])
+    expect(migrate(db, MIGRATIONS.slice(0, 11)).applied).toEqual([11])
     const row = db.prepare('SELECT appearance FROM employees WHERE id = ?').get('e1') as {
       appearance: string
     }
@@ -136,5 +136,40 @@ describe('the appearance migration', () => {
       style: 'short',
       accessory: 'none',
     })
+  })
+})
+
+describe('the roles migration', () => {
+  it('makes an empty roles table: Shokuba’s own are put in when the app starts, not here', () => {
+    const db = memory()
+    migrate(db, MIGRATIONS)
+    expect(db.prepare('SELECT COUNT(*) AS n FROM roles').get()).toEqual({ n: 0 })
+    const columns = (db.prepare("PRAGMA table_info('roles')").all() as Array<{ name: string }>).map(
+      (c) => c.name,
+    )
+    expect(columns).toEqual([
+      'id',
+      'label',
+      'is_manager',
+      'instructions',
+      'permission_mode',
+      'builtin_id',
+      'created_at',
+      'updated_at',
+      'archived_at',
+    ])
+  })
+
+  it('refuses a permission mode Shokuba does not offer', () => {
+    const db = memory()
+    migrate(db, MIGRATIONS)
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO roles (id, label, permission_mode, created_at, updated_at)
+           VALUES ('r', 'x', 'bypassPermissions', 't', 't')`,
+        )
+        .run(),
+    ).toThrow()
   })
 })

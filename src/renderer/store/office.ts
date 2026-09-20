@@ -9,6 +9,7 @@ import { useEvents } from './events'
 import { emitLiveEvent } from './live'
 import { useMessages } from './messages'
 import { useMissions } from './missions'
+import { useRoles } from './roles'
 
 interface OfficeState {
   ready: boolean
@@ -91,6 +92,7 @@ export const useOffice = create<OfficeState>((set) => {
         if (event.type.startsWith('mission.') || event.type.startsWith('task.')) {
           void useMissions.getState().refresh()
         }
+        if (event.type.startsWith('role.')) void useRoles.getState().refresh()
         if (event.type.startsWith('message.') || event.type.startsWith('conversation.')) {
           void useMessages.getState().refresh()
         }
@@ -121,6 +123,7 @@ export const useOffice = create<OfficeState>((set) => {
           useEvents.getState().ingest(history)
           void useMissions.getState().refresh()
           void useMessages.getState().refresh()
+          void useRoles.getState().refresh()
           const views = Object.fromEntries(snapshot.views.map((view) => [view.employeeId, view]))
           const folded = foldEvents({ views, lastSeq: snapshot.lastSeq }, buffered)
           useEvents.getState().ingest(buffered)

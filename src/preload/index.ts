@@ -33,6 +33,14 @@ const api: ShokubaApi = {
     update: (employeeId, patch) => ipcRenderer.invoke(IPC.employeesUpdate, { employeeId, patch }),
     archive: (employeeId) => ipcRenderer.invoke(IPC.employeesArchive, { employeeId }),
   },
+  roles: {
+    list: () => ipcRenderer.invoke(IPC.rolesList),
+    create: (input) => ipcRenderer.invoke(IPC.rolesCreate, input),
+    update: (roleId, patch) => ipcRenderer.invoke(IPC.rolesUpdate, { roleId, patch }),
+    duplicate: (roleId) => ipcRenderer.invoke(IPC.rolesDuplicate, { roleId }),
+    archive: (roleId) => ipcRenderer.invoke(IPC.rolesArchive, { roleId }),
+    reset: (roleId) => ipcRenderer.invoke(IPC.rolesReset, { roleId }),
+  },
   agents: {
     snapshot: () => ipcRenderer.invoke(IPC.agentsSnapshot),
     start: (employeeId) => ipcRenderer.invoke(IPC.agentsStart, { employeeId }),

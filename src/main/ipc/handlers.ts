@@ -14,6 +14,9 @@ import {
   MissionIdRequestSchema,
   MissionUpdateRequestSchema,
   RepoRootRequestSchema,
+  RoleCreateRequestSchema,
+  RoleIdRequestSchema,
+  RoleUpdateRequestSchema,
   ReviewRequestSchema,
   TaskActionRequestSchema,
   TaskCreateRequestSchema,
@@ -106,6 +109,19 @@ export function registerIpc(
       })),
     )
   })
+
+  handle(IPC.rolesList, z.undefined(), trusted, () => services.roles.list())
+  handle(IPC.rolesCreate, RoleCreateRequestSchema, trusted, (input) => services.roles.create(input))
+  handle(IPC.rolesUpdate, RoleUpdateRequestSchema, trusted, ({ roleId, patch }) =>
+    services.roles.update(roleId, patch),
+  )
+  handle(IPC.rolesDuplicate, RoleIdRequestSchema, trusted, ({ roleId }) =>
+    services.roles.duplicate(roleId),
+  )
+  handle(IPC.rolesArchive, RoleIdRequestSchema, trusted, ({ roleId }) => {
+    services.roles.archive(roleId)
+  })
+  handle(IPC.rolesReset, RoleIdRequestSchema, trusted, ({ roleId }) => services.roles.reset(roleId))
 
   handle(IPC.employeesList, z.undefined(), trusted, () => agents.employees.list())
   handle(IPC.employeesCreate, EmployeeCreateRequestSchema, trusted, (input) =>

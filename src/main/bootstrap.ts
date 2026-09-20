@@ -7,6 +7,7 @@ import { AuditLog } from './events/audit'
 import { EventBus } from './events/bus'
 import { EventLog } from './events/log'
 import { EventStore } from './events/store'
+import { RoleService } from './roles/service'
 import { createLogger, describeError, type Logger } from './logging/logger'
 import type { PlatformId } from './platform'
 
@@ -23,6 +24,8 @@ export interface Services {
   db: Db
   events: EventStore
   audit: AuditLog
+  /** Roles: starting points for hiring, which can be edited. */
+  roles: RoleService
   logger: Logger
   schemaVersion: number
   /** Publishes `app.stopping` and closes the database. Safe to call once. */
@@ -58,6 +61,7 @@ export function createServices(options: ServicesOptions): Services {
   )
   const events = new EventStore(new EventLog(db), bus)
   const audit = new AuditLog(db)
+  const roles = new RoleService({ db, events })
 
   events.publish({
     type: 'app.started',
@@ -76,6 +80,7 @@ export function createServices(options: ServicesOptions): Services {
     db,
     events,
     audit,
+    roles,
     logger,
     schemaVersion,
     close() {

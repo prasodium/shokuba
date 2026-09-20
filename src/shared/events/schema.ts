@@ -108,6 +108,10 @@ export const EventInputSchema = z.discriminatedUnion('type', [
     z.strictObject({ employeeId: id, fields: z.array(z.string().max(50)) }),
   ),
 
+  // Roles are starting points for hiring. Events carry ids and the names of fields, never the text.
+  event('role.created', z.strictObject({ roleId: id })),
+  event('role.updated', z.strictObject({ roleId: id, fields: z.array(z.string().max(50)) })),
+
   // Missions and tasks. `missionId` / `taskId` in the envelope let the log be filtered by either.
   event('mission.created', z.strictObject({ missionId: id, title: z.string().max(200) })),
   event('mission.updated', z.strictObject({ missionId: id, fields: z.array(z.string().max(50)) })),

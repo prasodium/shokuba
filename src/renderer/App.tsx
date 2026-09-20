@@ -6,6 +6,7 @@ import { MessagesPanel } from './components/MessagesPanel'
 import { MissionsPanel } from './components/MissionsPanel'
 import { OfficeView } from './components/OfficeView'
 import { Roster } from './components/Roster'
+import { RolesDialog } from './components/RolesDialog'
 import { TerminalSection } from './components/TerminalSection'
 import { attentionCount } from './messages/helpers'
 import { useMessages } from './store/messages'
@@ -24,6 +25,8 @@ export function App() {
     open: false,
     editing: null,
   })
+
+  const [rolesOpen, setRolesOpen] = useState(false)
 
   useEffect(() => connect(), [connect])
 
@@ -77,7 +80,7 @@ export function App() {
           <section className="panel office-panel" aria-label="Office">
             <OfficeView onNew={openNew} />
           </section>
-          <Roster onNew={openNew} onEdit={openEdit} />
+          <Roster onNew={openNew} onEdit={openEdit} onRoles={() => setRolesOpen(true)} />
         </div>
         <div className="right">
           <div className="tabs" role="tablist" aria-label="Terminal, missions and messages">
@@ -133,7 +136,13 @@ export function App() {
       </main>
 
       <EventDock />
-      <EmployeeDialog open={dialog.open} editing={dialog.editing} onClose={closeDialog} />
+      <EmployeeDialog
+        open={dialog.open}
+        editing={dialog.editing}
+        onClose={closeDialog}
+        onEditRoles={() => setRolesOpen(true)}
+      />
+      <RolesDialog open={rolesOpen} onClose={() => setRolesOpen(false)} />
     </div>
   )
 }

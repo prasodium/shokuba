@@ -9,7 +9,7 @@ import { AppearanceSchema, DEFAULT_APPEARANCE, type Appearance } from './appeara
 export const PERMISSION_MODES = ['default', 'acceptEdits', 'plan'] as const
 export type PermissionMode = (typeof PERMISSION_MODES)[number]
 
-const shortText = z
+export const shortText = z
   .string()
   .trim()
   .min(1)
@@ -19,7 +19,7 @@ const shortText = z
 
 /** What a role is for, in a few sentences. Newlines are fine; other control characters are not. */
 export const MAX_INSTRUCTIONS = 2000
-const instructionsText = z
+export const instructionsText = z
   .string()
   .trim()
   .max(MAX_INSTRUCTIONS)
