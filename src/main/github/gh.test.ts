@@ -85,6 +85,21 @@ describe('GhCli', () => {
     expect(given.SOMETHING_ELSE).toBeUndefined()
   })
 
+  it('passes a setting once on Windows, where HTTPS_PROXY and https_proxy are the same, and as it is elsewhere', async () => {
+    const dump = async (platform: 'win32' | 'linux', name: string) =>
+      JSON.parse(
+        await cli({ [name]: 'http://proxy.example:3128' }, { platform }).gh.run(['env-dump']),
+      ) as Record<string, string>
+    const windows = await dump('win32', 'Https_Proxy')
+    expect(Object.keys(windows).filter((k) => k.toLowerCase() === 'https_proxy')).toEqual([
+      'HTTPS_PROXY',
+    ])
+    expect(windows.HTTPS_PROXY).toBe('http://proxy.example:3128')
+    const elsewhere = await dump('linux', 'https_proxy')
+    expect(elsewhere.https_proxy).toBe('http://proxy.example:3128')
+    expect(elsewhere.HTTPS_PROXY).toBeUndefined()
+  })
+
   it('does not pass on an empty setting', async () => {
     const given = JSON.parse(await cli({ HTTPS_PROXY: '' }).gh.run(['env-dump'])) as Record<
       string,
