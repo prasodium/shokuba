@@ -6,6 +6,7 @@ import { app, BrowserWindow, session, shell } from 'electron'
 import { createAgentServices, type AgentServices } from './agents'
 import { createServices, type Services } from './bootstrap'
 import { readCapturePlan, runCapturePlan, type CapturePlan } from './devtools/capture'
+import { GhCli } from './github/gh'
 import { registerIpc } from './ipc/handlers'
 import { isTrustedSenderUrl, type TrustedOrigins } from './ipc/trust'
 import { createLogger, describeError } from './logging/logger'
@@ -148,6 +149,16 @@ function start(dev?: DevRun): void {
         env: process.env,
         home: homedir(),
         version: app.getVersion(),
+        // A stand-in for `gh` for development and demos only; a packaged app never reads this.
+        ...(!app.isPackaged &&
+          process.env['SHOKUBA_GH'] && {
+            github: new GhCli({
+              platform,
+              env: process.env,
+              home: homedir(),
+              executable: process.env['SHOKUBA_GH'],
+            }),
+          }),
       })
     } catch (error) {
       logger.error('startup.failed', describeError(error))

@@ -227,6 +227,23 @@ describe('EventStore', () => {
     expect(countSeenBySubscriber).toBe(1)
   })
 
+  it('takes a GitHub import as numbers only, and refuses any text with it', () => {
+    const { store } = build()
+    const ok = {
+      type: 'github.issue.imported',
+      source: 'user',
+      missionId: 'm1',
+      payload: { missionId: 'm1', repo: 'octo/widgets', number: 7 },
+    } as const
+    expect(() => store.publish(ok)).not.toThrow()
+    const withText = { ...ok, payload: { ...ok.payload, title: 'Fix it' } }
+    expect(() => store.publish(withText as unknown as EventInput)).toThrow(InvalidEventError)
+    for (const number of [0, -1, 1.5]) {
+      const bad = { ...ok, payload: { ...ok.payload, number } }
+      expect(() => store.publish(bad), String(number)).toThrow(InvalidEventError)
+    }
+  })
+
   it('rejects an invalid event and neither persists nor broadcasts it', () => {
     const { store, bus, log } = build()
     const listener = vi.fn()

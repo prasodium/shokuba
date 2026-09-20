@@ -3,7 +3,9 @@ import type { Mission, Task } from '@shared/missions'
 import { authorNote } from '../missions/hints'
 import { MISSION_STATUS_LABELS } from '../missions/labels'
 import { selectedMission, useMissions } from '../store/missions'
+import { useGitHub } from '../store/github'
 import { useOffice } from '../store/office'
+import { GitHubDialog } from './GitHubDialog'
 import { MissionBranchView } from './MissionBranchView'
 import { MissionDialog } from './MissionDialog'
 import { TaskDetail } from './TaskDetail'
@@ -29,10 +31,12 @@ export function MissionsPanel() {
     open: false,
     editing: null,
   })
+  const [githubOpen, setGithubOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const names = Object.fromEntries(employees.map((e) => [e.id, e.name]))
   const mission = current?.mission
+  const githubLink = useGitHub((s) => s.links.find((l) => l.missionId === mission?.id))
   const tasks = current?.tasks ?? []
   const task = tasks.find((t) => t.id === selectedTaskId)
   const open = mission && mission.status !== 'completed' && mission.status !== 'cancelled'
@@ -66,13 +70,18 @@ export function MissionsPanel() {
         ) : (
           <h2>Missions</h2>
         )}
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={() => setMissionDialog({ open: true, editing: null })}
-        >
-          + New mission
-        </button>
+        <div className="row">
+          <button type="button" className="btn" onClick={() => setGithubOpen(true)}>
+            Import from GitHub…
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => setMissionDialog({ open: true, editing: null })}
+          >
+            + New mission
+          </button>
+        </div>
       </div>
 
       {!mission ? (
@@ -159,6 +168,11 @@ export function MissionsPanel() {
               {authorNote(mission, names)}
             </p>
           )}
+          {githubLink && (
+            <p className="mission-source" role="note" title={githubLink.issueUrl}>
+              From GitHub issue #{githubLink.issueNumber} in {githubLink.repo}
+            </p>
+          )}
           {mission.description && (
             <p className="muted mission-description">{mission.description}</p>
           )}
@@ -228,6 +242,7 @@ export function MissionsPanel() {
           onClose={closeMissionDialog}
         />
       )}
+      <GitHubDialog open={githubOpen} onClose={() => setGithubOpen(false)} />
     </section>
   )
 }

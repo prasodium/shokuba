@@ -6,6 +6,7 @@ import type { AppInfo, ProviderInfo } from '@shared/ipc/api'
 import { errorMessage } from '../lib/errors'
 import { foldEvent, foldEvents } from './fold'
 import { useEvents } from './events'
+import { useGitHub } from './github'
 import { emitLiveEvent } from './live'
 import { useMessages } from './messages'
 import { useDepartments } from './departments'
@@ -95,6 +96,7 @@ export const useOffice = create<OfficeState>((set) => {
           void useMissions.getState().refresh()
         }
         if (event.type.startsWith('role.')) void useRoles.getState().refresh()
+        if (event.type.startsWith('github.')) void useGitHub.getState().refreshLinks()
         if (event.type === 'office.updated') void useOfficeSettings.getState().refresh()
         // Headcounts move when someone is hired, edited (into or out of a department) or removed.
         if (
@@ -135,6 +137,7 @@ export const useOffice = create<OfficeState>((set) => {
           void useMissions.getState().refresh()
           void useMessages.getState().refresh()
           void useRoles.getState().refresh()
+          void useGitHub.getState().refreshLinks()
           void useDepartments.getState().refresh()
           void useOfficeSettings.getState().refresh()
           const views = Object.fromEntries(snapshot.views.map((view) => [view.employeeId, view]))

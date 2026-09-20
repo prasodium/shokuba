@@ -142,8 +142,16 @@ export class MissionService {
 
   // ---------- missions ----------
 
-  /** A person creates a mission; a manager's agent may too (as a draft), and the record says so. */
-  createMission(raw: MissionInput, actor: Actor = USER): Mission {
+  /**
+   * A person creates a mission; a manager's agent may too (as a draft), and the record says so.
+   * `within` runs in the same transaction, after the mission is saved, so something that belongs
+   * with the mission (where it came from) is saved with it or not at all.
+   */
+  createMission(
+    raw: MissionInput,
+    actor: Actor = USER,
+    within?: (mission: Mission) => void,
+  ): Mission {
     const parsed = MissionInputSchema.safeParse(raw)
     if (!parsed.success) throw new MissionError('invalid', firstIssue(parsed.error))
     const input = parsed.data
@@ -171,7 +179,9 @@ export class MissionService {
         missionId: id,
         payload: { missionId: id, title: input.title },
       })
-      return this.mustMission(id)
+      const mission = this.mustMission(id)
+      within?.(mission)
+      return mission
     })
   }
 

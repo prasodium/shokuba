@@ -88,6 +88,13 @@ const api: ShokubaApi = {
   evidence: {
     export: (taskId) => ipcRenderer.invoke(IPC.evidenceExport, { taskId }),
   },
+  github: {
+    status: () => ipcRenderer.invoke(IPC.githubStatus),
+    projects: () => ipcRenderer.invoke(IPC.githubProjects),
+    issues: (input) => ipcRenderer.invoke(IPC.githubIssues, input),
+    importIssue: (input) => ipcRenderer.invoke(IPC.githubImport, input),
+    links: () => ipcRenderer.invoke(IPC.githubLinks),
+  },
   messages: {
     list: () => ipcRenderer.invoke(IPC.messagesList),
     send: (input) => ipcRenderer.invoke(IPC.messagesSend, input),

@@ -4,6 +4,9 @@ import { EmployeeService } from '../employees/service'
 import { EvidenceService } from '../evidence/service'
 import { GitError } from '../git/runner'
 import { GitService } from '../git/service'
+import { GitHubClient } from '../github/client'
+import { GhCli, type GhRunner } from '../github/gh'
+import { GitHubService } from '../github/service'
 import type { PermissionMode } from '@shared/employees'
 import { createAgentTools, SHOKUBA_MCP_INSTRUCTIONS } from '../mcp/agent-tools'
 import { McpEndpoint } from '../mcp/server'
@@ -58,6 +61,11 @@ export interface AgentServicesOptions {
   git?: GitService | false
   /** How long to wait for an agent restarted in a task's folder to be ready for input. */
   restartWaitMs?: number
+  /**
+   * How GitHub is reached. The `gh` tool on this machine when not given; tests and the demo pass
+   * a stand-in so nothing ever touches a real account.
+   */
+  github?: GhRunner
 }
 
 /** A real agent (Claude Code) takes a few seconds to start and report in; allow generously. */
@@ -89,6 +97,8 @@ export interface AgentServices {
   reviews: ReviewService
   /** Gathers what was recorded about a task's work and exports it as a folder. */
   evidence: EvidenceService
+  /** Which projects are on GitHub, their issues, and missions made from them. */
+  github: GitHubService
   views: AgentViews
   /** Stops every running agent, then closes the report listener. */
   close(): Promise<void>
@@ -366,6 +376,29 @@ export async function createAgentServices(
     logger: services.logger,
   })
 
+  const github = new GitHubService({
+    db: services.db,
+    events: services.events,
+    audit: services.audit,
+    missions,
+    client: new GitHubClient(
+      options.github ??
+        new GhCli({ platform: options.platform, env: options.env, home: options.home }),
+    ),
+    repos: {
+      locate: async (dir: string) => {
+        if (!git) return null
+        try {
+          const root = await git.repoRoot(dir)
+          return { root, remoteUrl: await git.remoteUrl(root) }
+        } catch {
+          return null
+        }
+      },
+    },
+    workingDirectories: () => employees.list().map((employee) => employee.workingDirectory),
+  })
+
   const dispatcher = new Dispatcher({
     missions,
     delivery,
@@ -411,6 +444,7 @@ export async function createAgentServices(
     verification,
     reviews,
     evidence,
+    github,
     views,
     async close() {
       reviewCleaner.stop()

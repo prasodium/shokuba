@@ -33,6 +33,7 @@ import {
   type TerminalChunk,
 } from '@shared/ipc/api'
 import { BreakerActionRequestSchema } from '@shared/breaker'
+import { IssueImportRequestSchema, IssuesRequestSchema } from '@shared/github'
 import { ReviewSettingsSaveSchema } from '@shared/reviews'
 import { CheckSettingsSaveSchema } from '@shared/verification'
 import { IPC } from '@shared/ipc/channels'
@@ -253,6 +254,15 @@ export function registerIpc(
     const chosen = result.canceled ? undefined : result.filePaths[0]
     return chosen ? agents.evidence.export(taskId, chosen) : null
   })
+  // GitHub is read through the `gh` the person is signed in with; the page only ever sees the
+  // results. Which repository is asked about is checked against the projects, never trusted.
+  handle(IPC.githubStatus, z.undefined(), trusted, () => agents.github.status())
+  handle(IPC.githubProjects, z.undefined(), trusted, () => agents.github.projects())
+  handle(IPC.githubIssues, IssuesRequestSchema, trusted, (input) => agents.github.issues(input))
+  handle(IPC.githubImport, IssueImportRequestSchema, trusted, (input) =>
+    agents.github.importIssue(input),
+  )
+  handle(IPC.githubLinks, z.undefined(), trusted, () => agents.github.links())
   handle(IPC.tasksRemove, TaskIdRequestSchema, trusted, ({ taskId }) => {
     agents.missions.removeTask(taskId)
   })

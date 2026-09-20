@@ -242,6 +242,15 @@ export const EventInputSchema = z.discriminatedUnion('type', [
       commit: z.string().max(80).optional(),
     }),
   ),
+  // A mission was made from a GitHub issue. Which repository and issue; never any of its text.
+  event(
+    'github.issue.imported',
+    z.strictObject({
+      missionId: id,
+      repo: z.string().min(3).max(140),
+      number: z.number().int().min(1),
+    }),
+  ),
   event(
     'breaker.state.changed',
     z.strictObject({

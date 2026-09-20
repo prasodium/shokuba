@@ -27,6 +27,14 @@ import {
 } from '../roles'
 import type { MissionBranchInfo, TaskChanges } from '../git'
 import type { EvidenceExportResult } from '../evidence'
+import type {
+  GitHubLink,
+  GitHubProject,
+  GitHubStatus,
+  IssueImportRequest,
+  IssueSummary,
+  IssuesRequest,
+} from '../github'
 import type { ReviewSettings, ReviewSettingsSave, TaskReview } from '../reviews'
 import type {
   CheckSettings,
@@ -281,6 +289,21 @@ export interface ShokubaApi {
      * shows; null if they cancel. The page never names a path.
      */
     export(taskId: string): Promise<EvidenceExportResult | null>
+  }
+  github: {
+    /**
+     * Whether GitHub can be used: it goes through the `gh` tool the person is already signed in
+     * with, so the page never sees a token, only who is signed in (or what to do).
+     */
+    status(): Promise<GitHubStatus>
+    /** The projects (repositories employees work in) that live on GitHub. */
+    projects(): Promise<GitHubProject[]>
+    /** A project's issues. Its text was written by other people: show it as plain text. */
+    issues(input: IssuesRequest): Promise<IssueSummary[]>
+    /** Make a draft mission from an issue. Nothing is written to GitHub. */
+    importIssue(input: IssueImportRequest): Promise<GitHubLink>
+    /** Every mission that came from an issue. */
+    links(): Promise<GitHubLink[]>
   }
   messages: {
     /** Recent conversations, newest first. */

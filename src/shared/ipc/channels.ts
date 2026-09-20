@@ -59,6 +59,12 @@ export const IPC = {
   reviewsSettingsSave: 'shokuba:reviews:settings-save',
   evidenceExport: 'shokuba:evidence:export',
 
+  githubStatus: 'shokuba:github:status',
+  githubProjects: 'shokuba:github:projects',
+  githubIssues: 'shokuba:github:issues',
+  githubImport: 'shokuba:github:import',
+  githubLinks: 'shokuba:github:links',
+
   messagesList: 'shokuba:messages:list',
   messagesSend: 'shokuba:messages:send',
   messagesRead: 'shokuba:messages:read',

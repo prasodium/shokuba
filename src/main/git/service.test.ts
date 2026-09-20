@@ -127,6 +127,37 @@ describe('reading a repository', () => {
   })
 })
 
+describe('a repository’s remote', () => {
+  it('is where origin points, as Git would use it', async () => {
+    sh(repo, 'remote', 'add', 'origin', 'https://github.com/octo/widgets.git')
+    expect(await git.remoteUrl(repo)).toBe('https://github.com/octo/widgets.git')
+  })
+
+  it('follows a rewrite the person set up, because that is what Git would push to', async () => {
+    sh(repo, 'remote', 'add', 'origin', 'https://github.com/octo/widgets.git')
+    sh(repo, 'config', 'url.git@github.com:.insteadOf', 'https://github.com/')
+    expect(await git.remoteUrl(repo)).toBe('git@github.com:octo/widgets.git')
+  })
+
+  it('can name another remote', async () => {
+    sh(repo, 'remote', 'add', 'origin', 'https://github.com/octo/widgets.git')
+    sh(repo, 'remote', 'add', 'fork', 'https://github.com/me/widgets.git')
+    expect(await git.remoteUrl(repo, 'fork')).toBe('https://github.com/me/widgets.git')
+  })
+
+  it('is null when there is no such remote, rather than an error', async () => {
+    expect(await git.remoteUrl(repo)).toBeNull()
+    expect(await git.remoteUrl(repo, 'nope')).toBeNull()
+  })
+
+  it('will not take a remote name that could be read as an option', async () => {
+    sh(repo, 'remote', 'add', 'origin', 'https://github.com/octo/widgets.git')
+    for (const name of ['--all', '-v', '', 'a b', 'a;b', '../x', 'x'.repeat(200)]) {
+      expect(await git.remoteUrl(repo, name), name).toBeNull()
+    }
+  })
+})
+
 describe('branches', () => {
   it('makes a mission branch once, and leaves an existing one alone', async () => {
     const start = baseCommit()

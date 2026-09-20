@@ -218,3 +218,46 @@ describe('the office settings migration', () => {
     ).toThrow()
   })
 })
+
+describe('the GitHub links migration', () => {
+  const mission = (db: Db, id: string): void => {
+    db.prepare(
+      "INSERT INTO missions (id, title, created_at, updated_at) VALUES (?, 'm', 't', 't')",
+    ).run(id)
+  }
+  const link = (db: Db, missionId: string, number = 7): void => {
+    db.prepare(
+      `INSERT INTO github_links
+         (mission_id, owner, repo, repo_root, issue_number, issue_title, issue_url, issue_body, imported_at)
+       VALUES (?, 'octo', 'widgets', '/w', ?, 't', 'u', '', 't')`,
+    ).run(missionId, number)
+  }
+
+  it('adds an empty table, and leaves every mission made before it as it was', () => {
+    const db = memory()
+    migrate(db, MIGRATIONS.slice(0, 14))
+    mission(db, 'm1')
+    expect(migrate(db, MIGRATIONS.slice(0, 15)).applied).toEqual([15])
+    expect(db.prepare('SELECT COUNT(*) AS n FROM github_links').get()).toEqual({ n: 0 })
+    expect(db.prepare('SELECT COUNT(*) AS n FROM missions').get()).toEqual({ n: 1 })
+  })
+
+  it('links a mission to one issue at most, and only a mission that exists', () => {
+    const db = memory()
+    migrate(db, MIGRATIONS)
+    db.pragma('foreign_keys = ON')
+    mission(db, 'm1')
+    link(db, 'm1')
+    expect(() => link(db, 'm1', 8)).toThrow()
+    expect(() => link(db, 'nope')).toThrow()
+  })
+
+  it('lets the same issue be linked again by another mission, so an archived one can be redone', () => {
+    const db = memory()
+    migrate(db, MIGRATIONS)
+    mission(db, 'm1')
+    mission(db, 'm2')
+    link(db, 'm1')
+    expect(() => link(db, 'm2')).not.toThrow()
+  })
+})

@@ -121,6 +121,18 @@ export class GitService {
     return fs.realpath(result.stdout.trim())
   }
 
+  /**
+   * Where `remote` (usually `origin`) points, as Git would use it, or null if there is no such
+   * remote. It is the raw address: it may carry a login the person wrote into it, so it is only
+   * ever parsed, never shown or recorded.
+   */
+  async remoteUrl(repo: string, remote = 'origin'): Promise<string | null> {
+    if (!/^[A-Za-z0-9._-]{1,100}$/.test(remote) || remote.startsWith('-')) return null
+    const result = await this.git(repo, ['remote', 'get-url', remote], { okCodes: [0, 1, 2, 128] })
+    const url = result.stdout.trim()
+    return result.code === 0 && url.length > 0 ? url : null
+  }
+
   async head(repo: string): Promise<HeadInfo> {
     const commit = await this.tryRevParse(repo, 'HEAD')
     if (!commit) throw new GitError('no-commits', 'This repository has no commits yet')
