@@ -89,6 +89,10 @@ export const AWAY_NOTES: Record<PlaceKind, string> = {
   reading: 'in the reading room',
   inbox: 'at your inbox',
   board: 'at the mission board',
+  tea: 'at the tea corner',
+  snacks: 'at the snack corner',
+  meeting: 'in the meeting room',
+  chat: 'at the pantry table',
 }
 
 /**

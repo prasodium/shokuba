@@ -350,7 +350,7 @@ Tables are added by migrations _when a feature needs them_ — never speculative
 
 PixiJS 8 draws an original isometric-voxel office: each employee has a desk, a chair and a small block person whose pose follows their state (typing while coding, a raised hand when they need you). A status bubble above them says the state and what they are doing, and marks it `inferred` or `demo` when it is not a fact. The renderer imports PixiJS's `unsafe-eval` build, so the strict Content-Security-Policy stays as it was (no `unsafe-eval`).
 
-**The plan is data.** `map.ts` builds the floor plan for a team of a given size, as plain rectangles: rooms, doors, tall walls on the two far sides, low partitions between rooms (in 0.25-tile pieces, so door edges land where they should), desk slots, props, and the shared places (each with a footprint and somewhere to stand). It is deterministic, and growing the team only ever adds: the rooms, desks and places already there never move. Tests check, for every team size, that nothing overlaps, that every door has a clear way through, and that every place has clear floor to stand on, which is also what makes the plan safe to walk on in slice 5b.
+**The plan is data.** `map.ts` builds the floor plan as plain rectangles. It is one rectangular floor, laid out like a real office, and it is the same for every team size (people are seated into it, and the empty desks stay furnished). Along the back wall: a **pantry** (a tea and coffee counter, a snack shelf, a high table with stools), a glass-walled **manager cabin**, **your own cabin** (the inbox), and the **lab** (the QA bench and the mission board). Below them, the **open desk area** (twelve desks, in columns of two so a team sits as a block), and to its right a glass-walled **meeting room** and the **reading room**. Walls are glass (tall, see-through) around the cabins and the meeting room, in 0.25-tile pieces so door edges land where they should. A manager sits in the cabin and their team together in the open area; anyone left over is counted, not drawn. Tests check that the rooms tile the floor exactly, that nothing overlaps, that every door has a clear way through, that every place and seat has clear floor to stand on and is on one connected floor, and that the plan never changes.
 
 **One depth-sorted layer.** Everything that stands on the floor (a desk with its person, a run of wall, a plant, a piece of furniture) is one item in a single layer sorted by how near its centre is to the camera, so a person, a desk and a wall are drawn in the right order however they are arranged. Walls are split into short runs for exactly this reason.
 
@@ -358,7 +358,7 @@ PixiJS 8 draws an original isometric-voxel office: each employee has a desk, a c
 
 **The shared places stand idle.** The board is bare, the bench's screens are dark and the trays are empty: nothing on them is shown until it is a picture of something recorded, so an idle office never looks busy. That is added on top of them in slice 5c.
 
-The office has up to twelve desks; more employees than that are counted but not drawn.
+The office has thirteen desks (twelve open and one in the cabin); more employees than that are counted but not drawn.
 
 **Walking (slice 5b).** Three small pure modules, each tested on its own, and the scene only draws what they say.
 

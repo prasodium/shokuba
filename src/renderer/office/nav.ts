@@ -47,9 +47,10 @@ export function cellOf(p: Point2): { col: number; row: number } {
 export function solidsOf(map: OfficeMap): Rect[] {
   return [
     ...map.desks.map(stationRect),
+    ...map.cabins.map(stationRect),
     ...map.places.map((place) => place.footprint),
     ...map.props.map((prop) => prop.footprint),
-    ...map.partitions,
+    ...map.walls.map((wall) => wall.rect),
   ]
 }
 
@@ -120,15 +121,48 @@ export function nearestFree(
   return best
 }
 
-/** Whether a walker can go straight from `a` to `b`: every point along the way is free. */
+/**
+ * Whether a walker can go straight from `a` to `b`: every cell the line passes through is free,
+ * including one it only touches at a corner. (Sampling points along the way would miss a corner it
+ * merely grazes.) A line that goes exactly through the corner between two cells needs both cells
+ * beside it free, so nobody squeezes between two blocks that only touch.
+ */
 export function lineClear(grid: NavGrid, a: Point2, b: Point2): boolean {
-  const length = Math.hypot(b.x - a.x, b.y - a.y)
-  const steps = Math.max(1, Math.ceil(length / 0.1))
-  for (let i = 0; i <= steps; i += 1) {
-    const t = i / steps
-    if (!isFreePoint(grid, { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t })) return false
+  let { col, row } = cellOf(a)
+  const end = cellOf(b)
+  // Every cell entered below is checked, the last included, so only the start needs checking here.
+  if (!isFree(grid, col, row)) return false
+
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const stepX = dx > 0 ? 1 : -1
+  const stepY = dy > 0 ? 1 : -1
+  const deltaX = dx === 0 ? Infinity : CELL / Math.abs(dx)
+  const deltaY = dy === 0 ? Infinity : CELL / Math.abs(dy)
+  // How far along the line (0 to 1) it is when it first crosses into the next column and row.
+  let nextX = dx === 0 ? Infinity : ((stepX > 0 ? (col + 1) * CELL : col * CELL) - a.x) / dx
+  let nextY = dy === 0 ? Infinity : ((stepY > 0 ? (row + 1) * CELL : row * CELL) - a.y) / dy
+
+  // Never more steps than there are cells to cross, so a rounding error cannot make this loop on.
+  for (let guard = grid.cols + grid.rows + 4; guard > 0; guard -= 1) {
+    if (col === end.col && row === end.row) return true
+    if (Math.abs(nextX - nextY) < 1e-9) {
+      // Through a corner: both cells beside it must be free as well.
+      if (!isFree(grid, col + stepX, row) || !isFree(grid, col, row + stepY)) return false
+      col += stepX
+      row += stepY
+      nextX += deltaX
+      nextY += deltaY
+    } else if (nextX < nextY) {
+      col += stepX
+      nextX += deltaX
+    } else {
+      row += stepY
+      nextY += deltaY
+    }
+    if (!isFree(grid, col, row)) return false
   }
-  return true
+  return false
 }
 
 const SQRT2 = Math.SQRT2

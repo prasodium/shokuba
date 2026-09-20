@@ -1,5 +1,5 @@
 import { shade, sortByDepth, type Box } from './iso'
-import { PARTITION_HEIGHT, type Point2, type Rect } from './map'
+import { GLASS_HEIGHT, PARTITION_HEIGHT, type Point2, type Rect } from './map'
 import type { Pose } from './pose'
 import type { Facing } from './walker'
 
@@ -201,6 +201,118 @@ export function plantBoxes(footprint: Rect): Box[] {
     box(x, y, 0, 0.4, 0.4, 0.32, 0xa4583a),
     box(x - 0.08, y - 0.08, 0.32, 0.56, 0.56, 0.3, 0x4f8a4a),
     box(x + 0.03, y + 0.03, 0.62, 0.34, 0.34, 0.3, 0x63a45d),
+  ]
+}
+
+// ---------- the pantry, the tables and the glass ----------
+
+const STEEL = 0xb9bfc4
+const GLASS = 0xbfe3f0
+const MUG = 0xf2efe6
+
+/** A run of glass wall: a low frame, a see-through pane and a rail along the top. */
+export function glassBoxes(rect: Rect): Box[] {
+  const grow = 0.03
+  return [
+    { x: rect.x, y: rect.y, z: 0, w: rect.w, d: rect.d, h: 0.12, color: 0x8b6f52 },
+    {
+      x: rect.x,
+      y: rect.y,
+      z: 0.12,
+      w: rect.w,
+      d: rect.d,
+      h: GLASS_HEIGHT - 0.12,
+      color: GLASS,
+      alpha: 0.2,
+    },
+    {
+      x: rect.x - grow,
+      y: rect.y - grow,
+      z: GLASS_HEIGHT,
+      w: rect.w + grow * 2,
+      d: rect.d + grow * 2,
+      h: 0.06,
+      color: 0x8b6f52,
+    },
+  ]
+}
+
+/** The tea and coffee counter: a coffee machine, a kettle, mugs and a water dispenser, all cold and still. */
+export function teaCounterBoxes(footprint: Rect): Box[] {
+  const { x, y, w, d } = footprint
+  return [
+    box(x, y, 0, w, d, 0.86, WOOD),
+    box(x - 0.02, y - 0.02, 0.86, w + 0.04, d + 0.04, 0.05, shade(WOOD, 1.2)),
+    // a coffee machine, a kettle and mugs
+    box(x + 0.25, y + 0.2, 0.91, 0.42, 0.42, 0.5, METAL),
+    box(x + 0.32, y + 0.36, 1.05, 0.28, 0.02, 0.14, 0x3a3f46),
+    box(x + 0.9, y + 0.28, 0.91, 0.26, 0.26, 0.3, STEEL),
+    box(x + 1.35, y + 0.4, 0.91, 0.12, 0.12, 0.13, MUG),
+    box(x + 1.55, y + 0.4, 0.91, 0.12, 0.12, 0.13, MUG),
+    // a water dispenser at the end
+    box(x + w - 0.6, y + 0.2, 0.91, 0.36, 0.36, 0.62, 0x9ccfe8),
+    box(x + w - 0.5, y + 0.3, 1.53, 0.16, 0.16, 0.2, 0xd6ecf6),
+  ]
+}
+
+/** The snack corner: a shelf with three shelves, stocked. */
+export function snackShelfBoxes(footprint: Rect): Box[] {
+  const { x, y, w, d } = footprint
+  const boxes: Box[] = [
+    box(x, y, 0, 0.06, d, 1.7, WOOD_DARK),
+    box(x + w - 0.06, y, 0, 0.06, d, 1.7, WOOD_DARK),
+    box(x + 0.06, y, 0, w - 0.12, 0.05, 1.7, shade(WOOD_DARK, 0.85)),
+  ]
+  const snacks = [0xe36a4a, 0xf0c04a, 0x6fb37a, 0x5b8fc7]
+  for (const [i, z] of [0.3, 0.8, 1.3].entries()) {
+    boxes.push(box(x + 0.06, y + 0.05, z, w - 0.12, d - 0.05, 0.05, WOOD))
+    for (let k = 0; k < 4; k += 1) {
+      const pack = snacks[(i + k) % snacks.length] as number
+      boxes.push(box(x + 0.16 + k * ((w - 0.4) / 4), y + 0.14, z + 0.05, 0.22, 0.16, 0.24, pack))
+    }
+  }
+  return boxes
+}
+
+/** A round-topped high table with a stool at each of the given places. */
+export function pantryTableBoxes(footprint: Rect, seats: readonly Point2[]): Box[] {
+  const { x, y, w, d } = footprint
+  return [
+    box(x + w / 2 - 0.1, y + d / 2 - 0.1, 0, 0.2, 0.2, 0.9, METAL),
+    box(x, y, 0.9, w, d, 0.07, WOOD),
+    ...seats.flatMap((s) => [
+      box(s.x - 0.08, s.y - 0.08, 0, 0.16, 0.16, 0.5, METAL),
+      box(s.x - 0.2, s.y - 0.2, 0.5, 0.4, 0.4, 0.07, 0x3d3731),
+    ]),
+  ]
+}
+
+/** A meeting table with a chair at each of the given places, its back to the table. */
+export function meetingTableBoxes(footprint: Rect, seats: readonly Point2[]): Box[] {
+  const { x, y, w, d } = footprint
+  const towardTable = (s: Point2): number => (s.y < y + d / 2 ? -1 : 1)
+  return [
+    box(x + 0.2, y + 0.15, 0, 0.14, 0.14, 0.7, WOOD_DARK),
+    box(x + w - 0.34, y + 0.15, 0, 0.14, 0.14, 0.7, WOOD_DARK),
+    box(x + 0.2, y + d - 0.29, 0, 0.14, 0.14, 0.7, WOOD_DARK),
+    box(x + w - 0.34, y + d - 0.29, 0, 0.14, 0.14, 0.7, WOOD_DARK),
+    box(x, y, 0.7, w, d, 0.08, WOOD),
+    ...seats.flatMap((s) => {
+      const away = towardTable(s)
+      return [
+        box(s.x - 0.22, s.y - 0.22, 0.28, 0.44, 0.44, 0.07, CHAIR),
+        box(
+          s.x - 0.22,
+          s.y + away * 0.2 - (away > 0 ? 0.04 : 0.04),
+          0.35,
+          0.44,
+          0.08,
+          0.45,
+          shade(CHAIR, 1.15),
+        ),
+        box(s.x - 0.03, s.y - 0.03, 0, 0.06, 0.06, 0.28, METAL),
+      ]
+    }),
   ]
 }
 

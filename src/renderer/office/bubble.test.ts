@@ -161,7 +161,9 @@ describe('someone who is away from their desk', () => {
   })
 
   it('has a way of saying each kind of place, and keeps the tone and any caution', () => {
-    expect(Object.keys(AWAY_NOTES).sort()).toEqual(['board', 'inbox', 'qa', 'reading'])
+    expect(Object.keys(AWAY_NOTES).sort()).toEqual(
+      ['board', 'chat', 'inbox', 'meeting', 'qa', 'reading', 'snacks', 'tea'].sort(),
+    )
     for (const note of Object.values(AWAY_NOTES)) expect(note.length).toBeLessThanOrEqual(34)
     const limited = bubbleFor(
       view({ ...testing('inferred'), pid: 1, breakerLevel: 'constrain' }),

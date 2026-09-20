@@ -38,6 +38,8 @@ export interface Box {
   d: number
   h: number
   color: number
+  /** How solid it is, 0 to 1; left out means fully solid. Glass is see-through. */
+  alpha?: number
 }
 
 /** Flat `[x0, y0, x1, y1, ...]` polygons for the three faces a camera at (+x, +y, +z) can see. */

@@ -119,6 +119,41 @@ describe('finding a way', () => {
     expect(reachableFrom(open, at(0, 0)).size).toBe(4)
   })
 
+  it('sees a blocked cell that a line only clips the corner of, which spot checks along it would miss', () => {
+    // The line from (0.2, 0.75) to (2.4, 0.2) grazes the top-left corner of the blocked cell below.
+    const grid = draw('.....', '..#..', '.....')
+    const a = { x: 0.2, y: 1.55 }
+    const b = { x: 2.4, y: 0.9 }
+    expect(lineClear(grid, a, b)).toBe(false)
+    // Well clear of it, the same kind of line is fine.
+    expect(lineClear(grid, { x: 0.2, y: 0.4 }, { x: 2.4, y: 0.3 })).toBe(true)
+  })
+
+  it('does not slip diagonally between two blocks that only touch at a corner', () => {
+    const grid = draw('.#.', '#..', '...')
+    expect(lineClear(grid, at(0, 0), at(1, 1))).toBe(false) // through the corner of two blocked cells
+    const one = draw('..', '#.')
+    expect(lineClear(one, at(0, 0), at(1, 1))).toBe(false) // one side blocked is enough
+    expect(lineClear(draw('..', '..'), at(0, 0), at(1, 1))).toBe(true)
+  })
+
+  it('walks straight along a row or a column, and both ways', () => {
+    const grid = draw('.....', '.#...', '.....')
+    expect(lineClear(grid, at(0, 0), at(4, 0))).toBe(true)
+    expect(lineClear(grid, at(4, 0), at(0, 0))).toBe(true)
+    expect(lineClear(grid, at(0, 0), at(0, 2))).toBe(true)
+    expect(lineClear(grid, at(1, 0), at(1, 2))).toBe(false)
+    expect(lineClear(grid, at(1, 2), at(1, 0))).toBe(false)
+  })
+
+  it('needs both ends to be free, and stay on the grid', () => {
+    const grid = draw('.#.', '...')
+    expect(lineClear(grid, at(1, 0), at(2, 1))).toBe(false) // starts in a block
+    expect(lineClear(grid, at(0, 0), at(1, 0))).toBe(false) // ends in a block
+    expect(lineClear(grid, at(0, 0), { x: 9, y: 0.25 })).toBe(false) // off the edge
+    expect(lineClear(grid, at(0, 0), at(0, 0))).toBe(true) // going nowhere
+  })
+
   it('says whether a straight line is clear', () => {
     const grid = draw('.....', '..#..', '.....')
     expect(lineClear(grid, at(0, 0), at(4, 0))).toBe(true)
@@ -127,26 +162,27 @@ describe('finding a way', () => {
   })
 })
 
-describe.each([1, 5, 9, 12])('the floor of the office for %i employees', (size) => {
-  const map: OfficeMap = buildOffice(size)
+describe('the floor of the office', () => {
+  const map: OfficeMap = buildOffice()
   const grid = buildNavGrid(map)
 
   it('is not walkable where there are desks, walls, furniture or plants', () => {
     // Listed one by one here, not through the same function the grid is built from.
     const solids = [
       ...map.desks.map(stationRect),
+      ...map.cabins.map(stationRect),
       ...map.places.map((place) => place.footprint),
       ...map.props.map((prop) => prop.footprint),
-      ...map.partitions,
+      ...map.walls.map((wall) => wall.rect),
     ]
-    expect(solids.length).toBeGreaterThan(20)
+    expect(solids.length).toBeGreaterThan(50)
     for (const solid of solids) {
       const middle = { x: solid.x + solid.w / 2, y: solid.y + solid.d / 2 }
       expect(isFreePoint(grid, middle), JSON.stringify(solid)).toBe(false)
     }
   })
 
-  it('is not walkable off the floor, at the edges or where a room has not been built', () => {
+  it('is not walkable off the floor', () => {
     for (const point of [
       { x: -0.4, y: 1 },
       { x: 1, y: -0.4 },
@@ -155,11 +191,6 @@ describe.each([1, 5, 9, 12])('the floor of the office for %i employees', (size) 
     ]) {
       expect(isFreePoint(grid, point), JSON.stringify(point)).toBe(false)
     }
-    // Inside the grid, but no room: the empty corner of an office that has not grown into it.
-    const built = new Set(map.rooms.map((room) => room.id))
-    if (!built.has('desks-3')) expect(isFreePoint(grid, { x: 12, y: 10 })).toBe(false)
-    if (!built.has('desks-2') && map.depth > 7)
-      expect(isFreePoint(grid, { x: 4, y: 10 })).toBe(false)
   })
 
   it('keeps a walker’s width clear of every solid, so a path never brushes one', () => {
@@ -221,7 +252,7 @@ describe.each([1, 5, 9, 12])('the floor of the office for %i employees', (size) 
 
 describe('the edge of the floor', () => {
   it('keeps a wider walker further from it: the whole body has to be on the floor', () => {
-    const map = buildOffice(1)
+    const map = buildOffice()
     const normal = buildNavGrid(map)
     const wide = buildNavGrid(map, 0.3)
     // The cell along the far wall is free for a normal walker and not for a wide one.
@@ -232,7 +263,7 @@ describe('the edge of the floor', () => {
 })
 
 describe('getting out of a seat', () => {
-  const map = buildOffice(12)
+  const map = buildOffice()
   const grid = buildNavGrid(map)
 
   it('steps out level with the seat, past the side of the desk, on to open floor', () => {
@@ -252,24 +283,34 @@ describe('getting out of a seat', () => {
     expect(seatExit(grid, desk, nowhere)).toBeNull()
   })
 
+  // A desk in the middle of a row, with open floor either side and an aisle behind it.
+  const middle = map.desks[6] as (typeof map.desks)[number]
+  const seat = seatPoint(middle)
+  const block = (g: NavGrid, x: number): void => {
+    const { col, row } = cellOf({ x, y: seat.y })
+    g.blocked[row * g.cols + col] = 1
+  }
+
   it('does not step out through something in the way: it goes out the other side instead', () => {
-    const desk = map.desks[0] as (typeof map.desks)[number] // at 1.2, 1.0
     const walled: NavGrid = { ...grid, blocked: grid.blocked.slice() }
-    // A wall across the way to the left, past where the desk's own floor ends.
-    walled.blocked[2 * grid.cols + 1] = 1
-    const exit = seatExit(walled, desk) as Point2
-    expect(exit.x).toBeGreaterThan(desk.x + 1.8) // out the right, not through the wall on the left
-    expect(exit.y).toBeCloseTo(seatPoint(desk).y)
+    // A wall across the way to the left, just past where the desk's own floor ends.
+    block(walled, middle.x - 0.7)
+    const exit = seatExit(walled, middle) as Point2
+    expect(exit.x).toBeGreaterThan(middle.x + 1.8) // out the right, not through the wall on the left
+    expect(exit.y).toBeCloseTo(seat.y)
+    // Without the wall, it goes out to the left.
+    expect((seatExit(grid, middle) as Point2).x).toBeLessThan(middle.x)
   })
 
   it('goes out behind the desk when both sides are closed off', () => {
-    const desk = map.desks[0] as (typeof map.desks)[number]
     const boxed: NavGrid = { ...grid, blocked: grid.blocked.slice() }
-    for (const col of [0, 1]) boxed.blocked[2 * grid.cols + col] = 1
-    for (const col of [6, 7, 8]) boxed.blocked[2 * grid.cols + col] = 1
-    const exit = seatExit(boxed, desk) as Point2
-    expect(exit.y).toBeLessThan(desk.y)
-    expect(exit.x).toBeCloseTo(seatPoint(desk).x)
+    for (const reach of [0.35, 0.6, 0.85, 1.1]) {
+      block(boxed, middle.x - reach)
+      block(boxed, middle.x + 1.8 + reach)
+    }
+    const exit = seatExit(boxed, middle) as Point2
+    expect(exit.y).toBeLessThan(middle.y)
+    expect(exit.x).toBeCloseTo(seat.x)
   })
 
   it('gives nothing if every side is closed', () => {

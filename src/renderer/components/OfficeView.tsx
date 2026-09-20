@@ -43,7 +43,15 @@ export function OfficeView({ onNew }: { onNew(): void }) {
   }, [select])
 
   const sceneEmployees = useMemo<SceneEmployee[]>(
-    () => employees.map((e) => ({ id: e.id, name: e.name, role: e.role, color: e.color })),
+    () =>
+      employees.map((e) => ({
+        id: e.id,
+        name: e.name,
+        role: e.role,
+        color: e.color,
+        isManager: e.isManager,
+        reportsTo: e.reportsTo,
+      })),
     [employees],
   )
 

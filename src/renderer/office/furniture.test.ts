@@ -7,16 +7,21 @@ import {
   boardBoxes,
   chairBoxes,
   deskBoxes,
+  glassBoxes,
   inboxBoxes,
   inboxTray,
+  meetingTableBoxes,
+  pantryTableBoxes,
   partitionBox,
   partitionCap,
   personBoxes,
   plantBoxes,
   rug,
+  snackShelfBoxes,
+  teaCounterBoxes,
   walkerBoxes,
 } from './furniture'
-import { PARTITION_HEIGHT, buildOffice, type Rect } from './map'
+import { GLASS_HEIGHT, PARTITION_HEIGHT, buildOffice, type Point2, type Rect } from './map'
 import { poseFor } from './pose'
 
 const everything = () => [
@@ -71,7 +76,7 @@ describe('workstation geometry', () => {
 })
 
 describe('the shared places', () => {
-  const map = buildOffice(1)
+  const map = buildOffice()
   const footprint = (id: string): Rect => map.places.find((p) => p.id === id)?.footprint as Rect
 
   /** Every box sits on the floor within its footprint (plants and rails overhang a little). */
@@ -207,5 +212,141 @@ describe('a person on their feet', () => {
         )
       }
     }
+  })
+})
+
+describe('the pantry, the tables and the glass', () => {
+  const map = buildOffice()
+  const place = (id: string) => map.places.find((p) => p.id === id) as (typeof map.places)[number]
+  const inside = (boxes: ReturnType<typeof teaCounterBoxes>, rect: Rect, overhang = 0.1): void => {
+    for (const b of boxes) {
+      expect(b.w).toBeGreaterThan(0)
+      expect(b.d).toBeGreaterThan(0)
+      expect(b.h).toBeGreaterThan(0)
+      expect(b.z).toBeGreaterThanOrEqual(0)
+      expect(b.x).toBeGreaterThanOrEqual(rect.x - overhang)
+      expect(b.y).toBeGreaterThanOrEqual(rect.y - overhang)
+      expect(b.x + b.w).toBeLessThanOrEqual(rect.x + rect.w + overhang)
+      expect(b.y + b.d).toBeLessThanOrEqual(rect.y + rect.d + overhang)
+    }
+  }
+
+  describe('glass', () => {
+    const piece: Rect = { x: 6 - 0.08, y: 1, w: 0.16, d: 0.25 }
+
+    it('is a see-through pane as tall as a person and a little, in a frame with a rail on top', () => {
+      const boxes = glassBoxes(piece)
+      const panes = boxes.filter((b) => b.alpha !== undefined)
+      expect(panes).toHaveLength(1)
+      const pane = panes[0] as (typeof boxes)[number]
+      expect(pane.alpha).toBeGreaterThan(0)
+      expect(pane.alpha).toBeLessThan(0.5)
+      expect(pane.z + pane.h).toBeCloseTo(GLASS_HEIGHT)
+      expect(GLASS_HEIGHT).toBeGreaterThan(PARTITION_HEIGHT * 2)
+      // Only the pane is see-through: the frame below it and the rail above it are solid.
+      const rail = boxes.find((b) => b.z >= GLASS_HEIGHT - 1e-9)
+      expect(rail?.alpha).toBeUndefined()
+      expect(boxes.find((b) => b.z === 0)?.alpha).toBeUndefined()
+    })
+
+    it('stands on exactly the floor it was given, a rail overhanging a little', () => {
+      inside(glassBoxes(piece), piece, 0.05)
+      const pane = glassBoxes(piece).find((b) => b.alpha !== undefined)
+      expect([pane?.x, pane?.y, pane?.w, pane?.d]).toEqual([piece.x, piece.y, piece.w, piece.d])
+    })
+  })
+
+  describe('the QA bench', () => {
+    const footprint = place('qa').footprint
+    const boxes = benchBoxes(footprint)
+
+    it('is a bench at working height with three screens standing on it, dark until something is checked', () => {
+      const top = boxes.find((b) => b.w === footprint.w && b.d === footprint.d)
+      expect(top?.z).toBeCloseTo(0.7)
+      const screens = benchScreens(footprint)
+      expect(screens).toHaveLength(3)
+      for (const screen of screens)
+        expect(screen.z).toBeGreaterThan((top?.z ?? 0) + (top?.h ?? 0) - 1e-9)
+      inside(boxes, footprint)
+    })
+  })
+
+  describe('the pantry', () => {
+    it('has a tea and coffee counter with a coffee machine, a kettle, mugs and water', () => {
+      const boxes = teaCounterBoxes(place('tea').footprint)
+      inside(boxes, place('tea').footprint)
+      expect(boxes.length).toBeGreaterThanOrEqual(8)
+      // The counter itself is waist height, with things standing on it.
+      expect(boxes.filter((b) => b.z >= 0.85).length).toBeGreaterThanOrEqual(6)
+    })
+
+    it('has a snack shelf with three shelves, every one stocked, and never anything that moves', () => {
+      const footprint = place('snacks').footprint
+      const boxes = snackShelfBoxes(footprint)
+      inside(boxes, footprint)
+      const shelves = boxes.filter((b) => b.h === 0.05)
+      expect(shelves).toHaveLength(3)
+      for (const shelf of shelves) {
+        const stock = boxes.filter((b) => Math.abs(b.z - (shelf.z + 0.05)) < 1e-9)
+        expect(stock.length).toBeGreaterThanOrEqual(3)
+      }
+    })
+
+    it('has a high table with a stool at each place, at the place', () => {
+      const table = place('pantry-table')
+      const boxes = pantryTableBoxes(table.footprint, table.slots)
+      const seats = boxes.filter((b) => Math.abs(b.w - 0.4) < 1e-9 && Math.abs(b.z - 0.5) < 1e-9)
+      expect(seats).toHaveLength(table.slots.length)
+      for (const slot of table.slots) {
+        expect(
+          seats.some(
+            (b) =>
+              Math.abs(b.x + b.w / 2 - slot.x) < 1e-9 && Math.abs(b.y + b.d / 2 - slot.y) < 1e-9,
+          ),
+        ).toBe(true)
+      }
+      // The tabletop is higher than a desk: it is a place to stand at.
+      expect(Math.max(...boxes.map((b) => b.z + b.h))).toBeGreaterThan(0.9)
+    })
+  })
+
+  describe('the meeting table', () => {
+    const table = place('meeting-table')
+    const boxes = meetingTableBoxes(table.footprint, table.slots)
+
+    it('has a chair at each of its six places', () => {
+      const seats = boxes.filter((b) => Math.abs(b.w - 0.44) < 1e-9 && Math.abs(b.d - 0.44) < 1e-9)
+      expect(seats).toHaveLength(6)
+      for (const slot of table.slots) {
+        expect(
+          seats.some(
+            (b) =>
+              Math.abs(b.x + b.w / 2 - slot.x) < 1e-9 && Math.abs(b.y + b.d / 2 - slot.y) < 1e-9,
+          ),
+        ).toBe(true)
+      }
+    })
+
+    it('turns every chair’s back away from the table', () => {
+      const middle = table.footprint.y + table.footprint.d / 2
+      const backs = boxes.filter((b) => Math.abs(b.d - 0.08) < 1e-9 && Math.abs(b.h - 0.45) < 1e-9)
+      expect(backs).toHaveLength(6)
+      for (const slot of table.slots as Point2[]) {
+        // The back that belongs to this seat: the nearest one along the same line across the table.
+        const back = backs
+          .filter((b) => Math.abs(b.x + b.w / 2 - slot.x) < 1e-9)
+          .sort(
+            (a, b) => Math.abs(a.y - slot.y) - Math.abs(b.y - slot.y),
+          )[0] as (typeof backs)[number]
+        // Seats on the far side have their back further away (smaller y); on the near side, larger.
+        expect(slot.y < middle ? back.y < slot.y : back.y > slot.y).toBe(true)
+      }
+    })
+
+    it('has a tabletop at table height, on legs', () => {
+      const top = boxes.find((b) => b.w === table.footprint.w && b.d === table.footprint.d)
+      expect(top?.z).toBeCloseTo(0.7)
+      expect(boxes.filter((b) => b.h === 0.7 && b.w === 0.14)).toHaveLength(4)
+    })
   })
 })

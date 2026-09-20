@@ -206,8 +206,8 @@ h2 {
 /* ---------- office ---------- */
 
 .office-panel {
-  flex: 1 1 64%;
-  min-height: 300px;
+  flex: 1 1 72%;
+  min-height: 340px;
   padding: 0;
   position: relative;
   overflow: hidden;
@@ -307,7 +307,7 @@ h2 {
 
 .roster {
   flex: 0 1 auto;
-  max-height: 40%;
+  max-height: 30%;
   overflow: auto;
 }
 

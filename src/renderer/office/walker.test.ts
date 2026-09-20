@@ -201,7 +201,7 @@ describe('depth', () => {
 })
 
 describe('the way from a desk to a place and back, on the real floor', () => {
-  const map = buildOffice(12)
+  const map = buildOffice()
   const grid = buildNavGrid(map)
   const desk = map.desks[3] as (typeof map.desks)[number]
   const home = { seat: seatPoint(desk), exit: seatExit(grid, desk) as Point2 }

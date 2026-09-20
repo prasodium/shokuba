@@ -3,7 +3,7 @@ import type { RuntimeState } from '@shared/types/agent'
 import { Director, RULES, type Rule, type Subject } from './director'
 import { buildOffice, type Place } from './map'
 
-const places: Place[] = buildOffice(12).places
+const places: Place[] = buildOffice().places
 const T0 = 1_000_000
 const testing = (id: string, since = T0): Subject => ({ id, state: 'testing', since })
 const doing = (id: string, state: RuntimeState, since = T0): Subject => ({ id, state, since })
@@ -212,7 +212,7 @@ describe('when the plan changes', () => {
   it('keeps people where they are if their place is still there, and sends them home if not', () => {
     const director = new Director(places)
     director.update(T0 + 3_000, [testing('ada')])
-    director.setPlaces(buildOffice(5).places)
+    director.setPlaces(buildOffice().places)
     expect(targetOf(director.update(T0 + 4_000, [testing('ada')]), 'ada')).not.toBeNull()
     director.setPlaces(places.filter((p) => p.kind !== 'qa'))
     expect(targetOf(director.update(T0 + 5_000, [testing('ada')]), 'ada')).toBeNull()

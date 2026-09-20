@@ -29,12 +29,17 @@ import {
   boardBoxes,
   chairBoxes,
   deskBoxes,
+  glassBoxes,
   inboxBoxes,
+  meetingTableBoxes,
+  pantryTableBoxes,
   partitionBox,
   partitionCap,
   personBoxes,
   plantBoxes,
   rug,
+  snackShelfBoxes,
+  teaCounterBoxes,
   walkerBoxes,
 } from './furniture'
 import {
@@ -63,6 +68,7 @@ import {
   type PlaceKind,
   type Rect,
   type Room,
+  type RoomKind,
 } from './map'
 import { buildNavGrid, reachableFrom, seatExit, type NavGrid } from './nav'
 import { LED_COLORS, poseFor } from './pose'
@@ -86,6 +92,9 @@ export interface SceneEmployee {
   role: string
   /** Shirt colour, #rrggbb. */
   color: string
+  /** Managers sit in a cabin, and their team sits together. */
+  isManager?: boolean
+  reportsTo?: string | null
 }
 
 /** What the view controls need to know about the camera. */
@@ -110,8 +119,16 @@ const SURFACE = 0x1e1a17
 
 const FLOOR_A = 0x7a5c44
 const FLOOR_B = 0x86664c
-const COMMONS_A = 0x6f6a5c
-const COMMONS_B = 0x7b7566
+/** The two tones of each kind of room's floor, so a room can be told from the next. */
+const FLOORS: Record<RoomKind, readonly [number, number]> = {
+  open: [FLOOR_A, FLOOR_B],
+  pantry: [0xcfc6b0, 0xdbd2bc],
+  cabin: [0x5f6d64, 0x69776e],
+  yours: [0x6b5f72, 0x756a7c],
+  lab: [0x6f6a5c, 0x7b7566],
+  meeting: [0x55627a, 0x5f6d86],
+  reading: [0x4f5a6e, 0x596479],
+}
 const WALL = 0xeadcbf
 const SLAB = 0x4a382b
 /** How far the pointer must move before a press becomes a drag rather than a click. */
@@ -119,9 +136,10 @@ const DRAG_THRESHOLD = 4
 
 function drawBox(g: Graphics, box: Box): void {
   const faces = boxFaces(box)
-  g.poly(faces.left).fill(shade(box.color, 0.82))
-  g.poly(faces.right).fill(shade(box.color, 0.66))
-  g.poly(faces.top).fill(box.color)
+  const alpha = box.alpha ?? 1
+  g.poly(faces.left).fill({ color: shade(box.color, 0.82), alpha })
+  g.poly(faces.right).fill({ color: shade(box.color, 0.66), alpha })
+  g.poly(faces.top).fill({ color: box.color, alpha })
 }
 
 function at(box: Box, slot: { x: number; y: number }): Box {
@@ -130,16 +148,17 @@ function at(box: Box, slot: { x: number; y: number }): Box {
 
 /** Windows on the tall walls: a span along the wall and how high. */
 const BACK_WINDOWS: ReadonlyArray<{ from: number; to: number; z: number; h: number }> = [
-  { from: 1.6, to: 3.9, z: 1.15, h: 1.15 },
-  { from: 5.0, to: 7.3, z: 1.15, h: 1.15 },
+  // Above the tea counter.
+  { from: 1.0, to: 3.4, z: 1.5, h: 1.0 },
+  { from: 7.0, to: 10.4, z: 1.15, h: 1.15 },
+  { from: 11.6, to: 15.0, z: 1.15, h: 1.15 },
   // Above the QA bench, high enough to clear its screens.
-  { from: 12.9, to: 15.3, z: 1.45, h: 1.0 },
+  { from: 17.2, to: 19.6, z: 1.45, h: 1.0 },
 ]
 const SIDE_WINDOWS: ReadonlyArray<{ from: number; to: number }> = [
-  { from: 1.4, to: 3.4 },
-  { from: 4.3, to: 6.3 },
-  { from: 8.4, to: 10.4 },
-  { from: 11.3, to: 13.3 },
+  { from: 1.2, to: 3.4 },
+  { from: 6.4, to: 8.6 },
+  { from: 9.8, to: 12.0 },
 ]
 
 /** The floor, the tall walls on the two far sides, and their windows. Drawn when the plan changes. */
@@ -151,7 +170,7 @@ function drawFloor(g: Graphics, map: OfficeMap): void {
   }
   for (const room of map.rooms) {
     const { x, y, w, d } = room.rect
-    const [a, b] = room.kind === 'commons' ? [COMMONS_A, COMMONS_B] : [FLOOR_A, FLOOR_B]
+    const [a, b] = FLOORS[room.kind]
     for (let tx = 0; tx < w; tx++) {
       for (let ty = 0; ty < d; ty++) {
         g.poly(tilePolygon(x + tx, y + ty)).fill((tx + ty) % 2 === 0 ? a : b)
@@ -195,6 +214,16 @@ function drawFloor(g: Graphics, map: OfficeMap): void {
   }
 }
 
+/** The kinds of place that get a name tag; the rest are named by their room, or are just furniture. */
+const LABELLED: ReadonlySet<PlaceKind> = new Set([
+  'board',
+  'qa',
+  'inbox',
+  'reading',
+  'tea',
+  'snacks',
+])
+
 /** Where a place's name goes: above it, on the wall side of it. World coordinates and a height. */
 function labelAnchor(place: Place, all: readonly Place[]): { x: number; y: number; z: number } {
   const f = place.footprint
@@ -205,6 +234,10 @@ function labelAnchor(place: Place, all: readonly Place[]): { x: number; y: numbe
       return { x: f.x + f.w / 2, y: f.y + 0.4, z: 1.55 }
     case 'inbox':
       return { x: f.x + f.w / 2, y: f.y + 0.8, z: 1.3 }
+    case 'tea':
+      return { x: f.x + f.w / 2, y: f.y + 0.4, z: 1.9 }
+    case 'snacks':
+      return { x: f.x + f.w / 2, y: f.y + 0.3, z: 2.05 }
     case 'reading': {
       // One name for the whole alcove, centred over both desks.
       const desks = all.filter((p) => p.kind === 'reading')
@@ -212,6 +245,8 @@ function labelAnchor(place: Place, all: readonly Place[]): { x: number; y: numbe
       const maxX = Math.max(...desks.map((p) => p.footprint.x + p.footprint.w))
       return { x: (minX + maxX) / 2, y: f.y + 0.1, z: 1.95 }
     }
+    default:
+      return { x: f.x + f.w / 2, y: f.y + f.d / 2, z: 1.4 }
   }
 }
 
@@ -547,7 +582,9 @@ export class OfficeScene {
   /** Things that belong to the current plan, dropped and rebuilt when it changes. */
   private statics: Container[] = []
   private placeLabels: PlaceLabel[] = []
-  private map: OfficeMap = buildOffice(0)
+  private map: OfficeMap = buildOffice()
+  /** Furniture for desks nobody sits at, so an empty desk still looks like a desk. */
+  private emptyDesks = new Map<string, Graphics>()
   private grid: NavGrid = buildNavGrid(this.map)
   private mainFloor = new Set<number>()
   private director = new Director(this.map.places)
@@ -641,10 +678,7 @@ export class OfficeScene {
   // ---------- who is in the office ----------
 
   setEmployees(employees: readonly SceneEmployee[]): void {
-    // The plan grows with the team; the rooms and desks already there never move.
-    const wanted = buildOffice(employees.length)
-    if (wanted.rooms.length !== this.map.rooms.length) this.applyMap(wanted)
-
+    // The office is one plan whatever the team size: people are seated into it.
     const { seated } = assignDesks(employees, this.map)
     const keep = new Set(seated.map((s) => s.employee.id))
 
@@ -679,8 +713,29 @@ export class OfficeScene {
         this.overlay.addChild(view)
       }
     }
+    this.refreshEmptyDesks()
     this.syncTravellers()
     this.placeOverlay()
+  }
+
+  /** Give every desk nobody is sitting at its own furniture, and take it away once someone is. */
+  private refreshEmptyDesks(): void {
+    const taken = new Set([...this.deskViews.values()].map((d) => `${d.slot.x},${d.slot.y}`))
+    for (const slot of [...this.map.desks, ...this.map.cabins]) {
+      const key = `${slot.x},${slot.y}`
+      const existing = this.emptyDesks.get(key)
+      if (taken.has(key)) {
+        if (existing) {
+          existing.destroy()
+          this.emptyDesks.delete(key)
+        }
+      } else if (!existing) {
+        const view = this.emptyStation(slot)
+        view.zIndex = depthOf(stationRect(slot))
+        this.items.addChild(view)
+        this.emptyDesks.set(key, view)
+      }
+    }
   }
 
   setViews(views: Record<string, AgentView>): void {
@@ -897,8 +952,11 @@ export class OfficeScene {
     this.floor.clear()
     drawFloor(this.floor, map)
 
-    for (const run of groupWalls(map.partitions)) {
-      this.addStatic(this.boxesView([partitionBox(run), partitionCap(run)]), run)
+    for (const run of groupWalls(map.walls)) {
+      const boxes = run.glass
+        ? glassBoxes(run.rect)
+        : [partitionBox(run.rect), partitionCap(run.rect)]
+      this.addStatic(this.boxesView(boxes), run.rect)
     }
     for (const prop of map.props) {
       this.addStatic(this.boxesView(plantBoxes(prop.footprint)), prop.footprint)
@@ -910,19 +968,40 @@ export class OfficeScene {
         this.addStatic(this.boxesView(benchBoxes(place.footprint)), place.footprint)
       } else if (place.kind === 'inbox') {
         this.addStatic(this.boxesView(inboxBoxes(place.footprint)), place.footprint)
+      } else if (place.kind === 'tea') {
+        this.addStatic(this.boxesView(teaCounterBoxes(place.footprint)), place.footprint)
+      } else if (place.kind === 'snacks') {
+        this.addStatic(this.boxesView(snackShelfBoxes(place.footprint)), place.footprint)
+      } else if (place.kind === 'chat') {
+        this.addStatic(
+          this.boxesView(pantryTableBoxes(place.footprint, place.slots)),
+          place.footprint,
+        )
+      } else if (place.kind === 'meeting') {
+        this.addStatic(
+          this.boxesView(meetingTableBoxes(place.footprint, place.slots)),
+          place.footprint,
+        )
       } else if (place.station) {
         this.addStatic(this.emptyStation(place.station), stationRect(place.station))
       }
     }
 
-    // One name tag per kind of place (the two reading desks share one).
+    // One name tag per name: the places that have one, and the rooms that are named (the two reading
+    // desks share one).
     const named = new Set<string>()
-    for (const place of map.places) {
-      if (named.has(place.label)) continue
-      named.add(place.label)
-      const label = new PlaceLabel(place.label, labelAnchor(place, map.places), this.resolution)
+    const tag = (text: string, anchor: { x: number; y: number; z: number }): void => {
+      if (named.has(text)) return
+      named.add(text)
+      const label = new PlaceLabel(text, anchor, this.resolution)
       this.placeLabels.push(label)
       this.overlay.addChild(label.view)
+    }
+    for (const place of map.places) {
+      if (LABELLED.has(place.kind)) tag(place.label, labelAnchor(place, map.places))
+    }
+    for (const r of map.rooms) {
+      if (r.label) tag(r.label, { x: r.rect.x + r.rect.w / 2, y: r.rect.y + 0.5, z: 2.3 })
     }
 
     // Where people can walk in this plan, and who is where in it.
