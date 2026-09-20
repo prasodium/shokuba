@@ -10,6 +10,7 @@ import {
 } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { removeTree, toPlatformId } from '../platform'
 import { missionBranch, taskBranch } from './refs'
@@ -203,6 +204,8 @@ describe('pushing a branch', () => {
   }
   const remoteTipOf = (branch = BRANCH): string => sh(bare, 'rev-parse', `refs/heads/${branch}`)
   const refusal = async (work: Promise<unknown>): Promise<GitError> => failure(work)
+  /** The address of the local folder that stands in for GitHub: a file address, as a real one is a URL. */
+  const remote = (): string => pathToFileURL(bare).href
 
   beforeEach(() => {
     bare = join(dir, 'remote.git')
@@ -212,17 +215,17 @@ describe('pushing a branch', () => {
   })
 
   it('makes the branch on the other side, then finds it there, then moves it forward', async () => {
-    expect(await git.push(repo, bare, BRANCH, tip)).toBe('created')
+    expect(await git.push(repo, remote(), BRANCH, tip)).toBe('created')
     expect(remoteTipOf()).toBe(tip)
-    expect(await git.push(repo, bare, BRANCH, tip)).toBe('up-to-date')
+    expect(await git.push(repo, remote(), BRANCH, tip)).toBe('up-to-date')
     const next = commitOnBranch('two.txt')
-    expect(await git.push(repo, bare, BRANCH, next)).toBe('updated')
+    expect(await git.push(repo, remote(), BRANCH, next)).toBe('updated')
     expect(remoteTipOf()).toBe(next)
   })
 
   it('pushes the commit it was given, even when the branch has moved on since', async () => {
     const later = commitOnBranch('later.txt')
-    expect(await git.push(repo, bare, BRANCH, tip)).toBe('created')
+    expect(await git.push(repo, remote(), BRANCH, tip)).toBe('created')
     expect(remoteTipOf()).toBe(tip)
     expect(remoteTipOf()).not.toBe(later)
   })
@@ -230,7 +233,7 @@ describe('pushing a branch', () => {
   it('pushes only that branch: nothing else of yours goes, and none of yours moves', async () => {
     sh(repo, 'branch', 'my-feature')
     const main = sh(repo, 'rev-parse', 'main')
-    await git.push(repo, bare, BRANCH, tip)
+    await git.push(repo, remote(), BRANCH, tip)
     expect(sh(bare, 'for-each-ref', '--format=%(refname)')).toBe(`refs/heads/${BRANCH}`)
     expect(sh(repo, 'rev-parse', 'main')).toBe(main)
     expect(sh(repo, 'rev-parse', BRANCH)).toBe(tip)
@@ -246,14 +249,14 @@ describe('pushing a branch', () => {
       '',
       'shokuba/mission/../x',
     ]) {
-      expect((await refusal(git.push(repo, bare, name, tip))).code, name).toBe('unsafe')
+      expect((await refusal(git.push(repo, remote(), name, tip))).code, name).toBe('unsafe')
     }
     expect(sh(bare, 'for-each-ref')).toBe('')
   })
 
   it('takes only a full commit id, never a name or an expression', async () => {
     for (const commit of ['HEAD', 'main', BRANCH, tip.slice(0, 8), '', `${tip}~1`, `--${tip}`]) {
-      expect((await refusal(git.push(repo, bare, BRANCH, commit))).code, commit).toBe('unsafe')
+      expect((await refusal(git.push(repo, remote(), BRANCH, commit))).code, commit).toBe('unsafe')
     }
     expect(sh(bare, 'for-each-ref')).toBe('')
   })
@@ -265,7 +268,7 @@ describe('pushing a branch', () => {
     sh(repo, 'commit', '-qm', 'not on the branch')
     const stray = sh(repo, 'rev-parse', 'HEAD')
     sh(repo, 'switch', '-q', 'main')
-    expect((await refusal(git.push(repo, bare, BRANCH, stray))).message).toMatch(
+    expect((await refusal(git.push(repo, remote(), BRANCH, stray))).message).toMatch(
       /not on the branch/,
     )
     expect(sh(bare, 'for-each-ref')).toBe('')
@@ -295,14 +298,16 @@ describe('pushing a branch', () => {
     sh(other, 'push', '-q', 'origin', BRANCH)
     const theirs = remoteTipOf()
 
-    const error = await refusal(git.push(repo, bare, BRANCH, tip))
+    const error = await refusal(git.push(repo, remote(), BRANCH, tip))
     expect(error.code).toBe('failed')
     expect(error.message).toMatch(/Nothing was overwritten/)
     expect(remoteTipOf()).toBe(theirs)
   })
 
   it('says how to fix a push that cannot sign in or find the repository, in plain words', async () => {
-    const error = await refusal(git.push(repo, join(dir, 'no-such-place.git'), BRANCH, tip))
+    const error = await refusal(
+      git.push(repo, pathToFileURL(join(dir, 'no-such-place.git')).href, BRANCH, tip),
+    )
     expect(error.code).toBe('failed')
     expect(error.message).toMatch(/not found, or you may not push/)
     expect(error.message).not.toContain(dir)
@@ -323,7 +328,7 @@ describe('pushing a branch', () => {
     async (key, value) => {
       sh(repo, 'remote', 'add', 'origin', 'https://github.com/octo/widgets.git')
       sh(repo, 'config', '--local', key, value)
-      const error = await refusal(git.push(repo, bare, BRANCH, tip))
+      const error = await refusal(git.push(repo, remote(), BRANCH, tip))
       expect(error.code).toBe('unsafe')
       expect(error.message).toMatch(/will not push from it/)
       expect(error.message).toMatch(/git config --global/)
@@ -334,19 +339,21 @@ describe('pushing a branch', () => {
 
   it('uses your own global settings as they are, even ones it would refuse in the repository', async () => {
     writeFileSync(noConfig, '[credential]\n\thelper = cache\n[core]\n\tsshCommand = ssh\n')
-    expect(await git.push(repo, bare, BRANCH, tip)).toBe('created')
+    expect(await git.push(repo, remote(), BRANCH, tip)).toBe('created')
   })
 
   it('never runs a hook the repository has', async () => {
     const marker = join(dir, 'hook-ran')
     const hook = join(repo, '.git', 'hooks', 'pre-push')
     writeFileSync(hook, `#!/bin/sh\ntouch "${marker.replace(/\\/g, '/')}"\n`, { mode: 0o755 })
-    await git.push(repo, bare, BRANCH, tip)
+    await git.push(repo, remote(), BRANCH, tip)
     expect(existsSync(marker)).toBe(false)
   })
 
   it('does not put the repository’s address or any login in what it reports', async () => {
-    const error = await refusal(git.push(repo, `${dir}/x-user-secret-name.git`, BRANCH, tip))
+    const error = await refusal(
+      git.push(repo, pathToFileURL(join(dir, 'x-user-secret-name.git')).href, BRANCH, tip),
+    )
     expect(error.message).not.toContain('secret-name')
   })
 })

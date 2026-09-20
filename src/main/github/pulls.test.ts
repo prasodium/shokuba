@@ -1,3 +1,4 @@
+import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { GitHubLink } from '@shared/github'
 import type { EvidencePack } from '../evidence/types'
@@ -82,7 +83,7 @@ function build(script: Partial<FakeGhScript> = {}) {
     new GhCli({
       platform: toPlatformId(),
       env: { PATH: process.env.PATH ?? '' },
-      home: '/tmp',
+      home: tmpdir(),
       executable: gh.executable,
       prefixArgs: gh.prefixArgs,
     }),
@@ -440,7 +441,7 @@ describe('open', () => {
       audit: fx.services.audit,
       missions: fx.missions,
       client: new GitHubClient(
-        new GhCli({ platform: toPlatformId(), env: {}, home: '/tmp', find: async () => null }),
+        new GhCli({ platform: toPlatformId(), env: {}, home: tmpdir(), find: async () => null }),
       ),
       repos: { locate: async () => null },
       workingDirectories: () => [],
