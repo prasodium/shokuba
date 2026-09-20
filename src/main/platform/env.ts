@@ -1,4 +1,4 @@
-import type { Env, PlatformId } from './platform'
+import { getEnv, type Env, type PlatformId } from './platform'
 
 const POSIX_ALLOWED = new Set([
   'PATH',
@@ -73,5 +73,28 @@ export function safeChildEnv(
     out[name] = value
   }
 
+  return out
+}
+
+/**
+ * The named variables that `parent` has, and nothing else: for a child that needs a few of the
+ * person's own settings (where a tool keeps its login, a proxy) but not the rest of the environment.
+ * Empty ones are left out. Windows names are not case-sensitive, so `HTTPS_PROXY` and
+ * `https_proxy` are one setting there and it is passed once, under the first name asked for.
+ */
+export function pickEnv(
+  platform: PlatformId,
+  parent: Env,
+  names: readonly string[],
+): Record<string, string> {
+  const out: Record<string, string> = {}
+  const seen = new Set<string>()
+  for (const name of names) {
+    const key = platform === 'win32' ? name.toLowerCase() : name
+    const value = getEnv(parent, name, platform)
+    if (seen.has(key) || value === undefined || value === '') continue
+    out[name] = value
+    seen.add(key)
+  }
   return out
 }

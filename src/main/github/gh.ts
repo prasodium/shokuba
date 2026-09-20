@@ -1,4 +1,4 @@
-import { findExecutable, getEnv, safeChildEnv, type Env, type PlatformId } from '../platform'
+import { findExecutable, pickEnv, safeChildEnv, type Env, type PlatformId } from '../platform'
 import { redactString } from '../security/redact'
 import { runProcess } from './process'
 
@@ -95,16 +95,7 @@ export class GhCli implements GhRunner {
       NO_COLOR: '1',
       LC_ALL: 'C',
     }
-    // Windows names are not case-sensitive, so `HTTPS_PROXY` and `https_proxy` are one setting
-    // there: it is passed once. Elsewhere they are two, and both are passed.
-    const passed = new Set<string>()
-    for (const name of PASSED_THROUGH) {
-      const key = options.platform === 'win32' ? name.toLowerCase() : name
-      const value = getEnv(options.env, name, options.platform)
-      if (passed.has(key) || value === undefined || value === '') continue
-      extra[name] = value
-      passed.add(key)
-    }
+    Object.assign(extra, pickEnv(options.platform, options.env, PASSED_THROUGH))
     this.env = safeChildEnv(options.platform, options.env, extra)
   }
 

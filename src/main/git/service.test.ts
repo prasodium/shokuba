@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { removeTree, toPlatformId } from '../platform'
 import { missionBranch, taskBranch } from './refs'
 import { GitError } from './runner'
-import { GitService } from './service'
+import { GitService, pushProblem } from './service'
 
 let dir: string
 let repo: string
@@ -155,6 +155,199 @@ describe('a repository’s remote', () => {
     for (const name of ['--all', '-v', '', 'a b', 'a;b', '../x', 'x'.repeat(200)]) {
       expect(await git.remoteUrl(repo, name), name).toBeNull()
     }
+  })
+})
+
+describe('a remote’s pushed-to address and last known branch', () => {
+  it('can say where a push goes, apart from where a fetch comes from', async () => {
+    sh(repo, 'remote', 'add', 'origin', 'https://github.com/octo/widgets.git')
+    sh(repo, 'remote', 'set-url', '--push', 'origin', 'git@github.com:octo/widgets.git')
+    expect(await git.remoteUrl(repo)).toBe('https://github.com/octo/widgets.git')
+    expect(await git.remoteUrl(repo, 'origin', 'push')).toBe('git@github.com:octo/widgets.git')
+    expect(await git.remoteUrl(repo, 'nope', 'push')).toBeNull()
+  })
+
+  it('knows where a remote’s branch was when last fetched, and not what it never had', async () => {
+    const commit = baseCommit()
+    expect(await git.remoteTip(repo, 'origin', 'main')).toBeNull()
+    sh(repo, 'update-ref', 'refs/remotes/origin/main', commit)
+    expect(await git.remoteTip(repo, 'origin', 'main')).toBe(commit)
+    expect(await git.remoteTip(repo, 'origin', 'feature/x')).toBeNull()
+  })
+
+  it('will not take a name that could be read as an option or a path trick', async () => {
+    sh(repo, 'update-ref', 'refs/remotes/origin/main', baseCommit())
+    for (const branch of ['--all', '-x', '', 'a..b', 'a//b', 'main/', 'a b', 'x'.repeat(101)]) {
+      expect(await git.remoteTip(repo, 'origin', branch), branch).toBeNull()
+    }
+    for (const remote of ['--all', '', 'a b', '../x']) {
+      expect(await git.remoteTip(repo, remote, 'main'), remote).toBeNull()
+    }
+  })
+})
+
+describe('pushing a branch', () => {
+  const BRANCH = missionBranch('m1')
+  let bare: string
+  let tip: string
+
+  /** A commit added to the mission branch, and the branch's new tip. */
+  const commitOnBranch = (name: string): string => {
+    sh(repo, 'switch', '-q', BRANCH)
+    write(repo, name, `${name}\n`)
+    sh(repo, 'add', '-A')
+    sh(repo, 'commit', '-qm', `add ${name}`)
+    const made = sh(repo, 'rev-parse', 'HEAD')
+    sh(repo, 'switch', '-q', 'main')
+    return made
+  }
+  const remoteTipOf = (branch = BRANCH): string => sh(bare, 'rev-parse', `refs/heads/${branch}`)
+  const refusal = async (work: Promise<unknown>): Promise<GitError> => failure(work)
+
+  beforeEach(() => {
+    bare = join(dir, 'remote.git')
+    sh(dir, 'init', '--bare', '-q', '-b', 'main', bare)
+    sh(repo, 'branch', BRANCH)
+    tip = commitOnBranch('one.txt')
+  })
+
+  it('makes the branch on the other side, then finds it there, then moves it forward', async () => {
+    expect(await git.push(repo, bare, BRANCH, tip)).toBe('created')
+    expect(remoteTipOf()).toBe(tip)
+    expect(await git.push(repo, bare, BRANCH, tip)).toBe('up-to-date')
+    const next = commitOnBranch('two.txt')
+    expect(await git.push(repo, bare, BRANCH, next)).toBe('updated')
+    expect(remoteTipOf()).toBe(next)
+  })
+
+  it('pushes the commit it was given, even when the branch has moved on since', async () => {
+    const later = commitOnBranch('later.txt')
+    expect(await git.push(repo, bare, BRANCH, tip)).toBe('created')
+    expect(remoteTipOf()).toBe(tip)
+    expect(remoteTipOf()).not.toBe(later)
+  })
+
+  it('pushes only that branch: nothing else of yours goes, and none of yours moves', async () => {
+    sh(repo, 'branch', 'my-feature')
+    const main = sh(repo, 'rev-parse', 'main')
+    await git.push(repo, bare, BRANCH, tip)
+    expect(sh(bare, 'for-each-ref', '--format=%(refname)')).toBe(`refs/heads/${BRANCH}`)
+    expect(sh(repo, 'rev-parse', 'main')).toBe(main)
+    expect(sh(repo, 'rev-parse', BRANCH)).toBe(tip)
+  })
+
+  it('never pushes a branch that is not one of Shokuba’s, whatever it is called', async () => {
+    for (const name of [
+      'main',
+      'my-feature',
+      'shokuba/other/x',
+      'refs/heads/main',
+      '--all',
+      '',
+      'shokuba/mission/../x',
+    ]) {
+      expect((await refusal(git.push(repo, bare, name, tip))).code, name).toBe('unsafe')
+    }
+    expect(sh(bare, 'for-each-ref')).toBe('')
+  })
+
+  it('takes only a full commit id, never a name or an expression', async () => {
+    for (const commit of ['HEAD', 'main', BRANCH, tip.slice(0, 8), '', `${tip}~1`, `--${tip}`]) {
+      expect((await refusal(git.push(repo, bare, BRANCH, commit))).code, commit).toBe('unsafe')
+    }
+    expect(sh(bare, 'for-each-ref')).toBe('')
+  })
+
+  it('will not push a commit that is not on the branch', async () => {
+    sh(repo, 'switch', '-q', '-c', 'elsewhere', 'main')
+    write(repo, 'x.txt', 'x\n')
+    sh(repo, 'add', '-A')
+    sh(repo, 'commit', '-qm', 'not on the branch')
+    const stray = sh(repo, 'rev-parse', 'HEAD')
+    sh(repo, 'switch', '-q', 'main')
+    expect((await refusal(git.push(repo, bare, BRANCH, stray))).message).toMatch(
+      /not on the branch/,
+    )
+    expect(sh(bare, 'for-each-ref')).toBe('')
+  })
+
+  it('will not push to an address that could be read as an option', async () => {
+    for (const url of [
+      '--receive-pack=touch pwned',
+      '-x',
+      '',
+      'a b',
+      'x;y',
+      '$(x)',
+      'x'.repeat(501),
+    ]) {
+      expect((await refusal(git.push(repo, url, BRANCH, tip))).code, url).toBe('unsafe')
+    }
+  })
+
+  it('never overwrites: work that is already there, which is not a continuation, is left alone', async () => {
+    const other = join(dir, 'other-clone')
+    sh(dir, 'clone', '-q', bare, other)
+    sh(other, 'switch', '-q', '-c', BRANCH)
+    write(other, 'theirs.txt', 'theirs\n')
+    sh(other, 'add', '-A')
+    sh(other, 'commit', '-qm', 'someone else’s work')
+    sh(other, 'push', '-q', 'origin', BRANCH)
+    const theirs = remoteTipOf()
+
+    const error = await refusal(git.push(repo, bare, BRANCH, tip))
+    expect(error.code).toBe('failed')
+    expect(error.message).toMatch(/Nothing was overwritten/)
+    expect(remoteTipOf()).toBe(theirs)
+  })
+
+  it('says how to fix a push that cannot sign in or find the repository, in plain words', async () => {
+    const error = await refusal(git.push(repo, join(dir, 'no-such-place.git'), BRANCH, tip))
+    expect(error.code).toBe('failed')
+    expect(error.message).toMatch(/not found, or you may not push/)
+    expect(error.message).not.toContain(dir)
+  })
+
+  it.each([
+    ['core.sshCommand', 'echo pwned'],
+    ['core.askPass', '/tmp/x'],
+    ['credential.helper', '!echo pwned'],
+    ['url.https://evil.example/.insteadOf', 'https://github.com/'],
+    ['remote.origin.pushurl', 'https://evil.example/x.git'],
+    ['remote.origin.receivepack', 'evil'],
+    ['http.extraHeader', 'Authorization: token-value'],
+    ['include.path', '/tmp/more'],
+    ['push.gpgSign', 'true'],
+  ])(
+    'refuses to push when the repository’s own settings say %s, and pushes nothing',
+    async (key, value) => {
+      sh(repo, 'remote', 'add', 'origin', 'https://github.com/octo/widgets.git')
+      sh(repo, 'config', '--local', key, value)
+      const error = await refusal(git.push(repo, bare, BRANCH, tip))
+      expect(error.code).toBe('unsafe')
+      expect(error.message).toMatch(/will not push from it/)
+      expect(error.message).toMatch(/git config --global/)
+      expect(error.message).not.toContain(value)
+      expect(sh(bare, 'for-each-ref')).toBe('')
+    },
+  )
+
+  it('uses your own global settings as they are, even ones it would refuse in the repository', async () => {
+    writeFileSync(noConfig, '[credential]\n\thelper = cache\n[core]\n\tsshCommand = ssh\n')
+    expect(await git.push(repo, bare, BRANCH, tip)).toBe('created')
+  })
+
+  it('never runs a hook the repository has', async () => {
+    const marker = join(dir, 'hook-ran')
+    const hook = join(repo, '.git', 'hooks', 'pre-push')
+    writeFileSync(hook, `#!/bin/sh\ntouch "${marker.replace(/\\/g, '/')}"\n`, { mode: 0o755 })
+    await git.push(repo, bare, BRANCH, tip)
+    expect(existsSync(marker)).toBe(false)
+  })
+
+  it('does not put the repository’s address or any login in what it reports', async () => {
+    const error = await refusal(git.push(repo, `${dir}/x-user-secret-name.git`, BRANCH, tip))
+    expect(error.message).not.toContain('secret-name')
   })
 })
 
@@ -631,5 +824,97 @@ describe('what a repository cannot make Shokuba run', () => {
     write(folder, 'work.txt', 'work\n')
     await git.commitAll(repo, folder, 'work', 'Ren')
     expect(existsSync(marker)).toBe(false)
+  })
+})
+
+describe('the words for a push that failed', () => {
+  const said = (detail: string): GitError => {
+    const out = pushProblem(new GitError('failed', 'raw', detail))
+    expect(out).toBeInstanceOf(GitError)
+    return out as GitError
+  }
+
+  it('says work that is already there was not overwritten', () => {
+    for (const detail of [
+      '! [rejected]        x -> x (non-fast-forward)',
+      '!\trefs/heads/x:refs/heads/x\t[rejected] (fetch first)',
+      ' ! [rejected]        shokuba/mission/m1 -> shokuba/mission/m1 (fetch first)\nerror: failed to push some refs',
+    ]) {
+      expect(said(detail).message, detail).toMatch(/Nothing was overwritten/)
+    }
+  })
+
+  it('knows each of the ways Git says work was not a continuation', () => {
+    for (const detail of ['non-fast-forward', '[rejected]', 'fetch first', '(rejected)']) {
+      expect(said(detail).message, detail).toMatch(/Nothing was overwritten/)
+    }
+  })
+
+  it('says a protected branch refused it', () => {
+    for (const detail of [
+      'remote: error: GH006: Protected branch update failed',
+      'protected branch hook declined',
+    ]) {
+      expect(said(detail).message, detail).toBe('GitHub refused the push: the branch is protected.')
+    }
+  })
+
+  it('says how to fix signing in, for every way Git says it could not', () => {
+    for (const detail of [
+      'git@github.com: Permission denied (publickey).',
+      "fatal: Authentication failed for 'https://github.com/o/r.git/'",
+      "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+      'fatal: could not read Password for x',
+      'remote: Invalid username or password.',
+      'Host key verification failed.',
+      'remote: No anonymous write access.',
+    ]) {
+      expect(said(detail).message, detail).toMatch(/could not sign in to push.*your own Git setup/)
+    }
+  })
+
+  it('says the repository was not found, or may not be pushed to', () => {
+    for (const detail of [
+      'ERROR: Repository not found.',
+      "fatal: '/x.git' does not appear to be a git repository\nfatal: Could not read from remote repository.\n\nPlease make sure you have the correct access rights",
+      'remote: Not Found',
+    ]) {
+      expect(said(detail).message, detail).toMatch(/not found, or you may not push/)
+    }
+  })
+
+  it('does not call a server’s own refusal a matter of overwriting', () => {
+    expect(
+      said('error: failed to push some refs\n ! [remote rejected] x -> x (hook)').message,
+    ).toBe('Git could not push: error: failed to push some refs')
+  })
+
+  it('gives Git’s own first line for anything else, and a plain sentence when there is none', () => {
+    expect(said('warning: x\nfatal: something odd happened here\nmore').message).toBe(
+      'Git could not push: fatal: something odd happened here',
+    )
+    expect(said('remote: a remote said something').message).toBe(
+      'Git could not push: remote: a remote said something',
+    )
+    expect(said('nothing useful').message).toBe('Git could not push.')
+    expect(said('fatal: ' + 'x'.repeat(500)).message.length).toBeLessThan(230)
+  })
+
+  it('never puts a token or a login from Git’s output into the message or the detail', () => {
+    const token = ['ghp', '_', 'a'.repeat(36)].join('')
+    const out = said(
+      `fatal: unable to access 'https://${token}@github.com/o/r.git/': The requested URL returned error: 500`,
+    )
+    expect(out.message).not.toContain(token)
+    expect(out.detail).not.toContain(token)
+  })
+
+  it('leaves a timeout, and anything that is not a failed push, exactly as it was', () => {
+    const timeout = new GitError('timeout', 'Git took longer than 120s and was stopped')
+    expect(pushProblem(timeout)).toBe(timeout)
+    const unsafe = new GitError('unsafe', 'x')
+    expect(pushProblem(unsafe)).toBe(unsafe)
+    const other = new Error('boom')
+    expect(pushProblem(other)).toBe(other)
   })
 })

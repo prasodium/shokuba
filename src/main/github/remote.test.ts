@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseGitHubRemote } from './remote'
+import { isEncryptedRemote, parseGitHubRemote } from './remote'
 
 describe('parseGitHubRemote', () => {
   it('reads the usual ways a GitHub repository is written', () => {
@@ -110,6 +110,34 @@ describe('parseGitHubRemote', () => {
       'git@github.com:o/..',
     ]) {
       expect(parseGitHubRemote(url), url).toBeNull()
+    }
+  })
+})
+
+describe('isEncryptedRemote', () => {
+  it('is true for the addresses whose traffic is encrypted', () => {
+    for (const url of [
+      'https://github.com/o/r.git',
+      'HTTPS://github.com/o/r',
+      'ssh://git@github.com/o/r.git',
+      'git@github.com:o/r.git',
+      'github.com:o/r.git',
+      '  https://github.com/o/r  ',
+    ]) {
+      expect(isEncryptedRemote(url), url).toBe(true)
+    }
+  })
+
+  it('is false for plain http and the unencrypted git protocol', () => {
+    for (const url of [
+      'http://github.com/o/r.git',
+      'HTTP://github.com/o/r',
+      'git://github.com/o/r.git',
+      'ftp://github.com/o/r',
+      'file:///tmp/r.git',
+      'ext::sh -c x',
+    ]) {
+      expect(isEncryptedRemote(url), url).toBe(false)
     }
   })
 })

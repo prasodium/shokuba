@@ -48,6 +48,7 @@ const link = (repo: string, issueNumber: number): GitHubLink => ({
   issueAuthor: null,
   issueBody: '',
   importedAt: 't',
+  pullRequest: null,
 })
 
 describe('importedAs', () => {

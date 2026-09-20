@@ -21,6 +21,14 @@ export interface FakeGhScript {
   /** Who is signed in; `null` for nobody. */
   login: string | null
   issues?: FakeIssue[]
+  /** The repository's default branch (`main` if not said). */
+  defaultBranch?: string
+  /** Open pull requests, whatever branch is asked about. */
+  openPulls?: Array<{ number: number; draft?: boolean }>
+  /** The number a new pull request gets (7 if not said). */
+  nextPull?: number
+  /** Refuse to open a pull request, as GitHub does when it will not accept one. */
+  pullError?: { status: number; message: string }
   /** Answer every request with this HTTP error. */
   fail?: { status: number }
 }

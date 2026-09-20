@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { safeChildEnv } from './index'
+import { pickEnv, safeChildEnv } from './index'
 
 describe('safeChildEnv (POSIX)', () => {
   const parent = {
@@ -61,5 +61,33 @@ describe('safeChildEnv (Windows)', () => {
     const env = safeChildEnv('win32', parent, { PATH: 'C:\\custom' })
     expect(env).not.toHaveProperty('Path')
     expect(env['PATH']).toBe('C:\\custom')
+  })
+})
+
+describe('pickEnv', () => {
+  it('takes only the named variables, and leaves out the ones that are missing or empty', () => {
+    const parent = { A: '1', B: '', C: '3', SECRET_TOKEN: 'x' }
+    expect(pickEnv('linux', parent, ['A', 'B', 'D', 'C'])).toEqual({ A: '1', C: '3' })
+  })
+
+  it('treats two spellings as two settings where names are case-sensitive', () => {
+    const parent = { HTTPS_PROXY: 'upper', https_proxy: 'lower' }
+    expect(pickEnv('linux', parent, ['HTTPS_PROXY', 'https_proxy'])).toEqual({
+      HTTPS_PROXY: 'upper',
+      https_proxy: 'lower',
+    })
+    expect(pickEnv('darwin', { https_proxy: 'lower' }, ['HTTPS_PROXY', 'https_proxy'])).toEqual({
+      https_proxy: 'lower',
+    })
+  })
+
+  it('passes a setting once on Windows, where the spellings are one, under the name asked for', () => {
+    expect(pickEnv('win32', { Https_Proxy: 'p' }, ['HTTPS_PROXY', 'https_proxy'])).toEqual({
+      HTTPS_PROXY: 'p',
+    })
+  })
+
+  it('is empty when nothing is named', () => {
+    expect(pickEnv('linux', { A: '1' }, [])).toEqual({})
   })
 })

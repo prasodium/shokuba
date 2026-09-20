@@ -97,6 +97,8 @@ const api: ShokubaApi = {
     askToPlan: (missionId, managerId) =>
       ipcRenderer.invoke(IPC.githubPlanAsk, { missionId, managerId }),
     takeBackPlan: (missionId) => ipcRenderer.invoke(IPC.githubPlanTakeBack, { missionId }),
+    pullPreview: (missionId) => ipcRenderer.invoke(IPC.githubPullPreview, { missionId }),
+    pullOpen: (input) => ipcRenderer.invoke(IPC.githubPullOpen, input),
   },
   messages: {
     list: () => ipcRenderer.invoke(IPC.messagesList),

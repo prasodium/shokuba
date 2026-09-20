@@ -2,8 +2,10 @@ import { useState } from 'react'
 import type { GitHubLink } from '@shared/github'
 import type { Mission } from '@shared/missions'
 import { planningView } from '../github/planning'
+import { recordLine } from '../github/pull'
 import { useGitHub } from '../store/github'
 import { useOffice } from '../store/office'
+import { PullRequestDialog } from './PullRequestDialog'
 
 interface Props {
   link: GitHubLink
@@ -23,6 +25,7 @@ export function IssueSource({ link, mission }: Props) {
   const [chosen, setChosen] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [pullOpen, setPullOpen] = useState(false)
 
   const view = planningView(mission, employees)
   const managerId =
@@ -107,6 +110,29 @@ export function IssueSource({ link, mission }: Props) {
           </small>
         </div>
       )}
+
+      <div className="issue-planning">
+        {link.pullRequest ? (
+          <p className="mission-author" role="note" title={link.pullRequest.url}>
+            {recordLine(link.pullRequest, link.repo)}
+            <span className="muted"> · {link.pullRequest.url}</span>
+          </p>
+        ) : (
+          <>
+            <button type="button" className="btn" onClick={() => setPullOpen(true)}>
+              Open a pull request…
+            </button>
+            <small className="muted">
+              Shows you exactly what would be pushed and opened, and does nothing until you confirm.
+            </small>
+          </>
+        )}
+      </div>
+      <PullRequestDialog
+        open={pullOpen}
+        missionId={mission.id}
+        onClose={() => setPullOpen(false)}
+      />
 
       {view.kind === 'no-manager' && (
         <small className="muted">Hire a manager to have someone plan this from the issue.</small>

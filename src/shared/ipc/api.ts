@@ -34,6 +34,9 @@ import type {
   IssueImportRequest,
   IssueSummary,
   IssuesRequest,
+  PullOpenRequest,
+  PullOpenResult,
+  PullPreview,
 } from '../github'
 import type { ReviewSettings, ReviewSettingsSave, TaskReview } from '../reviews'
 import type {
@@ -311,6 +314,16 @@ export interface ShokubaApi {
     askToPlan(missionId: string, managerId: string): Promise<void>
     /** Take the draft back from the manager it was handed to. */
     takeBackPlan(missionId: string): Promise<void>
+    /**
+     * Work out exactly what opening a pull request for a mission would do, and change nothing. What
+     * it returns is covered by a hash that `pullOpen` must be given back.
+     */
+    pullPreview(missionId: string): Promise<PullPreview>
+    /**
+     * Push the mission's branch through the person's own Git setup and open the pull request. It is
+     * refused unless everything is still exactly as the preview with this hash showed it.
+     */
+    pullOpen(input: PullOpenRequest): Promise<PullOpenResult>
   }
   messages: {
     /** Recent conversations, newest first. */

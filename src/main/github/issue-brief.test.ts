@@ -14,6 +14,7 @@ const link = (over: Partial<GitHubLink> = {}): GitHubLink => ({
   issueAuthor: 'ada',
   issueBody: 'Steps:\n1. Open the page\n\nExpected: an error.',
   importedAt: 't',
+  pullRequest: null,
   ...over,
 })
 

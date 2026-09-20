@@ -61,6 +61,18 @@ export interface IssueDetail extends IssueSummary {
   body: string
 }
 
+/** A branch name as it may be put in a request to GitHub: path-like, never an option or a trick. */
+export const BRANCH_NAME_PATTERN = /^(?!-)(?!.*\.\.)(?!.*\/\/)(?!.*\/$)[A-Za-z0-9._/-]{1,100}$/
+
+/** A pull request Shokuba opened for a mission. */
+export interface PullRequestRecord {
+  number: number
+  /** Made from the repository and number, never taken from what GitHub sent. */
+  url: string
+  draft: boolean
+  openedAt: string
+}
+
 /** The mission an issue was made into, and where it came from. */
 export interface GitHubLink {
   missionId: string
@@ -74,6 +86,63 @@ export interface GitHubLink {
   /** The issue's own text as it was when imported. Untrusted. */
   issueBody: string
   importedAt: string
+  /** The pull request Shokuba opened for it, if it has. */
+  pullRequest: PullRequestRecord | null
+}
+
+/** What opening a pull request would do, exactly as it would be done. Reading it changes nothing. */
+export interface PullPreview {
+  missionId: string
+  /** `owner/repo`. */
+  repo: string
+  /** Who it will be opened as: the login `gh` is signed in with. */
+  login: string
+  branch: string
+  /** The branch it would be opened into: the repository's default branch on GitHub. */
+  base: string
+  /** The commit that would be pushed, short. */
+  head: string
+  /** The commits Shokuba made on the branch, newest first, and how many there are in all. */
+  commits: Array<{ id: string; subject: string }>
+  commitCount: number
+  /**
+   * Commits in the history the branch is built on that are not on GitHub yet, and would be pushed
+   * with it (work of yours that was only ever local). Null when Shokuba cannot tell.
+   */
+  unpublishedCommits: number | null
+  /** Tasks of the mission that are not done, whose work is therefore not in the branch. */
+  tasksNotDone: number
+  title: string
+  body: string
+  /** An open pull request for this branch that already exists, made by anyone. */
+  existing: { number: number; url: string; draft: boolean } | null
+  /** Why it cannot be opened, if it cannot. Empty when it can. */
+  problems: string[]
+  /** Things worth knowing before clicking. */
+  warnings: string[]
+  /** Covers everything shown above: opening is refused if any of it has changed since. */
+  hash: string
+}
+
+export const PullPreviewRequestSchema = z.strictObject({
+  missionId: z.string().min(1).max(200),
+})
+export type PullPreviewRequest = z.input<typeof PullPreviewRequestSchema>
+
+export const PullOpenRequestSchema = z.strictObject({
+  missionId: z.string().min(1).max(200),
+  /** The hash of the preview the person looked at. */
+  hash: z.string().regex(/^[0-9a-f]{64}$/),
+  draft: z.boolean(),
+})
+export type PullOpenRequest = z.input<typeof PullOpenRequestSchema>
+
+export interface PullOpenResult {
+  number: number
+  url: string
+  draft: boolean
+  /** True when a pull request for the branch was already open, so only the new commits were pushed. */
+  existing: boolean
 }
 
 export const IssuesRequestSchema = z.strictObject({

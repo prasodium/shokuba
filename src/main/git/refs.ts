@@ -39,6 +39,14 @@ export function assertStartPoint(value: string): string {
   throw new GitError('unsafe', `"${value.slice(0, 60)}" is not a commit id or a Shokuba branch`)
 }
 
+/** A full commit id, and nothing else: not a branch, not a revision expression. */
+export function assertCommitId(value: string): string {
+  if (!COMMIT.test(value)) {
+    throw new GitError('unsafe', `"${value.slice(0, 60)}" is not a full commit id`)
+  }
+  return value
+}
+
 /** A commit author's display name: one printable line, no angle brackets. */
 export function cleanAuthorName(name: string): string {
   const cleaned = [...name]

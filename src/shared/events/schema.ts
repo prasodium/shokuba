@@ -251,6 +251,16 @@ export const EventInputSchema = z.discriminatedUnion('type', [
       number: z.number().int().min(1),
     }),
   ),
+  // A pull request was opened for a mission. The repository, number and whether it is a draft; no text.
+  event(
+    'github.pull.opened',
+    z.strictObject({
+      missionId: id,
+      repo: z.string().min(3).max(140),
+      number: z.number().int().min(1),
+      draft: z.boolean(),
+    }),
+  ),
   event(
     'breaker.state.changed',
     z.strictObject({

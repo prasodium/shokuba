@@ -830,6 +830,7 @@ describe('the tool that reads a GitHub issue', () => {
       issueAuthor: 'ada',
       issueBody: 'It signs in with no password.',
       importedAt: 't',
+      pullRequest: null,
     })
     const reader = new IssueReader({ missions: fx.missions, link: (id) => links.get(id) })
     mcp = new McpEndpoint(

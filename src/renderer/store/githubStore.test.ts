@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import type { GitHubLink, GitHubProject, GitHubStatus, IssueSummary } from '@shared/github'
+import type {
+  GitHubLink,
+  GitHubProject,
+  GitHubStatus,
+  IssueSummary,
+  PullPreview,
+} from '@shared/github'
 import { createGitHubStore, type GitHubApi } from './githubStore'
 
 const project: GitHubProject = { repoRoot: '/work/widgets', name: 'widgets', repo: 'octo/widgets' }
@@ -23,6 +29,7 @@ const link = (number: number): GitHubLink => ({
   issueAuthor: 'ada',
   issueBody: '',
   importedAt: 't',
+  pullRequest: null,
 })
 
 const api = (over: Partial<GitHubApi> = {}): GitHubApi => ({
@@ -33,6 +40,8 @@ const api = (over: Partial<GitHubApi> = {}): GitHubApi => ({
   links: async () => [],
   askToPlan: async () => undefined,
   takeBackPlan: async () => undefined,
+  pullPreview: async () => ({}) as PullPreview,
+  pullOpen: async () => ({ number: 7, url: 'u', draft: true, existing: false }),
   ...over,
 })
 
@@ -388,5 +397,82 @@ describe('askToPlan and takeBackPlan', () => {
     )
     expect(await store.getState().takeBackPlan('m1')).toEqual({ ok: true, value: undefined })
     expect(taken).toEqual(['m1'])
+  })
+})
+
+describe('pullPreview and pullOpen', () => {
+  it('preview hands back what the main process worked out, and asks it about that mission only', async () => {
+    const asked: string[] = []
+    const preview = { hash: 'h', problems: [] } as unknown as PullPreview
+    const store = createGitHubStore(
+      api({
+        pullPreview: async (missionId) => {
+          asked.push(missionId)
+          return preview
+        },
+      }),
+    )
+    expect(await store.getState().pullPreview('m1')).toEqual({ ok: true, value: preview })
+    expect(asked).toEqual(['m1'])
+  })
+
+  it('preview says why it could not be made, without the wrapper Electron adds', async () => {
+    const store = createGitHubStore(
+      api({
+        pullPreview: async () => {
+          throw new Error(
+            "Error invoking remote method 'x': GitHubError: That mission does not come from a GitHub issue",
+          )
+        },
+      }),
+    )
+    expect(await store.getState().pullPreview('m1')).toEqual({
+      ok: false,
+      error: 'That mission does not come from a GitHub issue',
+    })
+  })
+
+  it('open sends the mission, the hash it was shown and the draft choice, then reads the links again', async () => {
+    const sent: unknown[] = []
+    let opened = false
+    const store = createGitHubStore(
+      api({
+        pullOpen: async (input) => {
+          sent.push(input)
+          opened = true
+          return {
+            number: 7,
+            url: 'https://github.com/acme/widgets/pull/7',
+            draft: false,
+            existing: false,
+          }
+        },
+        links: async () => (opened ? [link(1)] : []),
+      }),
+    )
+    const outcome = await store.getState().pullOpen('m1', 'a'.repeat(64), false)
+    expect(sent).toEqual([{ missionId: 'm1', hash: 'a'.repeat(64), draft: false }])
+    expect(outcome).toMatchObject({ ok: true, value: { number: 7 } })
+    expect(store.getState().links).toEqual([link(1)])
+  })
+
+  it('open says why it was refused, and still reads the links again, since the branch may have been pushed', async () => {
+    let reads = 0
+    const store = createGitHubStore(
+      api({
+        pullOpen: async () => {
+          throw new Error('Something changed since you looked at this')
+        },
+        links: async () => {
+          reads += 1
+          return []
+        },
+      }),
+    )
+    expect(await store.getState().pullOpen('m1', 'a'.repeat(64), true)).toEqual({
+      ok: false,
+      error: 'Something changed since you looked at this',
+    })
+    expect(reads).toBe(1)
   })
 })

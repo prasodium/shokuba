@@ -1,6 +1,17 @@
 import { OWNER_PATTERN, REPO_PATTERN, type RepoRef } from '@shared/github'
 
 /**
+ * Whether a remote address is one whose traffic is encrypted, so a login is safe to send over it:
+ * `https://`, `ssh://`, or the `git@host:path` form (which is SSH). Not `http://`, not `git://`.
+ */
+export function isEncryptedRemote(url: string): boolean {
+  const text = url.trim()
+  if (/^(https|ssh):\/\//i.test(text)) return true
+  // The SSH shorthand, `user@host:path`, and nothing looser: no scheme, no `::`, no spaces.
+  return /^(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9.-]+:(?![:/])[A-Za-z0-9._~/-]+$/.test(text)
+}
+
+/**
  * The GitHub repository a Git remote URL points at, or null if it is not one. Only github.com
  * counts (Shokuba does not talk to any other host), and the owner and repository names must be
  * ones GitHub allows, so what comes out is safe to put in a request. Credentials in the URL are

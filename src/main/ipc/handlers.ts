@@ -38,6 +38,8 @@ import {
   IssuesRequestSchema,
   PlanAskRequestSchema,
   PlanTakeBackRequestSchema,
+  PullOpenRequestSchema,
+  PullPreviewRequestSchema,
 } from '@shared/github'
 import { ReviewSettingsSaveSchema } from '@shared/reviews'
 import { CheckSettingsSaveSchema } from '@shared/verification'
@@ -275,6 +277,12 @@ export function registerIpc(
   handle(IPC.githubPlanTakeBack, PlanTakeBackRequestSchema, trusted, ({ missionId }) => {
     agents.issuePlanning.takeBack(missionId)
   })
+  // Opening a pull request is the one thing that writes to GitHub. The page can only ask for a
+  // preview, and then for that exact preview to be carried out.
+  handle(IPC.githubPullPreview, PullPreviewRequestSchema, trusted, (input) =>
+    agents.pulls.preview(input),
+  )
+  handle(IPC.githubPullOpen, PullOpenRequestSchema, trusted, (input) => agents.pulls.open(input))
   handle(IPC.tasksRemove, TaskIdRequestSchema, trusted, ({ taskId }) => {
     agents.missions.removeTask(taskId)
   })

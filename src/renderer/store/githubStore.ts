@@ -6,6 +6,9 @@ import type {
   IssueImportRequest,
   IssueSummary,
   IssuesRequest,
+  PullOpenRequest,
+  PullOpenResult,
+  PullPreview,
 } from '@shared/github'
 import { errorMessage } from '../lib/errors'
 import type { Outcome } from '../lib/outcome'
@@ -19,6 +22,8 @@ export interface GitHubApi {
   links(): Promise<GitHubLink[]>
   askToPlan(missionId: string, managerId: string): Promise<void>
   takeBackPlan(missionId: string): Promise<void>
+  pullPreview(missionId: string): Promise<PullPreview>
+  pullOpen(input: PullOpenRequest): Promise<PullOpenResult>
 }
 
 export type IssueState = 'open' | 'closed' | 'all'
@@ -45,6 +50,10 @@ export interface GitHubState {
   askToPlan(missionId: string, managerId: string): Promise<Outcome>
   /** Take it back from them. */
   takeBackPlan(missionId: string): Promise<Outcome>
+  /** What opening a pull request would do. Changes nothing. */
+  pullPreview(missionId: string): Promise<Outcome<PullPreview>>
+  /** Push the branch and open the pull request, exactly as the preview with this hash showed. */
+  pullOpen(missionId: string, hash: string, draft: boolean): Promise<Outcome<PullOpenResult>>
 }
 
 /** Made from an `api` so it can be tested without a window; the app's own is in `github.ts`. */
@@ -123,6 +132,26 @@ export function createGitHubStore(api: GitHubApi) {
           await api.takeBackPlan(missionId)
           return { ok: true, value: undefined }
         } catch (error) {
+          return { ok: false, error: errorMessage(error) }
+        }
+      },
+
+      async pullPreview(missionId) {
+        try {
+          return { ok: true, value: await api.pullPreview(missionId) }
+        } catch (error) {
+          return { ok: false, error: errorMessage(error) }
+        }
+      },
+
+      async pullOpen(missionId, hash, draft) {
+        try {
+          const value = await api.pullOpen({ missionId, hash, draft })
+          await get().refreshLinks()
+          return { ok: true, value }
+        } catch (error) {
+          // The branch may have been pushed even so; whatever was recorded is worth reading again.
+          await get().refreshLinks()
           return { ok: false, error: errorMessage(error) }
         }
       },

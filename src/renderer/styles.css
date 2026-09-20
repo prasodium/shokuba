@@ -1826,3 +1826,62 @@ h4 {
   align-items: flex-start;
   gap: 6px;
 }
+
+/* Opening a pull request: what would be done, before it is. */
+.pull-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 14px;
+  margin: 0;
+  font-size: 13px;
+}
+.pull-facts dt {
+  color: var(--muted);
+}
+.pull-facts dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.pull-commits {
+  margin: 4px 0 0;
+  padding-left: 0;
+  list-style: none;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.pull-title-text {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.pull-problems,
+.pull-warnings {
+  margin: 0;
+  padding: 8px 10px 8px 26px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.pull-problems {
+  border: 1px solid color-mix(in srgb, var(--red) 55%, transparent);
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+}
+.pull-warnings {
+  border: 1px solid color-mix(in srgb, var(--amber) 55%, transparent);
+  background: color-mix(in srgb, var(--amber) 12%, transparent);
+}
+
+/* The preview can be taller than the window: it scrolls, and the buttons stay in view. */
+.pull-dialog {
+  max-height: 92vh;
+  overflow: auto;
+}
+.pull-dialog .issue-text {
+  max-height: 200px;
+}
+.pull-dialog .dialog-actions {
+  position: sticky;
+  bottom: 0;
+  padding-top: 10px;
+  background: var(--surface);
+}

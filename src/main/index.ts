@@ -151,6 +151,8 @@ function start(dev?: DevRun): void {
         version: app.getVersion(),
         // A stand-in for `gh` for development and demos only; a packaged app never reads this.
         ...(!app.isPackaged &&
+          process.env['SHOKUBA_PUSH_TO'] && { pushTo: process.env['SHOKUBA_PUSH_TO'] }),
+        ...(!app.isPackaged &&
           process.env['SHOKUBA_GH'] && {
             github: new GhCli({
               platform,

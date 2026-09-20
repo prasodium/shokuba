@@ -6,6 +6,10 @@
 // environment variable, because the real tool is run with a stripped-down environment):
 //   { "login": "octocat" | null,          who is signed in (null = signed out)
 //     "issues": [ {...GitHub issue objects...} ],
+//     "defaultBranch": "main",            the repository's default branch
+//     "openPulls": [ {"number": 3} ],     open pull requests, whatever branch is asked about
+//     "nextPull": 7,                      the number a new pull request gets
+//     "pullError": { "status": 422, "message": "..." },   refuse to open a pull request
 //     "fail": { "status": 404 },          answer every API request with this HTTP error
 //     "log": "/path/to/file" }            append every request (arguments and stdin) to this file
 // Special commands: `--version`, `env-dump` (prints the variables it was given), `sleep`
@@ -81,11 +85,37 @@ if (args[0] === 'sleep') {
     else if (!arg.startsWith('-') && path === undefined) path = arg
   }
   const respond = (value) => process.stdout.write(JSON.stringify(value))
+  const method = rest[rest.indexOf('-X') + 1] ?? 'GET'
 
   if (path === 'user') {
     // With --jq the real tool prints a string bare, without quotes.
     if (jq) process.stdout.write(`${script.login}\n`)
     else respond({ login: script.login })
+    process.exit(0)
+  }
+  if (/^repos\/[^/]+\/[^/]+$/.test(path ?? '')) {
+    // With --jq the real tool prints a string bare, without quotes.
+    process.stdout.write(`${script.defaultBranch ?? 'main'}\n`)
+    process.exit(0)
+  }
+  if (/^repos\/[^/]+\/[^/]+\/pulls$/.test(path ?? '')) {
+    if (method === 'POST') {
+      if (script.pullError) {
+        // The real tool prints the error body on standard output and its own words on standard error.
+        process.stdout.write(
+          JSON.stringify({
+            message: 'Validation Failed',
+            errors: [{ message: script.pullError.message }],
+          }),
+        )
+        fail(`gh: Validation Failed (HTTP ${script.pullError.status})`)
+      }
+      respond({ number: script.nextPull ?? 7 })
+      process.exit(0)
+    }
+    respond(
+      (script.openPulls ?? []).map((pull) => ({ number: pull.number, draft: pull.draft === true })),
+    )
     process.exit(0)
   }
   const list = /^repos\/([^/]+)\/([^/]+)\/issues$/.exec(path ?? '')

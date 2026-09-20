@@ -23,7 +23,14 @@ import { cleanText } from './text'
 
 export class GitHubError extends Error {
   constructor(
-    readonly code: 'invalid' | 'unknown-project' | 'already-imported',
+    readonly code:
+      | 'invalid'
+      | 'unknown-project'
+      | 'already-imported'
+      | 'changed'
+      | 'blocked'
+      | 'busy'
+      | 'pushed',
     message: string,
   ) {
     super(message)
@@ -59,6 +66,9 @@ interface LinkRow {
   issue_author: string | null
   issue_body: string
   imported_at: string
+  pr_number: number | null
+  pr_draft: number
+  pr_opened_at: string | null
 }
 
 const toLink = (row: LinkRow): GitHubLink => ({
@@ -71,6 +81,15 @@ const toLink = (row: LinkRow): GitHubLink => ({
   issueAuthor: row.issue_author,
   issueBody: row.issue_body,
   importedAt: row.imported_at,
+  pullRequest:
+    row.pr_number !== null && row.pr_opened_at !== null
+      ? {
+          number: row.pr_number,
+          url: `https://github.com/${row.owner}/${row.repo}/pull/${row.pr_number}`,
+          draft: row.pr_draft === 1,
+          openedAt: row.pr_opened_at,
+        }
+      : null,
 })
 
 /**

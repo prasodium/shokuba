@@ -8,4 +8,6 @@ export const useGitHub = createGitHubStore({
   links: () => window.shokuba.github.links(),
   askToPlan: (missionId, managerId) => window.shokuba.github.askToPlan(missionId, managerId),
   takeBackPlan: (missionId) => window.shokuba.github.takeBackPlan(missionId),
+  pullPreview: (missionId) => window.shokuba.github.pullPreview(missionId),
+  pullOpen: (input) => window.shokuba.github.pullOpen(input),
 })

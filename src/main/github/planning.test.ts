@@ -48,6 +48,7 @@ const imported = (number = 42) => {
     issueAuthor: 'ada',
     issueBody: hostile,
     importedAt: 't',
+    pullRequest: null,
   })
   return mission
 }

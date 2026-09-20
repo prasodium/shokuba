@@ -8,6 +8,7 @@ import { GitHubClient } from '../github/client'
 import { GhCli, type GhRunner } from '../github/gh'
 import { IssueReader } from '../github/issue-brief'
 import { IssuePlanning } from '../github/planning'
+import { PullRequestService } from '../github/pulls'
 import { GitHubService } from '../github/service'
 import type { PermissionMode } from '@shared/employees'
 import { createAgentTools, SHOKUBA_MCP_INSTRUCTIONS } from '../mcp/agent-tools'
@@ -68,6 +69,11 @@ export interface AgentServicesOptions {
    * a stand-in so nothing ever touches a real account.
    */
   github?: GhRunner
+  /**
+   * DEVELOPMENT ONLY, and never set in a packaged app: push to this address instead of the one Git
+   * has for `origin`, so a demo can show opening a pull request without a real account being touched.
+   */
+  pushTo?: string
 }
 
 /** A real agent (Claude Code) takes a few seconds to start and report in; allow generously. */
@@ -103,6 +109,8 @@ export interface AgentServices {
   github: GitHubService
   /** Handing an imported draft to a manager to plan, and taking it back. */
   issuePlanning: IssuePlanning
+  /** Previewing and opening a pull request: the one thing that writes to GitHub. */
+  pulls: PullRequestService
   views: AgentViews
   /** Stops every running agent, then closes the report listener. */
   close(): Promise<void>
@@ -390,15 +398,16 @@ export async function createAgentServices(
     logger: services.logger,
   })
 
+  const githubClient = new GitHubClient(
+    options.github ??
+      new GhCli({ platform: options.platform, env: options.env, home: options.home }),
+  )
   const github = new GitHubService({
     db: services.db,
     events: services.events,
     audit: services.audit,
     missions,
-    client: new GitHubClient(
-      options.github ??
-        new GhCli({ platform: options.platform, env: options.env, home: options.home }),
-    ),
+    client: githubClient,
     repos: {
       locate: async (dir: string) => {
         if (!git) return null
@@ -420,6 +429,24 @@ export async function createAgentServices(
     team: { list: team },
     messages,
     audit: services.audit,
+  })
+
+  const pushPort =
+    git && options.pushTo
+      ? Object.assign(Object.create(git) as GitService, {
+          push: (repo: string, _url: string, branch: string, commit: string) =>
+            git.push(repo, options.pushTo as string, branch, commit),
+        })
+      : git
+  const pulls = new PullRequestService({
+    db: services.db,
+    events: services.events,
+    audit: services.audit,
+    missions,
+    link: (id: string) => github.link(id),
+    git: pushPort,
+    client: githubClient,
+    evidence,
   })
 
   const dispatcher = new Dispatcher({
@@ -469,6 +496,7 @@ export async function createAgentServices(
     evidence,
     github,
     issuePlanning,
+    pulls,
     views,
     async close() {
       reviewCleaner.stop()

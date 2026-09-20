@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import {
+  BRANCH_NAME_PATTERN,
   MAX_ISSUE_BODY,
   MAX_ISSUE_TITLE,
   MAX_LABEL,
@@ -27,6 +28,12 @@ const API = ['api', '--hostname', 'github.com', '-H', 'Accept: application/vnd.g
 export const LIST_FIELDS =
   '[.[] | select(.pull_request == null) | {number, title, state, user: .user.login, labels: [(.labels // [])[] | .name], comments, updated_at}]'
 export const LOGIN_FIELD = '.login // empty'
+export const DEFAULT_BRANCH_FIELD = '.default_branch // empty'
+export const OPEN_PULLS_FIELD = '[.[] | {number, draft: (.draft == true)}]'
+export const CREATED_PULL_FIELD = '{number}'
+/** The most GitHub accepts in a pull request's title and text. */
+export const MAX_PULL_TITLE = 256
+export const MAX_PULL_BODY = 60_000
 export const ONE_FIELDS =
   '{number, title, state, user: .user.login, labels: [(.labels // [])[] | .name], comments, updated_at, body, is_pull_request: (.pull_request != null)}'
 
@@ -89,10 +96,40 @@ function assertRepo(repo: RepoRef): void {
   if (!isRepoRef(repo)) throw new GhError('failed', 'That is not a GitHub repository name.')
 }
 
+/** The address of a pull request, made from the repository and number. */
+export function pullUrl(repo: RepoRef, number: number): string {
+  return `https://github.com/${repo.owner}/${repo.repo}/pull/${number}`
+}
+
 /**
- * GitHub, read through `gh`. Reads only: it lists and reads issues, and finds out who is signed
- * in. Everything that comes back is written by other people, so it is cut to size, cleaned of
- * characters that hide things, and its links are made here from numbers, not copied.
+ * What GitHub said when it would not open a pull request, in words that say what to do. Only a
+ * request GitHub understood and refused (a validation failure) is put in other words: a problem
+ * with signing in, the network, access or time already says what to do.
+ */
+function explainPullFailure(error: unknown): unknown {
+  if (!(error instanceof GhError) || error.code !== 'failed') return error
+  const said = error.detail
+  const explain = (message: string): GhError => new GhError(error.code, message, error.detail)
+  if (/already exists/i.test(said)) {
+    return explain('GitHub says a pull request for this branch already exists.')
+  }
+  if (/draft pull requests are not supported/i.test(said)) {
+    return explain(
+      'This repository cannot open draft pull requests. Try again with “Open as a draft” switched off.',
+    )
+  }
+  if (/no commits between/i.test(said)) {
+    return explain('GitHub sees no difference between this branch and the one it would go into.')
+  }
+  return explain('GitHub did not accept the pull request. Its own reason is in the log.')
+}
+
+/**
+ * GitHub, through `gh`. It reads: who is signed in, a repository's issues and its default branch,
+ * and whether a branch already has an open pull request. It writes in exactly one place,
+ * `createPull`, which is only ever called for a person's click after they were shown a preview.
+ * Everything that comes back is written by other people, so it is cut to size, cleaned of characters
+ * that hide things, and its links are made here from numbers, not copied.
  */
 export class GitHubClient {
   constructor(private readonly gh: GhRunner) {}
@@ -149,6 +186,111 @@ export class GitHubClient {
       if (issues.length >= ISSUE_LIMIT) break
     }
     return issues
+  }
+
+  /** The branch a pull request would go into by default. */
+  async defaultBranch(repo: RepoRef): Promise<string> {
+    assertRepo(repo)
+    const text = await this.gh.run([
+      ...API,
+      '-X',
+      'GET',
+      '--jq',
+      DEFAULT_BRANCH_FIELD,
+      `repos/${repo.owner}/${repo.repo}`,
+    ])
+    const name = cleanLine(text, 120)
+    if (!BRANCH_NAME_PATTERN.test(name)) {
+      throw new GhError('bad-response', 'GitHub did not say which branch is the default.')
+    }
+    return name
+  }
+
+  /** An open pull request for `branch` in this repository, made by anyone, or null. */
+  async findOpenPull(
+    repo: RepoRef,
+    branch: string,
+  ): Promise<{ number: number; url: string; draft: boolean } | null> {
+    assertRepo(repo)
+    if (!BRANCH_NAME_PATTERN.test(branch)) throw new GhError('failed', 'That is not a branch name.')
+    const text = await this.gh.run([
+      ...API,
+      '-X',
+      'GET',
+      '--jq',
+      OPEN_PULLS_FIELD,
+      `repos/${repo.owner}/${repo.repo}/pulls`,
+      '-f',
+      `head=${repo.owner}:${branch}`,
+      '-f',
+      'state=open',
+      '-f',
+      'per_page=5',
+    ])
+    const data = parseJson(text)
+    if (!Array.isArray(data)) {
+      throw new GhError('bad-response', 'GitHub answered with something Shokuba could not read.')
+    }
+    for (const item of data) {
+      const one = z
+        .object({ number: z.number().int().min(1), draft: z.unknown().optional() })
+        .safeParse(item)
+      if (one.success) {
+        return {
+          number: one.data.number,
+          url: pullUrl(repo, one.data.number),
+          draft: one.data.draft === true,
+        }
+      }
+    }
+    return null
+  }
+
+  /**
+   * Open a pull request. This WRITES to GitHub, so it is only ever called for a person's click after
+   * they have been shown exactly this. The request goes on standard input, not the command line.
+   */
+  async createPull(
+    repo: RepoRef,
+    input: { title: string; body: string; head: string; base: string; draft: boolean },
+  ): Promise<{ number: number; url: string }> {
+    assertRepo(repo)
+    if (!BRANCH_NAME_PATTERN.test(input.head) || !BRANCH_NAME_PATTERN.test(input.base)) {
+      throw new GhError('failed', 'That is not a branch name.')
+    }
+    const title = cleanLine(input.title, MAX_PULL_TITLE)
+    if (title.length === 0) throw new GhError('failed', 'A pull request needs a title.')
+    let text: string
+    try {
+      text = await this.gh.run(
+        [
+          ...API,
+          '-X',
+          'POST',
+          '--jq',
+          CREATED_PULL_FIELD,
+          `repos/${repo.owner}/${repo.repo}/pulls`,
+          '--input',
+          '-',
+        ],
+        {
+          input: JSON.stringify({
+            title,
+            body: cleanText(input.body, MAX_PULL_BODY),
+            head: input.head,
+            base: input.base,
+            draft: input.draft,
+          }),
+        },
+      )
+    } catch (error) {
+      throw explainPullFailure(error)
+    }
+    const made = z.object({ number: z.number().int().min(1) }).safeParse(parseJson(text))
+    if (!made.success) {
+      throw new GhError('bad-response', 'GitHub answered with something Shokuba could not read.')
+    }
+    return { number: made.data.number, url: pullUrl(repo, made.data.number) }
   }
 
   async getIssue(repo: RepoRef, number: number): Promise<IssueDetail> {

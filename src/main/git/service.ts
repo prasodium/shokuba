@@ -2,18 +2,52 @@ import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import type { FileChange, GitCommit, HeadInfo, MergeOutcome } from '@shared/git'
 import type { Logger } from '../logging/logger'
+import { redactString } from '../security/redact'
 import {
   findExecutable,
   isPathInside,
   pathApi,
+  pickEnv,
   removeTree,
   safeChildEnv,
   type Env,
   type PlatformId,
 } from '../platform'
-import { assertShokubaBranch, assertStartPoint, cleanAuthorName, workspaceKey } from './refs'
+import {
+  assertCommitId,
+  assertShokubaBranch,
+  assertStartPoint,
+  cleanAuthorName,
+  workspaceKey,
+} from './refs'
+import { configKeys, unsafePushSettings } from './push-safety'
 import { GitError, runGit, type RunOptions, type RunResult } from './runner'
 import { isSupported, MIN_GIT, parseGitVersion, type GitVersion } from './version'
+
+/**
+ * The few settings of the person's own that a push needs and nothing else does: the SSH agent and the
+ * desktop keyring a credential helper may use, where their Git settings live, and a proxy. They are
+ * given to a push and to nothing else, and never to an agent.
+ */
+const PUSH_ENV = [
+  'SSH_AUTH_SOCK',
+  'DBUS_SESSION_BUS_ADDRESS',
+  'XDG_RUNTIME_DIR',
+  'XDG_CONFIG_HOME',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'no_proxy',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+] as const
+
+/** A remote's name, as Git allows and as is safe as an argument. */
+const REMOTE_NAME = /^[A-Za-z0-9._-]{1,100}$/
+/** A branch on a remote: plain path-like names, never anything that could be read as an option. */
+const REMOTE_BRANCH = /^(?!-)(?!.*\.\.)(?!.*\/\/)(?!.*\/$)[A-Za-z0-9._/-]{1,100}$/
 
 /** Commits Shokuba makes are attributed to this address; `.invalid` can never be a real one. */
 const COMMIT_EMAIL = 'shokuba@localhost.invalid'
@@ -53,6 +87,7 @@ export class GitService {
   readonly worktreesRoot: string
   private readonly hooksDir: string
   private readonly env: Record<string, string>
+  private readonly pushEnv: Record<string, string>
   private readonly locks = new Map<string, Promise<void>>()
   private readonly emptyTrees = new Map<string, string>()
   private prepared: Promise<void> | undefined
@@ -70,6 +105,7 @@ export class GitService {
       LC_ALL: 'C',
       ...options.gitEnv,
     })
+    this.pushEnv = { ...pickEnv(options.platform, options.env, PUSH_ENV), ...this.env }
   }
 
   /** Find Git on this machine and check it is new enough. */
@@ -123,14 +159,124 @@ export class GitService {
 
   /**
    * Where `remote` (usually `origin`) points, as Git would use it, or null if there is no such
-   * remote. It is the raw address: it may carry a login the person wrote into it, so it is only
-   * ever parsed, never shown or recorded.
+   * remote: to fetch from, or (`which` = `push`) to push to. It is the raw address: it may carry a
+   * login the person wrote into it, so it is only ever parsed, never shown or recorded.
    */
-  async remoteUrl(repo: string, remote = 'origin'): Promise<string | null> {
-    if (!/^[A-Za-z0-9._-]{1,100}$/.test(remote) || remote.startsWith('-')) return null
-    const result = await this.git(repo, ['remote', 'get-url', remote], { okCodes: [0, 1, 2, 128] })
+  async remoteUrl(
+    repo: string,
+    remote = 'origin',
+    which: 'fetch' | 'push' = 'fetch',
+  ): Promise<string | null> {
+    if (!REMOTE_NAME.test(remote) || remote.startsWith('-')) return null
+    const args = ['remote', 'get-url', ...(which === 'push' ? ['--push'] : []), remote]
+    const result = await this.git(repo, args, { okCodes: [0, 1, 2, 128] })
     const url = result.stdout.trim()
     return result.code === 0 && url.length > 0 ? url : null
+  }
+
+  /** The commit a remote's branch was at when last fetched, or null if it never was. */
+  async remoteTip(repo: string, remote: string, branch: string): Promise<string | null> {
+    if (!REMOTE_NAME.test(remote) || remote.startsWith('-') || !REMOTE_BRANCH.test(branch)) {
+      return null
+    }
+    return this.tryRevParse(repo, `refs/remotes/${remote}/${branch}^{commit}`)
+  }
+
+  /**
+   * What the repository's OWN settings say that Shokuba will not follow when it pushes (see
+   * `push-safety.ts`), by kind and never by value. Empty when it is safe.
+   */
+  async unsafeSettings(repo: string): Promise<string[]> {
+    await this.prepare()
+    const keys: string[] = []
+    for (const scope of ['--local', '--worktree']) {
+      try {
+        const { stdout } = await this.raw(['config', scope, '--list', '-z'], repo, {
+          okCodes: [0, 1],
+        })
+        keys.push(...configKeys(stdout))
+      } catch {
+        // No such scope in this Git: the other one says the same.
+      }
+    }
+    return unsafePushSettings(keys)
+  }
+
+  /**
+   * Push one commit of one of Shokuba's own branches to `url`, as that branch. Never a force, never
+   * any other branch, never anything but the commit named:
+   *  - the branch must be one Shokuba manages, so `main` and every branch of yours can never be pushed;
+   *  - the refspec is exactly `<commit>:refs/heads/<branch>`, so a push moves only that branch on the
+   *    other side, and only forward (Git refuses anything else, and no `+` or force is ever passed);
+   *  - the commit is a full id that is the branch's tip or one of its ancestors, so what is pushed is
+   *    what was looked at even if an agent has since added to the branch;
+   *  - it is refused if the repository's own settings run programs or redirect the push;
+   *  - hooks never run, and it is signed by no one;
+   *  - it uses the person's own Git setup (their SSH key or credential helper), and never asks a question.
+   * Returns whether the branch was new there, moved forward, or already there.
+   */
+  async push(
+    repo: string,
+    url: string,
+    branch: string,
+    commit: string,
+  ): Promise<'created' | 'updated' | 'up-to-date'> {
+    assertShokubaBranch(branch)
+    assertCommitId(commit)
+    if (!/^[A-Za-z0-9+.@:/_~%=-]{1,500}$/.test(url) || url.startsWith('-')) {
+      throw new GitError('unsafe', 'That is not an address Shokuba will push to')
+    }
+    return this.exclusive(repo, async () => {
+      const unsafe = await this.unsafeSettings(repo)
+      if (unsafe.length > 0) {
+        throw new GitError(
+          'unsafe',
+          `This repository's own Git settings (${unsafe.join(', ')}) run a program or change where a push goes, so Shokuba will not push from it. ` +
+            'Move them to your global Git settings (git config --global), or remove them, and try again.',
+        )
+      }
+      const ancestor = await this.git(
+        repo,
+        ['merge-base', '--is-ancestor', commit, `refs/heads/${branch}`],
+        {
+          okCodes: [0, 1],
+        },
+      )
+      if (ancestor.code !== 0) {
+        throw new GitError('unsafe', 'That commit is not on the branch, so it will not be pushed')
+      }
+      let result: RunResult
+      try {
+        result = await this.gitWithEnv(
+          repo,
+          [
+            '-c',
+            'push.gpgSign=false',
+            'push',
+            '--porcelain',
+            '--no-recurse-submodules',
+            '--no-verify',
+            url,
+            `${commit}:refs/heads/${branch}`,
+          ],
+          this.pushEnv,
+          // Exit 1 is "refused"; what was refused is on standard output, so both are looked at.
+          { timeoutMs: PUSH_TIMEOUT_MS, okCodes: [0, 1] },
+        )
+      } catch (error) {
+        throw pushProblem(error)
+      }
+      if (result.code !== 0) {
+        throw pushProblem(
+          new GitError('failed', 'The push was refused', `${result.stdout}\n${result.stderr}`),
+        )
+      }
+      // `--porcelain` says what happened to each ref in a line that starts with a flag and a tab.
+      const line = result.stdout.split(/\r?\n/).find((text) => /^[ +*=!-]\t/.test(text))
+      if (line?.startsWith('*')) return 'created'
+      if (line?.startsWith('=')) return 'up-to-date'
+      return 'updated'
+    })
   }
 
   async head(repo: string): Promise<HeadInfo> {
@@ -520,9 +666,15 @@ export class GitService {
   }
 
   /** Git in `repo` with Shokuba's safety settings. */
-  private async git(
+  private git(repo: string, args: string[], options: Partial<RunOptions> = {}): Promise<RunResult> {
+    return this.gitWithEnv(repo, args, this.env, options)
+  }
+
+  /** The same, with the environment named (a push is the only thing that needs more than the usual). */
+  private async gitWithEnv(
     repo: string,
     args: string[],
+    env: Record<string, string>,
     options: Partial<RunOptions> = {},
   ): Promise<RunResult> {
     await this.prepare()
@@ -544,7 +696,7 @@ export class GitService {
       // Read no attributes: they are how a repository names filters and merge drivers.
       `--attr-source=${await this.emptyTree(repo)}`,
     ]
-    return runGit(this.options.executable, [...prefix, ...args], this.env, {
+    return runGit(this.options.executable, [...prefix, ...args], env, {
       cwd: repo,
       ...options,
     })
@@ -601,4 +753,38 @@ async function exists(path: string): Promise<boolean> {
 
 function cleanMessage(message: string): string {
   return message.replace(/\0/g, '').trim().slice(0, 2000) || 'Shokuba'
+}
+
+const PUSH_TIMEOUT_MS = 120_000
+
+/** Say what went wrong with a push in words that say what to do, and keep Git's own only as detail. */
+export function pushProblem(error: unknown): unknown {
+  if (!(error instanceof GitError) || error.code !== 'failed') return error
+  const said = redactString(error.detail)
+  const problem = (message: string): GitError => new GitError('failed', message, said)
+  if (/non-fast-forward|\[rejected\]|fetch first|\(rejected\)/i.test(said)) {
+    return problem(
+      'GitHub already has a branch with that name holding other work, so Shokuba cannot add to it. Nothing was overwritten.',
+    )
+  }
+  if (/protected branch|GH006|GH013|declined/i.test(said)) {
+    return problem('GitHub refused the push: the branch is protected.')
+  }
+  if (
+    /permission denied|authentication failed|could not read (username|password)|terminal prompts disabled|publickey|invalid username|host key verification|no anonymous write access/i.test(
+      said,
+    )
+  ) {
+    return problem(
+      'Git could not sign in to push. Shokuba uses your own Git setup (an SSH key or a credential helper), so check that "git push" works for this repository in a terminal, then try again.',
+    )
+  }
+  if (/repository not found|does not exist|not found|access rights/i.test(said)) {
+    return problem('GitHub says this repository was not found, or you may not push to it.')
+  }
+  const line = said
+    .split(/\r?\n/)
+    .map((text) => text.trim())
+    .find((text) => /^(fatal|error|remote):/i.test(text))
+  return problem(line ? `Git could not push: ${line.slice(0, 200)}` : 'Git could not push.')
 }
