@@ -1,6 +1,7 @@
 /** Every IPC channel between renderer and main. One place, so nothing is stringly-typed. */
 export const IPC = {
   appInfo: 'shokuba:app:info',
+  appGit: 'shokuba:app:git',
   eventsList: 'shokuba:events:list',
   /** main -> renderer push */
   eventsPublished: 'shokuba:events:published',

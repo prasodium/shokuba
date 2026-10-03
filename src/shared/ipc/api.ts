@@ -164,6 +164,12 @@ export interface AppInfo {
   homeDirectory: string
 }
 
+/** Whether the Git on this machine can give each task its own branch, as found at startup. */
+export type GitInfo =
+  | { state: 'ready'; version: string; minimum: string }
+  /** Not found, too old, or switched off; `reason` says which, in a sentence. */
+  | { state: 'unavailable'; reason: string; minimum: string }
+
 /** What Shokuba found out about a provider's CLI on this machine. */
 export interface ProviderInfo {
   id: string
@@ -204,6 +210,8 @@ export interface TerminalReplay {
 export interface ShokubaApi {
   app: {
     info(): Promise<AppInfo>
+    /** The Git Shokuba found when it started, and whether it is new enough. Read only. */
+    git(): Promise<GitInfo>
   }
   events: {
     list(request?: EventsListRequest): Promise<ShokubaEvent[]>

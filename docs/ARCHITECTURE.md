@@ -428,6 +428,10 @@ Phase 8 connects the missions to GitHub. The rule that shapes all of it: **GitHu
 
 **Phase 8 is complete:** issue → mission (8a) → plan (8b) → implement and verify (the existing phases) → pull request (8c) → follow it and fix what goes wrong (8d), with GitHub reached only through the person's own `gh` login and their own Git setup, every write shown first and logged, and nothing GitHub wrote ever typed into an agent's terminal.
 
+### About (Phase 9, slice 9a)
+
+The header pill shows `versionPill(info)` from `app.info` (version and system, nothing else) and opens `AboutDialog`. The dialog is read only and checks again each time it opens: `loadAbout` (`src/renderer/lib/about.ts`) reads `app.git`, `github.status` and `providers.list` in parallel, each wrapped in its own `Outcome`, so one failure never hides the others. `app.git` is the only new IPC call: `readGitInfo` (`src/main/git/info.ts`) asks the `GitService` found at startup for its version, or returns why there is none (the reason recorded when `GitService.locate` failed); a failure that is not a `GitError` is reported only as _Git could not be used_, so no path or detail reaches the page. Pure helpers (`gitFinding`, `githubFinding`, `providerFinding`) turn each fact into a label, a sentence and whether it is usable. No table, event or migration.
+
 ## Planned
 
 ### More providers

@@ -2,6 +2,7 @@ import type { Services } from '../bootstrap'
 import { CircuitBreaker } from '../breaker/breaker'
 import { EmployeeService } from '../employees/service'
 import { EvidenceService } from '../evidence/service'
+import { readGitInfo } from '../git/info'
 import { GitError } from '../git/runner'
 import { GitService } from '../git/service'
 import { GitHubClient } from '../github/client'
@@ -12,6 +13,7 @@ import { IssuePlanning } from '../github/planning'
 import { PullRequestService } from '../github/pulls'
 import { GitHubService } from '../github/service'
 import type { PermissionMode } from '@shared/employees'
+import type { GitInfo } from '@shared/ipc/api'
 import { createAgentTools, SHOKUBA_MCP_INSTRUCTIONS } from '../mcp/agent-tools'
 import { McpEndpoint } from '../mcp/server'
 import { MessageRouter } from '../messages/router'
@@ -115,6 +117,8 @@ export interface AgentServices {
   /** Following the pull request (read only), and making tasks from what goes wrong with it. */
   follow: PullFollowService
   views: AgentViews
+  /** The Git found at startup and whether it is new enough, or why there is none. Read only. */
+  gitInfo(): Promise<GitInfo>
   /** Stops every running agent, then closes the report listener. */
   close(): Promise<void>
 }
@@ -516,6 +520,7 @@ export async function createAgentServices(
     pulls,
     follow,
     views,
+    gitInfo: () => readGitInfo(git, gitProblem),
     async close() {
       reviewCleaner.stop()
       cleaner.stop()

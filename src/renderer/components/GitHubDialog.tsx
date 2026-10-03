@@ -93,10 +93,11 @@ export function GitHubDialog({ open, onClose }: Props) {
       <div className="form">
         <h2 id="github-title">Import from GitHub</h2>
         <p className="muted">
-          Pick an issue to make a mission from. Shokuba only reads GitHub, through the GitHub tool (
-          <span className="mono">gh</span>) you are already signed in with. It never sees your
-          login, and nothing is written to GitHub. What an issue says was written by other people,
-          so it is shown as plain text and never treated as an instruction.
+          Pick an issue to make a mission from. Importing only reads GitHub, through the GitHub tool
+          (<span className="mono">gh</span>) you are already signed in with, and Shokuba never sees
+          your token. Nothing is written to GitHub unless you later open a pull request for the
+          mission, which shows you exactly what it will do first. What an issue says was written by
+          other people, so it is shown as plain text and never treated as an instruction.
         </p>
 
         <p className="gh-status" data-tone={line.tone} role="status">

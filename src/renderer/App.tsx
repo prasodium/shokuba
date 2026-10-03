@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { Employee } from '@shared/employees'
+import { AboutDialog } from './components/AboutDialog'
 import { DepartmentsDialog } from './components/DepartmentsDialog'
 import { EmployeeDialog } from './components/EmployeeDialog'
 import { EventDock } from './components/EventDock'
@@ -10,12 +11,11 @@ import { OfficeView } from './components/OfficeView'
 import { Roster } from './components/Roster'
 import { RolesDialog } from './components/RolesDialog'
 import { TerminalSection } from './components/TerminalSection'
+import { versionPill } from './lib/about'
 import { attentionCount } from './messages/helpers'
 import { useMessages } from './store/messages'
 import { useMissions } from './store/missions'
 import { useOffice } from './store/office'
-
-const PLATFORM_NAMES = { darwin: 'macOS', win32: 'Windows', linux: 'Linux' } as const
 
 export function App() {
   const connect = useOffice((s) => s.connect)
@@ -31,6 +31,7 @@ export function App() {
   const [rolesOpen, setRolesOpen] = useState(false)
   const [departmentsOpen, setDepartmentsOpen] = useState(false)
   const [officeOpen, setOfficeOpen] = useState(false)
+  const [aboutOpen, setAboutOpen] = useState(false)
 
   useEffect(() => connect(), [connect])
 
@@ -64,10 +65,14 @@ export function App() {
           </h1>
           <p className="tagline">A Multi-Agent Harness</p>
         </div>
-        <span className="phase">
-          Phase 2 · Missions
-          {info && ` · v${info.version} · ${PLATFORM_NAMES[info.platform]}`}
-        </span>
+        <button
+          type="button"
+          className="version-pill"
+          onClick={() => setAboutOpen(true)}
+          title="About Shokuba, and what it found on this computer"
+        >
+          {info ? versionPill(info) : 'About'}
+        </button>
       </header>
 
       {notice && (
@@ -155,6 +160,7 @@ export function App() {
       <DepartmentsDialog open={departmentsOpen} onClose={() => setDepartmentsOpen(false)} />
       <OfficeDialog open={officeOpen} onClose={() => setOfficeOpen(false)} />
       <RolesDialog open={rolesOpen} onClose={() => setRolesOpen(false)} />
+      <AboutDialog open={aboutOpen} onClose={() => setAboutOpen(false)} />
     </div>
   )
 }

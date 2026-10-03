@@ -130,14 +130,47 @@ h1 {
   color: var(--muted);
   font-size: 12.5px;
 }
-.phase {
+.version-pill {
   margin-left: auto;
   font-size: 12px;
   padding: 5px 10px;
   border: 1px solid var(--border);
   border-radius: 999px;
+  background: transparent;
   color: var(--muted);
   white-space: nowrap;
+  cursor: pointer;
+}
+.version-pill:hover {
+  color: var(--text);
+}
+
+.about-heading {
+  margin: 4px 0 0;
+  font-size: 14px;
+}
+.about-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.about-table th,
+.about-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+}
+.about-table th {
+  width: 38%;
+  font-weight: 500;
+  color: var(--muted);
+}
+.about-table td {
+  overflow-wrap: anywhere;
+}
+.about-problem {
+  color: var(--red);
 }
 
 .notice {

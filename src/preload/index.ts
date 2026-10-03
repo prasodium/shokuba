@@ -19,6 +19,7 @@ function subscribe<T>(channel: string, listener: (payload: T) => void): () => vo
 const api: ShokubaApi = {
   app: {
     info: () => ipcRenderer.invoke(IPC.appInfo),
+    git: () => ipcRenderer.invoke(IPC.appGit),
   },
   events: {
     list: (request) => ipcRenderer.invoke(IPC.eventsList, request),

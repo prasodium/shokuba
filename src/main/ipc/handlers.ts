@@ -102,6 +102,7 @@ export function registerIpc(
     eventCount: services.events.log.count(),
     homeDirectory: homedir(),
   }))
+  handle(IPC.appGit, z.undefined(), trusted, () => agents.gitInfo())
 
   handle(
     IPC.eventsList,
