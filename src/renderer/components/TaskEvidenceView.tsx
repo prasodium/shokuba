@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { EvidenceExportResult } from '@shared/evidence'
 import { savedMessage } from '../evidence/summary'
 import { errorMessage } from '../lib/errors'
+import { shokuba } from '../api'
 
 interface Props {
   taskId: string
@@ -20,7 +21,7 @@ export function TaskEvidenceView({ taskId }: Props) {
     setBusy(true)
     setError(null)
     try {
-      const saved = await window.shokuba.evidence.export(taskId)
+      const saved = await shokuba.evidence.export(taskId)
       if (saved) setResult(saved) // null means the person cancelled the dialog
     } catch (e) {
       setError(errorMessage(e))

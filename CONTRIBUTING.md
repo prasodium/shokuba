@@ -44,7 +44,7 @@ The `frames` step reports how long the run really took, so set `-framerate` to f
 These keep the project honest. Reviews check for them.
 
 1. **The event log is the source of truth.** State the UI shows must come from persisted events, not from a component guessing. New event types get a Zod schema in `src/shared/events/schema.ts` _when a feature starts emitting them_ — not before.
-2. **Nothing crosses a process boundary unvalidated.** Every IPC handler goes through `handle()` in `src/main/ipc/handlers.ts` (sender check + Zod schema).
+2. **Nothing crosses a process boundary unvalidated.** Every IPC handler goes through `handle()` in `src/main/ipc/handlers.ts` (sender check + Zod schema). In the renderer, call the main process only through `shokuba` from `src/renderer/api.ts`, never `window.shokuba` (a test enforces this). A new API method must be marked `read` or `act` in `ACCESS` (`src/renderer/replay/guard.ts`), or it does not compile: `act` calls are refused during replay, so anything that changes something, reaches an agent or asks the person for a place is `act`.
 3. **All OS-specific code lives in `src/main/platform/`.** Do not read `process.platform` anywhere else — a lint rule enforces this. Take a `PlatformId` and call the platform helpers. See [PLATFORMS.md](docs/PLATFORMS.md).
 4. **Secrets never reach logs, events or the UI.** Anything persisted or logged goes through the redactor. Child processes get an allow-listed environment (`safeChildEnv`), never a copy of `process.env`.
 5. **Schema changes are migrations.** Add a new file under `src/main/database/migrations/` and append it to the list. Never edit or reorder an applied migration — the migrator will refuse.

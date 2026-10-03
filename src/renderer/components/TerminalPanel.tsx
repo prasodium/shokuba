@@ -3,6 +3,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import type { TerminalChunk } from '@shared/ipc/api'
+import { shokuba } from '../api'
 
 interface Props {
   employeeId: string
@@ -57,14 +58,14 @@ export function TerminalPanel({ employeeId, runKey, running }: Props) {
       term.write(start < replayEnd ? chunk.data.slice(replayEnd - start) : chunk.data)
     }
 
-    const unsubscribe = window.shokuba.terminal.subscribe((chunk) => {
+    const unsubscribe = shokuba.terminal.subscribe((chunk) => {
       if (chunk.employeeId !== employeeId) return
       if (attached) write(chunk)
       else waiting.push(chunk)
     })
 
     let cancelled = false
-    void window.shokuba.terminal
+    void shokuba.terminal
       .replay(employeeId)
       .then(({ data, offset }) => {
         if (cancelled) return
@@ -78,7 +79,7 @@ export function TerminalPanel({ employeeId, runKey, running }: Props) {
       })
 
     const input = term.onData((data) => {
-      void window.shokuba.terminal.write(employeeId, data).catch(() => undefined)
+      void shokuba.terminal.write(employeeId, data).catch(() => undefined)
     })
 
     const sendSize = (): void => {
@@ -87,7 +88,7 @@ export function TerminalPanel({ employeeId, runKey, running }: Props) {
       } catch {
         return // the panel is hidden or has no size yet
       }
-      void window.shokuba.terminal.resize(employeeId, term.cols, term.rows).catch(() => undefined)
+      void shokuba.terminal.resize(employeeId, term.cols, term.rows).catch(() => undefined)
     }
     const observer = new ResizeObserver(() => requestAnimationFrame(sendSize))
     observer.observe(host)

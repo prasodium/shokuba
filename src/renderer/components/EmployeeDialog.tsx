@@ -10,6 +10,7 @@ import { useDepartments } from '../store/departments'
 import { useOffice } from '../store/office'
 import { useRoles } from '../store/roles'
 import { CharacterEditor } from './CharacterEditor'
+import { shokuba } from '../api'
 
 const COLORS = ['#e8893a', '#6f9a5b', '#5b8fc7', '#c76b8f', '#8f7bd1', '#d1b34a']
 const NAMES = ['Mika', 'Ren', 'Sora', 'Aiko', 'Haru', 'Yui', 'Kaito', 'Nao']
@@ -145,7 +146,7 @@ export function EmployeeDialog({ open, editing, onClose, onEditRoles, onEditDepa
   }
 
   async function browse(): Promise<void> {
-    const picked = await window.shokuba.system.pickDirectory()
+    const picked = await shokuba.system.pickDirectory()
     if (picked) setFolder(picked)
   }
 

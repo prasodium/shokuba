@@ -4,6 +4,7 @@ import { latestWorkspaceSeq } from '../git/events'
 import { branchSummary, mergeInstructions } from '../git/merge'
 import { useEvents } from '../store/events'
 import { useOffice } from '../store/office'
+import { shokuba } from '../api'
 
 interface Props {
   missionId: string
@@ -23,7 +24,7 @@ export function MissionBranchView({ missionId, version }: Props) {
 
   useEffect(() => {
     let current = true
-    window.shokuba.missions
+    shokuba.missions
       .branches(missionId)
       .then((result) => {
         if (current) setBranches(result)

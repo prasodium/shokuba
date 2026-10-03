@@ -111,6 +111,11 @@ Shokuba is being built in the open, in small, tested increments. Here is exactly
 <p align="center"><sub>Following the pull request (an animation, with <b>demo</b> agents and a stand-in GitHub tool). Shokuba only <b>reads</b> GitHub here. A failing check or a request for changes becomes a task in one click, in Shokuba's own words: what the check or the reviewer <i>said</i> is kept apart and an agent reads it only through a read-only tool that marks it <b>untrusted</b>, never in its terminal. A finished mission is reopened <b>paused</b>, so nothing runs until you say so.</sub></p>
 
 <p align="center">
+  <img src="docs/assets/replay-demo.gif" alt="An animation of the whole app in replay: a banner across the top reads Replay, you are watching what was recorded, not the live office; under the office a bar with Play, Pause, steps, speeds 1x 4x 16x, a scrubber and Back to live plays the recorded log, and the employees' bubbles and the roster go from Idle to Researching and Coding and back as the events play, while the event log below follows the cursor; the buttons that act are greyed out and the panels on the right say they show the present" width="100%">
+</p>
+<p align="center"><sub>Replay (an animation, with <b>demo</b> agents). Scrub back through what was recorded and watch the office, the roster and the event log play it back, at 1x, 4x or 16x, narrowed to a mission or an employee if you like. It is <b>read only</b>: every call that would change something or reach an agent is refused while replaying, and the buttons say why. It shows only what events can rebuild, so the board and the inbox, which come from today's missions, stay empty, and simulated office life is off.</sub></p>
+
+<p align="center">
   <img src="docs/assets/missions-demo.png" alt="The Missions tab: a task graph where the first task is done and the two tasks that depended on it are now in progress with two employees, the third waiting on both" width="100%">
 </p>
 <p align="center"><sub>A mission: <i>Design the API</i> was accepted, so <i>Build the API</i> and <i>Write the docs</i> were handed to two agents at once; <i>Review everything</i> waits for both. (Demo agents.)</sub></p>

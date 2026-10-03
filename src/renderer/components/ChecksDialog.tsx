@@ -8,6 +8,7 @@ import {
   type CheckStepInput,
 } from '@shared/verification'
 import { errorMessage } from '../lib/errors'
+import { shokuba } from '../api'
 
 interface Props {
   open: boolean
@@ -70,7 +71,7 @@ export function ChecksDialog({ open, repoRoot, repoName, onClose }: Props) {
     let current = true
     setError(null)
     setSuggested(null)
-    window.shokuba.checks
+    shokuba.checks
       .get(repoRoot)
       .then((settings) => {
         if (!current) return
@@ -98,7 +99,7 @@ export function ChecksDialog({ open, repoRoot, repoName, onClose }: Props) {
     if (!repoRoot) return
     setError(null)
     try {
-      const found = await window.shokuba.checks.suggest(repoRoot)
+      const found = await shokuba.checks.suggest(repoRoot)
       if (found.length === 0) {
         setSuggested('Nothing recognisable was found in the project. Add your own commands below.')
         return
@@ -122,7 +123,7 @@ export function ChecksDialog({ open, repoRoot, repoName, onClose }: Props) {
     setBusy(true)
     setError(null)
     try {
-      await window.shokuba.checks.save({
+      await shokuba.checks.save({
         repoRoot,
         acknowledged,
         steps: rows.map((row) => ({

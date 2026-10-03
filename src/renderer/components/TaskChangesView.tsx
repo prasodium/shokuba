@@ -3,6 +3,7 @@ import type { TaskChanges } from '@shared/git'
 import { classifyDiff, fileCounts, summarizeChanges } from '../git/diff'
 import { latestWorkspaceSeq } from '../git/events'
 import { useEvents } from '../store/events'
+import { shokuba } from '../api'
 
 /** A phrase as the start of a sentence. */
 const sentence = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1)
@@ -29,7 +30,7 @@ export function TaskChangesView({ taskId, assignee, version }: Props) {
   useEffect(() => {
     let current = true
     setProblem(null)
-    window.shokuba.tasks
+    shokuba.tasks
       .changes(taskId)
       .then((result) => {
         if (current) setChanges(result)

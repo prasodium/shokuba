@@ -6,6 +6,8 @@ import { MAX_VISIBLE_EMPLOYEES } from '../office/map'
 import { OfficeScene, type CameraState, type SceneEmployee } from '../office/scene'
 import { styleOf } from '../office/style'
 import { notesFor } from '../office/talk'
+import { EMPTY_SIGNALS } from '../office/work'
+import { presentAt, removedSince, subjectAt } from '../replay/labels'
 import { useDepartments } from '../store/departments'
 import { useEvents } from '../store/events'
 import { onLiveEvent } from '../store/live'
@@ -13,6 +15,7 @@ import { useMessages } from '../store/messages'
 import { useMissions } from '../store/missions'
 import { useOffice } from '../store/office'
 import { useOfficeSettings } from '../store/officeSettings'
+import { onReplayEvent, useReplaying, useShownViews, useTimeline } from '../store/timeline'
 import { useOfficeSignals } from '../store/work'
 
 /**
@@ -59,11 +62,21 @@ export function OfficeView({ onNew, onCustomise }: { onNew(): void; onCustomise(
     [],
   )
 
-  const employees = useOffice((s) => s.employees)
-  const views = useOffice((s) => s.views)
+  const allEmployees = useOffice((s) => s.employees)
+  // One time source: the present, or the replay cursor.
+  const replaying = useReplaying()
+  const views = useShownViews()
+  // In replay, only who was hired by then; the board, the inbox and the bench come from today's
+  // missions, which events cannot rebuild, so replay leaves them empty rather than show the present.
+  const employees = useMemo(
+    () => (replaying ? presentAt(allEmployees, views) : allEmployees),
+    [replaying, allEmployees, views],
+  )
+  const removed = replaying ? removedSince(allEmployees, views) : 0
   const selectedId = useOffice((s) => s.selectedId)
   const select = useOffice((s) => s.select)
-  const signals = useOfficeSignals()
+  const liveSignals = useOfficeSignals()
+  const signals = replaying ? EMPTY_SIGNALS : liveSignals
 
   useEffect(() => {
     const host = hostRef.current
@@ -117,12 +130,13 @@ export function OfficeView({ onNew, onCustomise }: { onNew(): void; onCustomise(
   useEffect(() => scene?.setViews(views), [scene, views])
   useEffect(() => scene?.setSelected(selectedId), [scene, selectedId])
   useEffect(() => scene?.setSignals(signals), [scene, signals])
-  useEffect(() => scene?.setLife(life), [scene, life])
+  // Simulated office life is never part of a replay: it shows only what was recorded.
+  useEffect(() => scene?.setLife(life && !replaying), [scene, life, replaying])
 
   // Work changing hands is drawn as it happens. Only news counts: opening the office never replays
   // what was recorded before.
   useEffect(() => {
-    if (!scene) return
+    if (!scene || replaying) return
     return onLiveEvent((event) => {
       const flight = flightFor(event, {
         assigneeOf: (taskId) =>
@@ -140,7 +154,23 @@ export function OfficeView({ onNew, onCustomise }: { onNew(): void; onCustomise(
         }),
       )
     })
-  }, [scene])
+  }, [scene, replaying])
+
+  // In replay, the events it plays are drawn the same way, asking only what was recorded by then.
+  useEffect(() => {
+    if (!scene || !replaying) return
+    return onReplayEvent((event) => {
+      const { state, events, cursor } = useTimeline.getState()
+      const flight = flightFor(event, { assigneeOf: (taskId) => state.assignees[taskId] ?? null })
+      if (flight) scene.fly(flight)
+      scene.say(
+        notesFor(event, {
+          subjectOf: (conversationId) => subjectAt(events, cursor, conversationId),
+          nameOf: (id) => useOffice.getState().employees.find((e) => e.id === id)?.name ?? null,
+        }),
+      )
+    })
+  }, [scene, replaying])
 
   const overflow = Math.max(0, employees.length - MAX_VISIBLE_EMPLOYEES)
 
@@ -202,13 +232,15 @@ export function OfficeView({ onNew, onCustomise }: { onNew(): void; onCustomise(
           <button
             type="button"
             className="office-control"
-            aria-pressed={life && !reducedMotion}
+            aria-pressed={life && !reducedMotion && !replaying}
             title={
               reducedMotion
                 ? 'Off, because your system asks for reduced motion: nobody walks.'
-                : 'Employees take tea and snack breaks, chat at the pantry table and meet in the meeting room while their agent is idle. This is simulated, it is marked as simulated, and nothing is ever sent to an agent.'
+                : replaying
+                  ? 'Off during replay, which shows only what was recorded.'
+                  : 'Employees take tea and snack breaks, chat at the pantry table and meet in the meeting room while their agent is idle. This is simulated, it is marked as simulated, and nothing is ever sent to an agent.'
             }
-            disabled={!scene || reducedMotion}
+            disabled={!scene || reducedMotion || replaying}
             onClick={() => {
               writeLifeSetting(browserStorage(), !life)
               setLife(!life)
@@ -219,8 +251,12 @@ export function OfficeView({ onNew, onCustomise }: { onNew(): void; onCustomise(
           <button
             type="button"
             className="office-control"
-            title="Change the office's colours, names and decor"
-            disabled={!scene}
+            title={
+              replaying
+                ? 'Replay is read only. Go back to live to change the office.'
+                : "Change the office's colours, names and decor"
+            }
+            disabled={!scene || replaying}
             onClick={onCustomise}
           >
             Customise
@@ -236,7 +272,14 @@ export function OfficeView({ onNew, onCustomise }: { onNew(): void; onCustomise(
           <p className="muted">The roster and terminals still work.</p>
         </div>
       )}
-      {!failure && employees.length === 0 && (
+      {!failure && replaying && employees.length === 0 && (
+        <div className="office-overlay office-overlay-soft">
+          <p>
+            <strong>Nobody had been hired yet at this moment.</strong>
+          </p>
+        </div>
+      )}
+      {!failure && !replaying && employees.length === 0 && (
         <div className="office-overlay office-overlay-soft">
           <p>
             <strong>The office is empty.</strong>
@@ -245,6 +288,12 @@ export function OfficeView({ onNew, onCustomise }: { onNew(): void; onCustomise(
             Hire your first employee
           </button>
         </div>
+      )}
+      {removed > 0 && (
+        <p className="office-note office-note-left">
+          {removed} {removed === 1 ? 'person' : 'people'} who worked here then{' '}
+          {removed === 1 ? 'has' : 'have'} since been removed, so cannot be drawn
+        </p>
       )}
       {overflow > 0 && (
         <p className="office-note">

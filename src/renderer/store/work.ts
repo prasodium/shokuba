@@ -3,10 +3,11 @@ import { deriveSignals, latestWorkSeq, type OfficeSignals } from '../office/work
 import { useEvents } from './events'
 import { useMissions } from './missions'
 import { createWorkStore } from './workStore'
+import { shokuba } from '../api'
 
 export const useWork = createWorkStore({
-  checks: { forTask: (taskId) => window.shokuba.checks.forTask(taskId) },
-  reviews: { forTask: (taskId) => window.shokuba.reviews.forTask(taskId) },
+  checks: { forTask: (taskId) => shokuba.checks.forTask(taskId) },
+  reviews: { forTask: (taskId) => shokuba.reviews.forTask(taskId) },
 })
 
 /**

@@ -12,6 +12,7 @@ import type {
 } from '@shared/missions'
 import { errorMessage } from '../lib/errors'
 import type { Outcome } from '../lib/outcome'
+import { shokuba } from '../api'
 
 export type { Outcome }
 
@@ -78,7 +79,7 @@ export const useMissions = create<MissionsState>((set, get) => {
         try {
           do {
             again = false
-            const missions = await window.shokuba.missions.list()
+            const missions = await shokuba.missions.list()
             set(reconcile(missions))
           } while (again)
         } catch {
@@ -94,25 +95,23 @@ export const useMissions = create<MissionsState>((set, get) => {
     selectTask: (id) => set({ selectedTaskId: id }),
 
     async createMission(input) {
-      const outcome = await attempt(() => window.shokuba.missions.create(input))
+      const outcome = await attempt(() => shokuba.missions.create(input))
       if (outcome.ok) set({ selectedMissionId: outcome.value.id, selectedTaskId: null })
       return outcome
     },
     updateMission: (id, patch) =>
-      attempt(async () => void (await window.shokuba.missions.update(id, patch))),
+      attempt(async () => void (await shokuba.missions.update(id, patch))),
     missionAction: (id, action) =>
-      attempt(async () => void (await window.shokuba.missions.action(id, action))),
-    archiveMission: (id) => attempt(() => window.shokuba.missions.archive(id)),
+      attempt(async () => void (await shokuba.missions.action(id, action))),
+    archiveMission: (id) => attempt(() => shokuba.missions.archive(id)),
     async createTask(input) {
-      const outcome = await attempt(() => window.shokuba.tasks.create(input))
+      const outcome = await attempt(() => shokuba.tasks.create(input))
       if (outcome.ok) set({ selectedTaskId: outcome.value.id })
       return outcome
     },
-    updateTask: (id, patch) =>
-      attempt(async () => void (await window.shokuba.tasks.update(id, patch))),
-    taskAction: (id, action) =>
-      attempt(async () => void (await window.shokuba.tasks.action(id, action))),
-    removeTask: (id) => attempt(() => window.shokuba.tasks.remove(id)),
+    updateTask: (id, patch) => attempt(async () => void (await shokuba.tasks.update(id, patch))),
+    taskAction: (id, action) => attempt(async () => void (await shokuba.tasks.action(id, action))),
+    removeTask: (id) => attempt(() => shokuba.tasks.remove(id)),
   }
 })
 

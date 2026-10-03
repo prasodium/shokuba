@@ -13,6 +13,7 @@ import { useDepartments } from './departments'
 import { useMissions } from './missions'
 import { useOfficeSettings } from './officeSettings'
 import { useRoles } from './roles'
+import { shokuba } from '../api'
 
 interface OfficeState {
   ready: boolean
@@ -57,7 +58,7 @@ export const useOffice = create<OfficeState>((set) => {
   }
 
   async function refreshEmployees(): Promise<void> {
-    const employees = await window.shokuba.employees.list()
+    const employees = await shokuba.employees.list()
     set((state) => ({
       employees,
       selectedId:
@@ -117,7 +118,7 @@ export const useOffice = create<OfficeState>((set) => {
 
       // Subscribe before loading, so nothing published in between is missed. Events that
       // arrive during loading are held, then replayed on top of the snapshot.
-      const unsubscribe = window.shokuba.events.subscribe((event) => {
+      const unsubscribe = shokuba.events.subscribe((event) => {
         if (hydrated) applyLive(event)
         else buffered.push(event)
       })
@@ -125,11 +126,11 @@ export const useOffice = create<OfficeState>((set) => {
       void (async () => {
         try {
           const [info, providers, employees, snapshot, history] = await Promise.all([
-            window.shokuba.app.info(),
-            window.shokuba.providers.list(),
-            window.shokuba.employees.list(),
-            window.shokuba.agents.snapshot(),
-            window.shokuba.events.list({ limit: 200 }),
+            shokuba.app.info(),
+            shokuba.providers.list(),
+            shokuba.employees.list(),
+            shokuba.agents.snapshot(),
+            shokuba.events.list({ limit: 200 }),
           ])
           if (disposed) return
 
@@ -171,13 +172,13 @@ export const useOffice = create<OfficeState>((set) => {
     dismissNotice: () => set({ notice: null }),
 
     async refreshProviders() {
-      const providers = await attempt(() => window.shokuba.providers.list())
+      const providers = await attempt(() => shokuba.providers.list())
       if (providers) set({ providers })
     },
 
     async createEmployee(input) {
       try {
-        const employee = await window.shokuba.employees.create(input)
+        const employee = await shokuba.employees.create(input)
         await refreshEmployees()
         set({ selectedId: employee.id })
         return { employee }
@@ -188,7 +189,7 @@ export const useOffice = create<OfficeState>((set) => {
 
     async updateEmployee(id, patch) {
       try {
-        await window.shokuba.employees.update(id, patch)
+        await shokuba.employees.update(id, patch)
         await refreshEmployees()
         return {}
       } catch (error) {
@@ -198,7 +199,7 @@ export const useOffice = create<OfficeState>((set) => {
 
     async archiveEmployee(id) {
       const done = await attempt(async () => {
-        await window.shokuba.employees.archive(id)
+        await shokuba.employees.archive(id)
         return true
       })
       if (done) await refreshEmployees()
@@ -206,16 +207,16 @@ export const useOffice = create<OfficeState>((set) => {
 
     async startAgent(id) {
       set({ notice: null })
-      await attempt(() => window.shokuba.agents.start(id))
+      await attempt(() => shokuba.agents.start(id))
     },
     async stopAgent(id) {
-      await attempt(() => window.shokuba.agents.stop(id))
+      await attempt(() => shokuba.agents.stop(id))
     },
     async interruptAgent(id) {
-      await attempt(() => window.shokuba.agents.interrupt(id))
+      await attempt(() => shokuba.agents.interrupt(id))
     },
     async breakerAction(id, action) {
-      await attempt(() => window.shokuba.breaker.action(id, action))
+      await attempt(() => shokuba.breaker.action(id, action))
     },
   }
 })

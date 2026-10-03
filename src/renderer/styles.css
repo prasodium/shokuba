@@ -245,11 +245,14 @@ h2 {
   position: relative;
   overflow: hidden;
   background: #14110f;
+  display: flex;
+  flex-direction: column;
 }
 
 .office {
-  position: absolute;
-  inset: 0;
+  position: relative;
+  flex: 1;
+  min-height: 0;
 }
 
 .office-canvas {
@@ -334,6 +337,98 @@ h2 {
   margin: 0;
   font-size: 12px;
   color: #a39683;
+}
+.office-note-left {
+  right: auto;
+  left: 12px;
+}
+
+/* ---------- replay ---------- */
+
+/* A fieldset that only switches its contents off during replay; it takes no space of its own. */
+.replay-lock {
+  display: contents;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.replay-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 12.5px;
+}
+.replay-bar.is-replay {
+  border-top: 2px solid var(--amber);
+}
+.replay-label {
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+  background: var(--amber);
+  border-radius: 6px;
+  padding: 3px 8px;
+}
+.replay-speeds {
+  display: flex;
+  gap: 2px;
+}
+.replay-speeds .btn[aria-pressed='true'] {
+  background: var(--surface-3);
+  color: var(--text);
+}
+.replay-scrubber {
+  flex: 1 1 160px;
+  min-width: 120px;
+  accent-color: var(--amber);
+}
+.replay-position {
+  font-family: var(--mono);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.replay-bar select {
+  max-width: 200px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.replay-live {
+  margin-left: auto;
+}
+
+.replay-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--amber);
+  background: color-mix(in srgb, var(--amber) 14%, transparent);
+  font-size: 13px;
+}
+.replay-banner strong {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--amber);
+}
+.app.is-replay .office-panel {
+  outline: 2px solid var(--amber);
+  outline-offset: -2px;
+}
+.replay-present {
+  margin: 0;
+}
+.events li.is-cursor {
+  outline: 1px solid var(--amber);
 }
 
 /* ---------- roster ---------- */

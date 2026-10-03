@@ -432,6 +432,25 @@ Phase 8 connects the missions to GitHub. The rule that shapes all of it: **GitHu
 
 The header pill shows `versionPill(info)` from `app.info` (version and system, nothing else) and opens `AboutDialog`. The dialog is read only and checks again each time it opens: `loadAbout` (`src/renderer/lib/about.ts`) reads `app.git`, `github.status` and `providers.list` in parallel, each wrapped in its own `Outcome`, so one failure never hides the others. `app.git` is the only new IPC call: `readGitInfo` (`src/main/git/info.ts`) asks the `GitService` found at startup for its version, or returns why there is none (the reason recorded when `GitService.locate` failed); a failure that is not a `GitError` is reported only as _Git could not be used_, so no path or detail reaches the page. Pure helpers (`gitFinding`, `githubFinding`, `providerFinding`) turn each fact into a label, a sentence and whether it is usable. No table, event or migration.
 
+### Replay (Phase 9, slice 9b)
+
+**One time source.** `useTimeline` (`src/renderer/store/timeline.ts`, built by `createTimelineStore`) is either live or replaying. The office, the roster and the event log read the agents' views through `useShownViews()`, which is the live store's views or the replay state at the cursor, and nothing else picks between them. Entering replay reads the whole log through `events.list`, 500 at a time, into a `ReplayHistory` (`src/renderer/replay/history.ts`), and opens at the end, where replay and live agree.
+
+**State at a moment.** `ReplayHistory.stateAt(n)` folds the first `n` events with `foldReplay`: the live `foldEvent`, plus a reset of every view on `app.started` (what `AgentViews` in the main process does at startup), plus who each task was last handed to (`task.dispatched`, `task.assigned`), so a replayed flight never asks today's missions. Moving forward folds only the new events; moving back starts again from the nearest checkpoint, one every 5,000 events. A property test over generated streams checks that `stateAt(n)` equals the live fold at `n` for random seeks, with and without checkpoints. Measured on an Apple-silicon laptop (Node 24), seeking to the end and then one event back:
+
+| Events    | From the start (no checkpoints) | Every 5,000 events |
+| --------- | ------------------------------- | ------------------ |
+| 100,000   | 72 ms, then 54 ms back          | 54 ms, then 3 ms   |
+| 1,000,000 | 733 ms, then 589 ms back        | 591 ms, then 3 ms  |
+
+Folding from the start already met the budget at 100k (under a second); checkpoints were added because stepping back in a million-event log took over half a second each time. Memory for a million-event log, and the time to page it in, are left to Phase 9g.
+
+**The clock.** `Replayer` (`src/renderer/replay/replayer.ts`) holds the cursor, playing and speed, and is given the time rather than reading one. Each event waits for the gap recorded before it, capped at 3 seconds and divided by the speed; a clock that went backwards is no wait. A tick moves past at most 500 events. The store ticks it every 50 ms while playing and hands the events it played (and a single step forward, never a seek) to `onReplayEvent`, which the office draws as flights and notes exactly as it does live events.
+
+**Read only, enforced in one place.** Every renderer call to the main process goes through `shokuba` (`src/renderer/api.ts`), which is `window.shokuba` wrapped by `guardApi` (`src/renderer/replay/guard.ts`). `ACCESS` marks every method of `ShokubaApi` as `read` or `act`, and its type requires every method, so a new call does not compile until it is classified. While `isReplaying()` (`src/renderer/replay/mode.ts`) is true, every `act` call is rejected with `ReplayReadOnlyError` before it reaches IPC. A test fails if any renderer file other than `api.ts` mentions `window.shokuba`. In the page, `ReplayLock` (a `fieldset` with `display: contents`) switches the acting buttons off and says why; the roster's select buttons, the tabs and the replay bar stay on.
+
+**What replay does not show.** The board, the inbox and the bench are derived from today's missions, which events cannot rebuild, so in replay they get `EMPTY_SIGNALS`. People are drawn only if they had been hired by the cursor and are still employed (their look is only known from today's employee rows); removed ones are counted. Simulated office life is off. The right-hand panels show the present and are labelled so.
+
 ## Planned
 
 ### More providers

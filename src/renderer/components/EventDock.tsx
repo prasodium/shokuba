@@ -1,13 +1,17 @@
 import { useState } from 'react'
+import { eventsUpTo } from '../replay/labels'
 import { useEvents } from '../store/events'
 import { useOffice } from '../store/office'
+import { useTimeline } from '../store/timeline'
 
 /** The live event log: everything the office shows comes from these, persisted first. */
 export function EventDock() {
   const events = useEvents((s) => s.events)
   const info = useOffice((s) => s.info)
   const [open, setOpen] = useState(true)
-  const shown = [...events].slice(-60).reverse()
+  // One time source: the newest events live, or those that had happened by the replay cursor.
+  const replay = useTimeline((s) => (s.mode === 'replay' ? s : null))
+  const shown = replay ? eventsUpTo(replay.events, replay.cursor) : [...events].slice(-60).reverse()
 
   return (
     <section className={`dock ${open ? 'is-open' : ''}`} aria-label="Event log">
@@ -21,15 +25,19 @@ export function EventDock() {
           {open ? '▾' : '▸'} Event log
         </button>
         <span className="muted">
-          {events.length} recent · every event is saved before it is shown
+          {replay
+            ? `Replay · ${replay.cursor.toLocaleString()} of ${replay.events.length.toLocaleString()} recorded events have happened`
+            : `${events.length} recent · every event is saved before it is shown`}
           {info && ` · schema v${info.schemaVersion}`}
         </span>
       </div>
       {open && (
         <ol className="events">
-          {shown.length === 0 && <li className="muted">No events yet.</li>}
-          {shown.map((event) => (
-            <li key={event.seq}>
+          {shown.length === 0 && (
+            <li className="muted">{replay ? 'Before the first event.' : 'No events yet.'}</li>
+          )}
+          {shown.map((event, index) => (
+            <li key={event.seq} className={replay && index === 0 ? 'is-cursor' : undefined}>
               <span className="seq">#{event.seq}</span>
               <time dateTime={event.ts}>{new Date(event.ts).toLocaleTimeString()}</time>
               <span className="type">{event.type}</span>

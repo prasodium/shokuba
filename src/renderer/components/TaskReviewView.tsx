@@ -15,6 +15,7 @@ import {
 } from '../reviews/summary'
 import { useEvents } from '../store/events'
 import { useOffice } from '../store/office'
+import { shokuba } from '../api'
 
 interface Props {
   taskId: string
@@ -39,7 +40,7 @@ export function TaskReviewView({ taskId, status, assigneeId, version }: Props) {
 
   useEffect(() => {
     let current = true
-    window.shokuba.reviews
+    shokuba.reviews
       .forTask(taskId)
       .then((result) => current && setReview(result))
       .catch((e: unknown) => current && setError(errorMessage(e)))
@@ -61,7 +62,7 @@ export function TaskReviewView({ taskId, status, assigneeId, version }: Props) {
   async function ask(): Promise<void> {
     setError(null)
     try {
-      await window.shokuba.reviews.request(taskId, reviewer)
+      await shokuba.reviews.request(taskId, reviewer)
     } catch (e) {
       setError(errorMessage(e))
     }
@@ -71,7 +72,7 @@ export function TaskReviewView({ taskId, status, assigneeId, version }: Props) {
     if (!review?.repoRoot) return
     setError(null)
     try {
-      await window.shokuba.reviews.saveSettings({ repoRoot: review.repoRoot, reviewerId, auto })
+      await shokuba.reviews.saveSettings({ repoRoot: review.repoRoot, reviewerId, auto })
       setSaved((n) => n + 1)
     } catch (e) {
       setError(errorMessage(e))

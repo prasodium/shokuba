@@ -13,6 +13,7 @@ import { TaskReviewView } from './TaskReviewView'
 import { TaskVerificationView } from './TaskVerificationView'
 import { reviewConcern } from '../reviews/summary'
 import { acceptConcern, acceptQuestion } from '../verification/summary'
+import { shokuba } from '../api'
 
 interface Props {
   task: Task
@@ -61,12 +62,12 @@ export function TaskDetail({ task, mission, tasks, onEdit }: Props) {
   async function accept(): Promise<void> {
     const concerns: Array<string | null> = []
     try {
-      concerns.push(acceptConcern(await window.shokuba.checks.forTask(task.id)))
+      concerns.push(acceptConcern(await shokuba.checks.forTask(task.id)))
     } catch {
       // If the checks cannot be read, accepting is not held up by that.
     }
     try {
-      const review = await window.shokuba.reviews.forTask(task.id)
+      const review = await shokuba.reviews.forTask(task.id)
       const name = employees.find((e) => e.id === review.latest?.reviewerId)?.name ?? 'The reviewer'
       concerns.push(reviewConcern(review, name))
     } catch {

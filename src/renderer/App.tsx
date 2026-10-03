@@ -8,6 +8,8 @@ import { MessagesPanel } from './components/MessagesPanel'
 import { MissionsPanel } from './components/MissionsPanel'
 import { OfficeDialog } from './components/OfficeDialog'
 import { OfficeView } from './components/OfficeView'
+import { ReplayBar } from './components/ReplayBar'
+import { ReplayLock } from './components/ReplayLock'
 import { Roster } from './components/Roster'
 import { RolesDialog } from './components/RolesDialog'
 import { TerminalSection } from './components/TerminalSection'
@@ -16,12 +18,14 @@ import { attentionCount } from './messages/helpers'
 import { useMessages } from './store/messages'
 import { useMissions } from './store/missions'
 import { useOffice } from './store/office'
+import { useReplaying } from './store/timeline'
 
 export function App() {
   const connect = useOffice((s) => s.connect)
   const info = useOffice((s) => s.info)
   const notice = useOffice((s) => s.notice)
   const dismissNotice = useOffice((s) => s.dismissNotice)
+  const replaying = useReplaying()
 
   const [dialog, setDialog] = useState<{ open: boolean; editing: Employee | null }>({
     open: false,
@@ -51,7 +55,7 @@ export function App() {
   const closeDialog = (): void => setDialog((current) => ({ ...current, open: false }))
 
   return (
-    <div className="app">
+    <div className={replaying ? 'app is-replay' : 'app'}>
       <header className="masthead">
         <div className="logo" aria-hidden="true">
           <span />
@@ -75,6 +79,16 @@ export function App() {
         </button>
       </header>
 
+      {replaying && (
+        <div className="replay-banner" role="status">
+          <strong>Replay</strong>
+          <span>
+            You are watching what was recorded, not the live office. Nothing can be changed or sent
+            until you go back to live.
+          </span>
+        </div>
+      )}
+
       {notice && (
         <div role="alert" className="notice">
           <span>{notice}</span>
@@ -88,6 +102,7 @@ export function App() {
         <div className="left">
           <section className="panel office-panel" aria-label="Office">
             <OfficeView onNew={openNew} onCustomise={() => setOfficeOpen(true)} />
+            <ReplayBar />
           </section>
           <Roster
             onNew={openNew}
@@ -97,6 +112,11 @@ export function App() {
           />
         </div>
         <div className="right">
+          {replaying && (
+            <p className="hint replay-present">
+              These panels show the present, not the replayed moment, and are read only.
+            </p>
+          )}
           <div className="tabs" role="tablist" aria-label="Terminal, missions and messages">
             <button
               type="button"
@@ -139,13 +159,15 @@ export function App() {
               )}
             </button>
           </div>
-          {tab === 'terminal' ? (
-            <TerminalSection />
-          ) : tab === 'missions' ? (
-            <MissionsPanel />
-          ) : (
-            <MessagesPanel />
-          )}
+          <ReplayLock>
+            {tab === 'terminal' ? (
+              <TerminalSection />
+            ) : tab === 'missions' ? (
+              <MissionsPanel />
+            ) : (
+              <MessagesPanel />
+            )}
+          </ReplayLock>
         </div>
       </main>
 

@@ -3,7 +3,10 @@ import { groupByDepartment } from '../lib/departments'
 import { useDepartments } from '../store/departments'
 import { useMissions } from '../store/missions'
 import { useOffice } from '../store/office'
+import { presentAt } from '../replay/labels'
+import { useReplaying, useShownViews } from '../store/timeline'
 import { BreakerButtons, BreakerChip } from './BreakerChip'
+import { ReplayLock } from './ReplayLock'
 import { StatePill } from './StatePill'
 
 function folderName(path: string): string {
@@ -19,10 +22,13 @@ interface Props {
 }
 
 export function Roster({ onNew, onEdit, onRoles, onDepartments }: Props) {
-  const employees = useOffice((s) => s.employees)
+  const replaying = useReplaying()
+  const views = useShownViews()
+  const allEmployees = useOffice((s) => s.employees)
+  // In replay, only who had been hired by then.
+  const employees = replaying ? presentAt(allEmployees, views) : allEmployees
   const departments = useDepartments((s) => s.departments)
   const sections = groupByDepartment(employees, departments)
-  const views = useOffice((s) => s.views)
   const providers = useOffice((s) => s.providers)
   const selectedId = useOffice((s) => s.selectedId)
   const select = useOffice((s) => s.select)
@@ -36,20 +42,26 @@ export function Roster({ onNew, onEdit, onRoles, onDepartments }: Props) {
     <section className="panel roster" aria-label="Employees">
       <div className="panel-head">
         <h2>Employees</h2>
-        <div className="row">
-          <button type="button" className="btn" onClick={onDepartments}>
-            Departments…
-          </button>
-          <button type="button" className="btn" onClick={onRoles}>
-            Roles…
-          </button>
-          <button type="button" className="btn btn-primary" onClick={onNew}>
-            + New employee
-          </button>
-        </div>
+        <ReplayLock>
+          <div className="row">
+            <button type="button" className="btn" onClick={onDepartments}>
+              Departments…
+            </button>
+            <button type="button" className="btn" onClick={onRoles}>
+              Roles…
+            </button>
+            <button type="button" className="btn btn-primary" onClick={onNew}>
+              + New employee
+            </button>
+          </div>
+        </ReplayLock>
       </div>
 
-      {employees.length === 0 ? (
+      {employees.length === 0 && replaying ? (
+        <div className="empty">
+          <p className="muted">Nobody had been hired yet at this moment.</p>
+        </div>
+      ) : employees.length === 0 ? (
         <div className="empty">
           <p>
             <strong>No one works here yet.</strong>
@@ -116,55 +128,61 @@ export function Roster({ onNew, onEdit, onRoles, onDepartments }: Props) {
                           reports to {manager.name}
                         </span>
                       )}
-                      {(() => {
-                        const working = allTasks.find(
-                          (t) => t.assigneeId === employee.id && t.status === 'in_progress',
-                        )
-                        return working ? <span className="card-task">▸ {working.title}</span> : null
-                      })()}
+                      {/* What they are on now comes from today's missions, so replay leaves it out. */}
+                      {!replaying &&
+                        (() => {
+                          const working = allTasks.find(
+                            (t) => t.assigneeId === employee.id && t.status === 'in_progress',
+                          )
+                          return working ? (
+                            <span className="card-task">▸ {working.title}</span>
+                          ) : null
+                        })()}
                       <BreakerChip view={view} />
                     </span>
                     <StatePill view={view} />
                   </button>
-                  <div className="card-actions">
-                    {running ? (
-                      <>
+                  <ReplayLock>
+                    <div className="card-actions">
+                      {running ? (
+                        <>
+                          <button
+                            type="button"
+                            className="btn"
+                            onClick={() => void interruptAgent(employee.id)}
+                          >
+                            Interrupt
+                          </button>
+                          <BreakerButtons employeeId={employee.id} view={view} />
+                          <button
+                            type="button"
+                            className="btn"
+                            onClick={() => void stopAgent(employee.id)}
+                          >
+                            Stop
+                          </button>
+                        </>
+                      ) : (
                         <button
                           type="button"
-                          className="btn"
-                          onClick={() => void interruptAgent(employee.id)}
+                          className="btn btn-primary"
+                          onClick={() => {
+                            select(employee.id)
+                            void startAgent(employee.id)
+                          }}
                         >
-                          Interrupt
+                          Start
                         </button>
-                        <BreakerButtons employeeId={employee.id} view={view} />
-                        <button
-                          type="button"
-                          className="btn"
-                          onClick={() => void stopAgent(employee.id)}
-                        >
-                          Stop
-                        </button>
-                      </>
-                    ) : (
+                      )}
                       <button
                         type="button"
-                        className="btn btn-primary"
-                        onClick={() => {
-                          select(employee.id)
-                          void startAgent(employee.id)
-                        }}
+                        className="btn btn-ghost"
+                        onClick={() => onEdit(employee)}
                       >
-                        Start
+                        Edit
                       </button>
-                    )}
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      onClick={() => onEdit(employee)}
-                    >
-                      Edit
-                    </button>
-                  </div>
+                    </div>
+                  </ReplayLock>
                 </li>
               )
             }),

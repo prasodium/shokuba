@@ -7,6 +7,7 @@ import type {
 } from '@shared/messages'
 import { errorMessage } from '../lib/errors'
 import type { Outcome } from './missions'
+import { shokuba } from '../api'
 
 interface MessagesState {
   conversations: ConversationDetail[]
@@ -47,7 +48,7 @@ export const useMessages = create<MessagesState>((set, get) => {
         try {
           do {
             again = false
-            const conversations = await window.shokuba.messages.list()
+            const conversations = await shokuba.messages.list()
             set((state) => ({
               conversations,
               // Keep the open conversation if it still exists; otherwise show the newest.
@@ -70,14 +71,14 @@ export const useMessages = create<MessagesState>((set, get) => {
     select: (id) => set({ selectedId: id }),
 
     async send(input) {
-      const outcome = await attempt(() => window.shokuba.messages.send(input))
+      const outcome = await attempt(() => shokuba.messages.send(input))
       if (outcome.ok) set({ selectedId: outcome.value.conversationId })
       return outcome
     },
 
     async markRead(conversationId) {
       try {
-        await window.shokuba.messages.markRead(conversationId)
+        await shokuba.messages.markRead(conversationId)
         await get().refresh()
       } catch {
         // Not worth interrupting anyone for.
@@ -85,6 +86,6 @@ export const useMessages = create<MessagesState>((set, get) => {
     },
 
     action: (conversationId, action) =>
-      attempt(async () => void (await window.shokuba.messages.action(conversationId, action))),
+      attempt(async () => void (await shokuba.messages.action(conversationId, action))),
   }
 })

@@ -1,6 +1,7 @@
 import { createOfficeSettingsStore } from './officeSettingsStore'
+import { shokuba } from '../api'
 
 export const useOfficeSettings = createOfficeSettingsStore({
-  get: () => window.shokuba.office.get(),
-  save: (settings) => window.shokuba.office.save(settings),
+  get: () => shokuba.office.get(),
+  save: (settings) => shokuba.office.save(settings),
 })

@@ -11,6 +11,7 @@ import {
 } from '../verification/summary'
 import { useEvents } from '../store/events'
 import { ChecksDialog } from './ChecksDialog'
+import { shokuba } from '../api'
 
 interface Props {
   taskId: string
@@ -34,7 +35,7 @@ export function TaskVerificationView({ taskId, status, version }: Props) {
 
   useEffect(() => {
     let current = true
-    window.shokuba.checks
+    shokuba.checks
       .forTask(taskId)
       .then((result) => current && setVerification(result))
       .catch((e: unknown) => current && setError(errorMessage(e)))
@@ -53,7 +54,7 @@ export function TaskVerificationView({ taskId, status, version }: Props) {
   async function again(): Promise<void> {
     setError(null)
     try {
-      await window.shokuba.checks.run(taskId)
+      await shokuba.checks.run(taskId)
     } catch (e) {
       setError(errorMessage(e))
     }

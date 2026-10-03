@@ -9,6 +9,7 @@ import {
   type Finding,
 } from '../lib/about'
 import { useOffice } from '../store/office'
+import { shokuba } from '../api'
 
 interface Props {
   open: boolean
@@ -53,9 +54,9 @@ export function AboutDialog({ open, onClose }: Props) {
     let current = true
     setFacts(null)
     void loadAbout({
-      git: () => window.shokuba.app.git(),
-      github: () => window.shokuba.github.status(),
-      providers: () => window.shokuba.providers.list(),
+      git: () => shokuba.app.git(),
+      github: () => shokuba.github.status(),
+      providers: () => shokuba.providers.list(),
     }).then((loaded) => {
       if (current) setFacts(loaded)
     })

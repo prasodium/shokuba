@@ -9,6 +9,7 @@ import {
 import { defaultRecipient, hasUnread, nameOf, stateLabel } from '../messages/helpers'
 import { useMessages } from '../store/messages'
 import { useOffice } from '../store/office'
+import { useReplaying } from '../store/timeline'
 
 const KIND_LABELS: Record<MessageKind, string> = {
   request: 'Request',
@@ -54,10 +55,11 @@ export function MessagesPanel() {
     ? undefined
     : conversations.find((c) => c.conversation.id === selectedId)
 
-  // Opening a conversation reads it.
+  // Opening a conversation reads it. Replay refuses that, so it is done again on going back to live.
+  const replaying = useReplaying()
   useEffect(() => {
-    if (current && hasUnread(current)) void markRead(current.conversation.id)
-  }, [current, markRead])
+    if (current && hasUnread(current) && !replaying) void markRead(current.conversation.id)
+  }, [current, markRead, replaying])
 
   // Reply to whoever wrote last; a new message starts with the first employee.
   useEffect(() => {
